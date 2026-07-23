@@ -1,12 +1,17 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage } from "electron"
 import dotenv from "dotenv"
+import path from "node:path"
 import { initializeIpcHandlers } from "./ipcHandlers"
 import { WindowHelper } from "./WindowHelper"
 import { ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
 import { ProcessingHelper } from "./ProcessingHelper"
 
-dotenv.config()
+// In a packaged app the cwd isn't the project root, so load the bundled .env
+// from Contents/Resources (see build.extraResources). In dev, use the default.
+dotenv.config(
+  app.isPackaged ? { path: path.join(process.resourcesPath, ".env") } : undefined
+)
 
 // INVISIBLE=false disables stealth so the window appears in screenshots (debugging)
 function isInvisibleMode(): boolean {
