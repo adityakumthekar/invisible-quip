@@ -2,22 +2,28 @@ import React, { useEffect, useRef, useState } from "react"
 import {
   Eye,
   HelpCircle,
+  LayoutGrid,
   LogOut,
   Mic,
   Settings2,
   Sparkles
 } from "lucide-react"
 import { cn } from "../../lib/utils"
+import { SHORTCUTS } from "../../lib/shortcuts"
+import MicWaveform from "./MicWaveform"
 
 interface ControlBarProps {
   screenshots: Array<{ path: string; preview: string }>
   isRecording: boolean
   recordingSeconds?: number
+  micStream?: MediaStream | null
   panelsOpen: boolean
   modelsOpen: boolean
+  quickOpen: boolean
   onAskAi: () => void
   onTogglePanels: () => void
   onToggleModels: () => void
+  onToggleQuick: () => void
   onRecordClick: () => void
   onTooltipVisibilityChange: (visible: boolean, height: number) => void
 }
@@ -26,11 +32,14 @@ const ControlBar: React.FC<ControlBarProps> = ({
   screenshots,
   isRecording,
   recordingSeconds = 0,
+  micStream,
   panelsOpen,
   modelsOpen,
+  quickOpen,
   onAskAi,
   onTogglePanels,
   onToggleModels,
+  onToggleQuick,
   onRecordClick,
   onTooltipVisibilityChange
 }) => {
@@ -45,20 +54,11 @@ const ControlBar: React.FC<ControlBarProps> = ({
     onTooltipVisibilityChange(isTooltipVisible, tooltipHeight)
   }, [isTooltipVisible, onTooltipVisibilityChange])
 
-  const formatTime = (s: number) => {
-    const m = Math.floor(s / 60)
-    const sec = s % 60
-    return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
-  }
-
   return (
     <div className="w-fit relative">
       <div className="glass-bar draggable-area flex items-center gap-1 px-2 py-1.5">
-        {isRecording && (
-          <div className="no-drag flex items-center gap-2 px-2 text-[11px] text-white/80">
-            <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
-            <span className="tabular-nums">{formatTime(recordingSeconds)}</span>
-          </div>
+        {isRecording && micStream && (
+          <MicWaveform stream={micStream} seconds={recordingSeconds} />
         )}
 
         <button
@@ -71,6 +71,15 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <span>Ask AI</span>
           <span className="kbd">⌘</span>
           <span className="kbd">↵</span>
+        </button>
+
+        <button
+          type="button"
+          className={cn("icon-btn no-drag", quickOpen && "active")}
+          onClick={onToggleQuick}
+          title="Quick actions"
+        >
+          <LayoutGrid className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
 
         <button
@@ -117,7 +126,7 @@ const ControlBar: React.FC<ControlBarProps> = ({
           type="button"
           className={cn("icon-btn no-drag", modelsOpen && "active")}
           onClick={onToggleModels}
-          title="Models"
+          title="Settings"
         >
           <Settings2 className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
@@ -137,34 +146,18 @@ const ControlBar: React.FC<ControlBarProps> = ({
             >
               <div className="glass-panel-dark p-3 text-[11px] glass-text space-y-2.5">
                 <p className="font-medium glass-heading">Shortcuts</p>
-                <div className="flex justify-between gap-3">
-                  <span className="glass-muted">Toggle window</span>
-                  <span className="flex gap-1">
-                    <span className="kbd">⌘</span>
-                    <span className="kbd">B</span>
-                  </span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="glass-muted">Screenshot</span>
-                  <span className="flex gap-1">
-                    <span className="kbd">⌘</span>
-                    <span className="kbd">H</span>
-                  </span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="glass-muted">Ask AI / Solve</span>
-                  <span className="flex gap-1">
-                    <span className="kbd">⌘</span>
-                    <span className="kbd">↵</span>
-                  </span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="glass-muted">Reset</span>
-                  <span className="flex gap-1">
-                    <span className="kbd">⌘</span>
-                    <span className="kbd">R</span>
-                  </span>
-                </div>
+                {SHORTCUTS.map((s) => (
+                  <div key={s.action} className="flex justify-between gap-3">
+                    <span className="glass-muted">{s.action}</span>
+                    <span className="flex gap-1">
+                      {s.keys.map((k, i) => (
+                        <span key={i} className="kbd">
+                          {k}
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           )}

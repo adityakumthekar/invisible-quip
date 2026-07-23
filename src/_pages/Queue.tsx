@@ -9,7 +9,9 @@ import {
 } from "../components/ui/toast"
 import ControlBar from "../components/shell/ControlBar"
 import AIResponse from "../components/shell/AIResponse"
-import ModelsPopover from "../components/shell/ModelsPopover"
+import SettingsPanel from "../components/shell/SettingsPanel"
+import QuickActions from "../components/shell/QuickActions"
+import { applySavedMode } from "../lib/modes"
 
 interface QueueProps {
   setView: React.Dispatch<React.SetStateAction<"queue" | "solutions" | "debug">>
@@ -34,9 +36,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [chatLoading, setChatLoading] = useState(false)
   const [panelsOpen, setPanelsOpen] = useState(false)
   const [includeScreen, setIncludeScreen] = useState(false)
+  const [quickOpen, setQuickOpen] = useState(false)
 
   const [isRecording, setIsRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
+  const [micStream, setMicStream] = useState<MediaStream | null>(null)
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null)
   const chunks = useRef<Blob[]>([])
 
@@ -79,7 +83,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const openPanels = () => setPanelsOpen(true)
 
-  const sendPrompt = async (prompt: string, opts?: { silentUser?: boolean }) => {
+  const sendPrompt = async (
+    prompt: string,
+    opts?: { silentUser?: boolean; useScreen?: boolean }
+  ) => {
     if (!prompt.trim()) return
     if (!opts?.silentUser) {
       setChatMessages((msgs) => [...msgs, { role: "user", text: prompt }])
@@ -87,7 +94,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setChatLoading(true)
     openPanels()
     try {
-      const channel = includeScreen ? "chat-with-screen" : "gemini-chat"
+      const withScreen = opts?.useScreen ?? includeScreen
+      const channel = withScreen ? "chat-with-screen" : "gemini-chat"
       const response = await window.electronAPI.invoke(channel, prompt)
       setChatMessages((msgs) => [...msgs, { role: "gemini", text: response }])
     } catch (err) {
@@ -115,17 +123,24 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setPanelsOpen((open) => !open)
   }
 
+  const runQuickAction = (prompt: string, useScreen: boolean) => {
+    setQuickOpen(false)
+    void sendPrompt(prompt, { useScreen })
+  }
+
   const handleRecordClick = async () => {
     if (!isRecording) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: true
         })
+        setMicStream(stream)
         const recorder = new MediaRecorder(stream)
         chunks.current = []
         recorder.ondataavailable = (e) => chunks.current.push(e.data)
         recorder.onstop = async () => {
           stream.getTracks().forEach((t) => t.stop())
+          setMicStream(null)
           const blob = new Blob(chunks.current, {
             type: chunks.current[0]?.type || "audio/webm"
           })
@@ -187,6 +202,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       }
     }
     void loadCurrentModel()
+    applySavedMode()
   }, [])
 
   useEffect(() => {
@@ -306,21 +322,28 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             screenshots={screenshots}
             isRecording={isRecording}
             recordingSeconds={recordingSeconds}
+            micStream={micStream}
             panelsOpen={panelsOpen}
             modelsOpen={isSettingsOpen}
+            quickOpen={quickOpen}
             onAskAi={handleAskAi}
             onTogglePanels={handleTogglePanels}
             onToggleModels={() => setIsSettingsOpen((v) => !v)}
+            onToggleQuick={() => setQuickOpen((v) => !v)}
             onRecordClick={() => void handleRecordClick()}
             onTooltipVisibilityChange={(visible, height) => {
               setIsTooltipVisible(visible)
               setTooltipHeight(height)
             }}
           />
+          {quickOpen && <QuickActions onRun={runQuickAction} />}
           {isSettingsOpen && (
-            <ModelsPopover
+            <SettingsPanel
               onModelChange={handleModelChange}
               onOpenChat={openPanels}
+              onModeChange={(label) =>
+                showToast("Mode changed", `Now using ${label} mode`, "neutral")
+              }
             />
           )}
         </div>

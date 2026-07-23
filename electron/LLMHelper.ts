@@ -8,7 +8,7 @@ interface OllamaResponse {
 
 export class LLMHelper {
   private model: GenerativeModel | null = null
-  private readonly systemPrompt = `You are Quip, a helpful, proactive assistant for any kind of problem or situation (not just coding). For any user input, analyze the situation, provide a clear problem statement, relevant context, and suggest several possible responses or actions the user could take next. Always explain your reasoning. Present your suggestions as a list of options or next steps.`
+  private systemPrompt = `You are Quip, a helpful, proactive assistant for any kind of problem or situation (not just coding). For any user input, analyze the situation, provide a clear problem statement, relevant context, and suggest several possible responses or actions the user could take next. Always explain your reasoning. Present your suggestions as a list of options or next steps.`
   private useOllama: boolean = false
   private ollamaModel: string = "llama3.2"
   private ollamaUrl: string = "http://localhost:11434"
@@ -255,12 +255,19 @@ export class LLMHelper {
     }
   }
 
+  public setSystemPrompt(text: string): void {
+    // Fall back to the default persona if a caller clears it.
+    this.systemPrompt = text?.trim() ? text.trim() : this.systemPrompt
+  }
+
   public async chatWithGemini(message: string): Promise<string> {
+    // Prepend the active mode/persona so Modes actually shape plain chat.
+    const prompt = `${this.systemPrompt}\n\nUser: ${message}`;
     try {
       if (this.useOllama) {
-        return this.callOllama(message);
+        return this.callOllama(prompt);
       } else if (this.model) {
-        const result = await this.model.generateContent(message);
+        const result = await this.model.generateContent(prompt);
         const response = await result.response;
         return response.text();
       } else {

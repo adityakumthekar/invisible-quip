@@ -131,6 +131,11 @@ export function initializeIpcHandlers(appState: AppState): void {
     appState.setWindowOpacity(value)
   });
 
+  // Swap the active AI mode/persona (system prompt)
+  ipcMain.handle("set-system-prompt", async (_, text: string) => {
+    appState.processingHelper.getLLMHelper().setSystemPrompt(text)
+  });
+
   ipcMain.handle("quit-app", () => {
     app.quit()
   })
