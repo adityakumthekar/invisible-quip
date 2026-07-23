@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quip — Cluely-style redesign mockup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { min-height: 100vh; color: #fff; overflow-x: hidden; }
+
+  /* ——— Faux desktop so the frosted glass has something to blur ——— */
+  .desktop {
+    position: fixed; inset: 0; z-index: 0;
+    background:
+      radial-gradient(1200px 800px at 78% 18%, #2b3a67 0%, transparent 60%),
+      radial-gradient(1000px 700px at 12% 88%, #3a2b5a 0%, transparent 55%),
+      linear-gradient(135deg, #0f1622 0%, #1a2333 45%, #241b34 100%);
+  }
+  .desktop::after {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
+  .faux-window {
+    position: absolute; border-radius: 12px; padding: 14px 16px;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.5); font-size: 12px; line-height: 1.9; overflow: hidden;
+  }
+  .faux-window .bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.14); margin: 6px 0; }
+  .fw1 { top: 60px; left: 40px; width: 340px; height: 240px; }
+  .fw2 { bottom: 70px; right: 60px; width: 420px; height: 300px; }
+  .fw3 { top: 320px; left: 120px; width: 260px; height: 180px; }
+
+  /* ——— Control strip (mockup-only chrome, not part of the app) ——— */
+  .controls {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    z-index: 50; display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+    padding: 10px 16px; border-radius: 14px;
+    background: rgba(10,12,16,0.82); border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(12px); font-size: 12px;
+  }
+  .controls .group { display: flex; gap: 6px; align-items: center; }
+  .controls .label { color: rgba(255,255,255,0.5); margin-right: 4px; font-weight: 500; }
+  .seg { display: inline-flex; padding: 3px; border-radius: 9px; background: rgba(255,255,255,0.06); gap: 2px; }
+  .seg button {
+    border: 0; cursor: pointer; padding: 5px 10px; border-radius: 6px; font-size: 12px;
+    color: rgba(255,255,255,0.62); background: transparent; transition: all .15s ease;
+  }
+  .seg button:hover { color: #fff; }
+  .seg button.on { background: rgba(255,255,255,0.16); color: #fff; }
+
+  /* ——— Stage: this is the actual app overlay being designed ——— */
+  .stage {
+    position: relative; z-index: 10;
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: flex-start; padding-top: 140px; gap: 12px;
+
+    /* token system — mirrors src/index.css, driven by JS */
+    --glass-primary-rgb: 20 21 25;
+    --glass-secondary-rgb: 34 36 42;
+    --glass-primary-alpha: 0.74;
+    --glass-secondary-alpha: 0.72;
+    --glass-primary-border: rgba(255,255,255,0.14);
+    --glass-secondary-border: rgba(255,255,255,0.10);
+    --glass-heading: rgba(255,255,255,0.98);
+    --glass-text: rgba(247,249,255,0.92);
+    --glass-muted: rgba(225,234,255,0.72);
+    --glass-subtle: rgba(225,234,255,0.56);
+    --glass-accent: #e6e8ec;
+    --glass-accent-strong: #aab1bd;
+    --glass-accent-soft: rgba(255,255,255,0.08);
+    --glass-hover: rgba(255,255,255,0.06);
+    --glass-control-bg: rgba(255,255,255,0.09);
+    --glass-control-border: rgba(255,255,255,0.18);
+    --glass-blur: blur(32px) saturate(160%);
+    --glass-radius: 18px;
+    --glass-radius-pill: 999px;
+    --bar-shadow: 0 10px 34px rgba(0,0,0,0.42);
+    --panel-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 16px 44px rgba(0,0,0,0.42);
+  }
+
+  .dark-bg { background: rgb(var(--glass-primary-rgb) / var(--glass-primary-alpha)); }
+
+  .glass-bar {
+    background: rgb(var(--glass-primary-rgb) / var(--glass-primary-alpha));
+    backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-primary-border);
+    border-radius: var(--glass-radius-pill);
+    color: var(--glass-text); box-shadow: var(--bar-shadow);
+    display: flex; align-items: center; gap: 2px; padding: 6px 8px;
+  }
+  .glass-panel {
+    background: rgb(var(--glass-primary-rgb) / var(--glass-primary-alpha));
+    backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-primary-border);
+    border-radius: var(--glass-radius);
+    color: var(--glass-text); box-shadow: var(--panel-shadow);
+    width: min(560px, 92vw); overflow: hidden;
+  }
+
+  .icon-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 11px; border-radius: 999px; font-size: 12px; line-height: 1;
+    color: var(--glass-text); background: transparent; border: 0; cursor: pointer;
+    transition: background .15s ease, color .15s ease; white-space: nowrap;
+  }
+  .icon-btn:hover { background: var(--glass-accent-soft); }
+  .icon-btn.active { background: var(--glass-accent-soft); color: var(--glass-accent); }
+  .icon-btn svg { width: 15px; height: 15px; opacity: .9; }
+  .icon-btn.danger { color: #ff8080; }
+  .divider { width: 1px; height: 20px; background: var(--glass-primary-border); margin: 0 4px; }
+
+  .kbd {
+    display: inline-flex; align-items: center; justify-content: center; min-width: 18px;
+    padding: 3px 5px; border-radius: 5px; font-size: 10px; line-height: 1;
+    color: var(--glass-muted); background: var(--glass-accent-soft);
+    border: 1px solid var(--glass-primary-border);
+  }
+
+  /* panel internals */
+  .panel-head { display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; border-bottom: 1px solid var(--glass-primary-border); }
+  .panel-head .title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--glass-heading); }
+  .panel-head .model { font-size: 11px; color: var(--glass-subtle); }
+  .head-actions { display: flex; gap: 4px; }
+  .head-actions button { background: transparent; border: 0; cursor: pointer; color: var(--glass-muted);
+    width: 26px; height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; }
+  .head-actions button:hover { background: var(--glass-accent-soft); color: var(--glass-text); }
+
+  .messages { padding: 14px; display: flex; flex-direction: column; gap: 12px; max-height: 300px; overflow-y: auto; }
+  .msg { font-size: 13px; line-height: 1.55; }
+  .msg.user { padding-left: 10px; border-left: 2px solid var(--glass-accent-soft); color: var(--glass-muted); }
+  .msg.ai { color: var(--glass-text); }
+  .msg.ai h4 { font-size: 13px; font-weight: 600; margin: 2px 0 4px; color: var(--glass-heading); }
+  .msg.ai p { margin: 4px 0; }
+  .msg.ai code { background: var(--glass-accent-soft); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: .88em; }
+  .msg.ai ul { margin: 4px 0; padding-left: 18px; }
+
+  .panel-input { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--glass-primary-border); }
+  .glass-action { display: inline-flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 10px; font-size: 12px;
+    color: var(--glass-heading); background: var(--glass-accent-soft); border: 1px solid var(--glass-primary-border); cursor: pointer; }
+  .glass-action.on { color: var(--glass-accent); border-color: var(--glass-accent); }
+  .glass-control { flex: 1; color: var(--glass-text); background: var(--glass-control-bg);
+    border: 1px solid var(--glass-control-border); border-radius: 10px; padding: 9px 12px; font-size: 13px; outline: none; }
+  .glass-control::placeholder { color: var(--glass-subtle); }
+  .send-btn { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 10px;
+    background: var(--glass-accent-soft); border: 1px solid var(--glass-primary-border); color: var(--glass-accent); cursor: pointer; }
+
+  /* springy reveal */
+  .reveal { animation: reveal .28s cubic-bezier(.2,.9,.25,1.15); }
+  @keyframes reveal {
+    from { opacity: 0; transform: translateY(10px) scale(.985); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .hint { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 50;
+    font-size: 11px; color: rgba(255,255,255,0.4); }
+</style>
+</head>
+<body>
+  <div class="desktop">
+    <div class="faux-window fw1"><div class="bar" style="width:70%"></div><div class="bar" style="width:88%"></div><div class="bar" style="width:60%"></div><div class="bar" style="width:80%"></div><div class="bar" style="width:45%"></div></div>
+    <div class="faux-window fw2"><div class="bar" style="width:55%"></div><div class="bar" style="width:92%"></div><div class="bar" style="width:74%"></div><div class="bar" style="width:66%"></div><div class="bar" style="width:83%"></div><div class="bar" style="width:50%"></div></div>
+    <div class="faux-window fw3"><div class="bar" style="width:80%"></div><div class="bar" style="width:62%"></div><div class="bar" style="width:90%"></div></div>
+  </div>
+
+  <div class="controls">
+    <div class="group"><span class="label">Theme</span>
+      <div class="seg" id="theme">
+        <button data-v="neutral" class="on">Neutral</button>
+        <button data-v="royal">Royal blue</button>
+        <button data-v="purple">Royal purple</button>
+      </div>
+    </div>
+    <div class="group"><span class="label">Strength</span>
+      <div class="seg" id="strength">
+        <button data-v="clear">Clear</button>
+        <button data-v="balanced" class="on">Balanced</button>
+        <button data-v="solid">Solid</button>
+      </div>
+    </div>
+    <div class="group"><span class="label">Tokens</span>
+      <div class="seg" id="tokenset">
+        <button data-v="refined" class="on">Refined</button>
+        <button data-v="current">Current</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage" id="stage">
+    <!-- Floating command bar -->
+    <div class="glass-bar reveal">
+      <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>0:42</button>
+      <button class="icon-btn active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 4.7L18.5 9l-4.6 1.3L12 15l-1.9-4.7L5.5 9l4.6-1.3z"/></svg>Ask AI <span class="kbd">⌘</span><span class="kbd">↵</span></button>
+      <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>Show/Hide <span class="kbd">⌘</span><span class="kbd">B</span></button>
+      <span class="divider"></span>
+      <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4"/></svg>Record</button>
+      <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 6.9L21 9.8l-5 4.6L17.2 21 12 17.3 6.8 21 8 14.4l-5-4.6 6.6-.9z"/></svg>Solve</button>
+      <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2l-.4-2.6H9.9l-.4 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12a7 7 0 0 0 .1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2l.4 2.6h4.2l.4-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6A7 7 0 0 0 19 12z"/></svg></button>
+      <button class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .8-1 1.7M12 17h.01"/></svg></button>
+      <span class="divider"></span>
+      <button class="icon-btn danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
+    </div>
+
+    <!-- Expanded AI response panel -->
+    <div class="glass-panel reveal">
+      <div class="panel-head">
+        <div class="title">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 4.7L18.5 9l-4.6 1.3L12 15l-1.9-4.7L5.5 9l4.6-1.3z"/></svg>
+          AI response <span class="model">· Gemini 3 Pro</span>
+        </div>
+        <div class="head-actions">
+          <button><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+          <button><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+        </div>
+      </div>
+      <div class="messages">
+        <div class="msg user">How do I make the floating bar feel more like Cluely?</div>
+        <div class="msg ai">
+          <h4>A few concrete moves</h4>
+          <p>The bar already floats and expands — the gap is in the <em>frost</em>. Deepen the shadow, thin the border, and let the blur carry the glass.</p>
+          <ul>
+            <li>Near-black graphite surface, subtle <code>1px</code> light border</li>
+            <li>Springier reveal on the panel drop</li>
+            <li>One consistent bar across every screen</li>
+          </ul>
+          <p>Switch themes and strength up top to compare.</p>
+        </div>
+      </div>
+      <div class="panel-input">
+        <button class="glass-action on"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg>Screen</button>
+        <input class="glass-control" placeholder="Ask a follow-up…" />
+        <button class="send-btn"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="hint">Mockup — for direction only. Switch theme / strength / tokens above to compare.</div>
+
+<script>
+  // Token sets mirror src/index.css. "refined" = proposed Cluely-leaning values; "current" = what's shipping today.
+  const SHARED = {
+    refined: { blur: "blur(32px) saturate(160%)", radius: "18px",
+      barShadow: "0 10px 34px rgba(0,0,0,0.42)",
+      panelShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 16px 44px rgba(0,0,0,0.42)" },
+    current: { blur: "blur(30px) saturate(155%)", radius: "16px",
+      barShadow: "0 8px 32px rgba(0,0,0,0.34)",
+      panelShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 12px 40px rgba(0,0,0,0.38)" }
+  };
+  const THEMES = {
+    refined: {
+      neutral: { p:"20 21 25", s:"34 36 42", pb:"rgba(255,255,255,0.14)", sb:"rgba(255,255,255,0.10)",
+        ac:"#e6e8ec", acS:"#aab1bd", acSoft:"rgba(255,255,255,0.08)", hov:"rgba(255,255,255,0.06)" },
+      royal:   { p:"11 26 62", s:"24 46 96", pb:"rgba(150,180,255,0.30)", sb:"rgba(150,180,255,0.24)",
+        ac:"#9cb6ff", acS:"#3b6ff5", acSoft:"rgba(143,176,255,0.16)", hov:"rgba(143,176,255,0.12)" },
+      purple:  { p:"42 18 84", s:"64 32 118", pb:"rgba(198,180,255,0.30)", sb:"rgba(198,180,255,0.24)",
+        ac:"#c9b6ff", acS:"#7c3aed", acSoft:"rgba(168,140,255,0.16)", hov:"rgba(168,140,255,0.12)" }
+    },
+    current: {
+      neutral: { p:"31 33 38", s:"53 56 63", pb:"rgba(255,255,255,0.26)", sb:"rgba(255,255,255,0.22)",
+        ac:"#d1d5db", acS:"#8b93a1", acSoft:"rgba(209,213,219,0.17)", hov:"rgba(209,213,219,0.12)" },
+      royal:   { p:"8 25 66", s:"27 52 99", pb:"rgba(143,176,255,0.38)", sb:"rgba(168,193,255,0.32)",
+        ac:"#8fb0ff", acS:"#3b6ff5", acSoft:"rgba(143,176,255,0.20)", hov:"rgba(143,176,255,0.14)" },
+      purple:  { p:"38 15 70", s:"66 37 103", pb:"rgba(196,181,253,0.38)", sb:"rgba(216,202,255,0.32)",
+        ac:"#c4b5fd", acS:"#7c5cff", acSoft:"rgba(196,181,253,0.20)", hov:"rgba(196,181,253,0.14)" }
+    }
+  };
+  const STRENGTH = {
+    clear:    { pa: 0.56, sa: 0.54 },
+    balanced: { pa: 0.74, sa: 0.72 },
+    solid:    { pa: 0.88, sa: 0.86 }
+  };
+
+  const state = { theme: "neutral", strength: "balanced", set: "refined" };
+  const stage = document.getElementById("stage");
+
+  function apply() {
+    const t = THEMES[state.set][state.theme];
+    const sh = SHARED[state.set];
+    const st = STRENGTH[state.strength];
+    const s = stage.style;
+    s.setProperty("--glass-primary-rgb", t.p);
+    s.setProperty("--glass-secondary-rgb", t.s);
+    s.setProperty("--glass-primary-border", t.pb);
+    s.setProperty("--glass-secondary-border", t.sb);
+    s.setProperty("--glass-accent", t.ac);
+    s.setProperty("--glass-accent-strong", t.acS);
+    s.setProperty("--glass-accent-soft", t.acSoft);
+    s.setProperty("--glass-hover", t.hov);
+    s.setProperty("--glass-primary-alpha", st.pa);
+    s.setProperty("--glass-secondary-alpha", st.sa);
+    s.setProperty("--glass-blur", sh.blur);
+    s.setProperty("--glass-radius", sh.radius);
+    s.setProperty("--bar-shadow", sh.barShadow);
+    s.setProperty("--panel-shadow", sh.panelShadow);
+    // clear-strength gets a wider blur, like the app
+    if (state.strength === "clear") s.setProperty("--glass-blur", "blur(36px) saturate(170%)");
+    if (state.strength === "solid") s.setProperty("--glass-blur", "blur(24px) saturate(150%)");
+  }
+
+  function wire(id, key) {
+    const box = document.getElementById(id);
+    box.addEventListener("click", (e) => {
+      const btn = e.target.closest("button"); if (!btn) return;
+      [...box.children].forEach((b) => b.classList.toggle("on", b === btn));
+      state[key] = btn.dataset.v;
+      apply();
+      // replay reveal
+      document.querySelectorAll(".reveal").forEach((el) => { el.style.animation = "none"; void el.offsetWidth; el.style.animation = ""; });
+    });
+  }
+  wire("theme", "theme"); wire("strength", "strength"); wire("tokenset", "set");
+  apply();
+</script>
+</body>
+</html>
