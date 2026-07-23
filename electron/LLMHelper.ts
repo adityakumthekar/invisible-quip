@@ -1,5 +1,47 @@
 import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai"
 import fs from "fs"
+import {
+  parseTeachingResponse,
+  TeachingStepResponse
+} from "./teaching"
+
+export function buildTeachingPrompt(goal: string, history: string[]): string {
+  const priorSteps =
+    history.length > 0
+      ? history.map((step, index) => `${index + 1}. ${step}`).join("\n")
+      : "None."
+
+  return `You are a visual teaching assistant guiding a user toward this goal:
+${goal}
+
+Prior step summaries:
+${priorSteps}
+
+Inspect the attached screenshot and return exactly one concise instruction for only the immediate next action. Do not provide a list or multiple actions.
+
+Return only one strict JSON object with this exact contract:
+{
+  "state": "step" | "complete" | "blocked",
+  "instruction": "one concise instruction",
+  "label": "optional short visible label",
+  "target": { "x": number, "y": number, "width": number, "height": number }
+}
+
+Use state "step" when the user can take a visible next action. target is required only for state "step" and must locate that action in screenshot pixel coordinates; x/y are its top-left corner and width/height may be omitted when unavailable.
+Use state "complete" when the screenshot shows the goal is finished.
+Use state "blocked" when no safe visible next action can be identified, and briefly explain what is missing.
+For "complete" and "blocked", omit target. Omit label when it is not useful. Do not add properties, markdown, or commentary.`
+}
+
+export function parseTeachingModelText(text: string): TeachingStepResponse {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text.trim())
+  } catch {
+    throw new Error("Invalid teaching JSON response")
+  }
+  return parseTeachingResponse(parsed)
+}
 
 interface OllamaResponse {
   response: string
@@ -301,6 +343,38 @@ export class LLMHelper {
       console.error("[LLMHelper] Error in chatWithImage:", error);
       throw error;
     }
+  }
+
+  public async generateTeachingStep(
+    goal: string,
+    history: string[],
+    screenshotPath: string
+  ): Promise<TeachingStepResponse> {
+    if (this.useOllama) {
+      throw new Error(
+        "Teaching mode requires Gemini. Switch to Gemini and try again."
+      )
+    }
+    if (!this.model) {
+      throw new Error("Gemini is not configured for teaching mode.")
+    }
+
+    const imagePart = await this.fileToGenerativePart(screenshotPath)
+    const result = await this.model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: buildTeachingPrompt(goal, history) }, imagePart]
+        }
+      ],
+      generationConfig: {
+        temperature: 0,
+        candidateCount: 1,
+        maxOutputTokens: 350
+      }
+    })
+    const response = await result.response
+    return parseTeachingModelText(response.text())
   }
 
   public isUsingOllama(): boolean {

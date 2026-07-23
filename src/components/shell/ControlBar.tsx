@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react"
 import {
+  GraduationCap,
   Eye,
   HelpCircle,
   LayoutGrid,
@@ -20,7 +21,9 @@ interface ControlBarProps {
   panelsOpen: boolean
   modelsOpen: boolean
   quickOpen: boolean
+  teachingOpen: boolean
   onAskAi: () => void
+  onTeachMe: () => void
   onTogglePanels: () => void
   onToggleModels: () => void
   onToggleQuick: () => void
@@ -36,7 +39,9 @@ const ControlBar: React.FC<ControlBarProps> = ({
   panelsOpen,
   modelsOpen,
   quickOpen,
+  teachingOpen,
   onAskAi,
+  onTeachMe,
   onTogglePanels,
   onToggleModels,
   onToggleQuick,
@@ -71,6 +76,18 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <span>Ask AI</span>
           <span className="kbd">⌘</span>
           <span className="kbd">↵</span>
+        </button>
+
+        <button
+          type="button"
+          className={cn("icon-btn no-drag", teachingOpen && "active")}
+          onClick={onTeachMe}
+          title="Teach Me"
+          aria-label="Teach Me"
+          aria-pressed={teachingOpen}
+        >
+          <GraduationCap className="w-3.5 h-3.5" strokeWidth={1.75} />
+          <span>Teach Me</span>
         </button>
 
         <button

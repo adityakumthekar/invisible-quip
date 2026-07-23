@@ -14,7 +14,9 @@
     "app:build": "npm run build && tsc -p electron/tsconfig.json && electron-builder",
     "watch": "tsc -p electron/tsconfig.json --watch",
     "start": "npm run app:dev",
-    "dist": "npm run app:build"
+    "dist": "npm run app:build",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "build": {
     "appId": "com.electron.quip",
@@ -132,6 +134,7 @@
     "vite": "^5.4.11",
     "vite-plugin-electron": "^0.28.8",
     "vite-plugin-electron-renderer": "^0.14.6",
+    "vitest": "^4.1.10",
     "wait-on": "^8.0.1"
   },
   "dependencies": {

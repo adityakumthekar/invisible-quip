@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useReducer, useRef } from "react"
 import { useQuery } from "react-query"
 import {
   Toast,
@@ -11,7 +11,16 @@ import ControlBar from "../components/shell/ControlBar"
 import AIResponse from "../components/shell/AIResponse"
 import SettingsPanel from "../components/shell/SettingsPanel"
 import QuickActions from "../components/shell/QuickActions"
+import TeachingPanel from "../components/teaching/TeachingPanel"
 import { applySavedMode } from "../lib/modes"
+import {
+  executeTeachingOperation,
+  initialTeachingSessionState,
+  teachingSessionReducer,
+  type TeachingOperation
+} from "../lib/teachingSession"
+import type { PrivacyGateStatus } from "../lib/privacyContract"
+import { evaluatePrivacyGate } from "../lib/privacyGate"
 
 interface QueueProps {
   setView: React.Dispatch<React.SetStateAction<"queue" | "solutions" | "debug">>
@@ -37,6 +46,16 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [panelsOpen, setPanelsOpen] = useState(false)
   const [includeScreen, setIncludeScreen] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
+  const [teachingOpen, setTeachingOpen] = useState(false)
+  const [teachingSession, dispatchTeaching] = useReducer(
+    teachingSessionReducer,
+    initialTeachingSessionState
+  )
+  const teachingRequestId = useRef(0)
+  const teachingInFlight = useRef(false)
+  const [privacyStatus, setPrivacyStatus] = useState<PrivacyGateStatus | null>(null)
+  const [privacyChecking, setPrivacyChecking] = useState(false)
+  const [privacyError, setPrivacyError] = useState<string | null>(null)
 
   const [isRecording, setIsRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
@@ -46,7 +65,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [currentModel, setCurrentModel] = useState<{
-    provider: string
+    provider: "ollama" | "gemini"
     model: string
   }>({ provider: "gemini", model: "gemini-3.5-flash" })
 
@@ -126,6 +145,111 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const runQuickAction = (prompt: string, useScreen: boolean) => {
     setQuickOpen(false)
     void sendPrompt(prompt, { useScreen })
+  }
+
+  const refreshPrivacyStatus = async () => {
+    try {
+      const status = await window.electronAPI.privacyGetStatus()
+      setPrivacyStatus(status)
+      setPrivacyError(null)
+    } catch (error) {
+      setPrivacyError(
+        "Couldn't check privacy status. " + String((error as Error)?.message ?? error)
+      )
+    }
+  }
+
+  const acknowledgePrivacy = async () => {
+    try {
+      const status = await window.electronAPI.privacyAcknowledge()
+      setPrivacyStatus(status)
+      setPrivacyError(null)
+    } catch (error) {
+      setPrivacyError(
+        "Couldn't save acknowledgement. " + String((error as Error)?.message ?? error)
+      )
+    }
+  }
+
+  const runPrivacyPreflightCheck = async () => {
+    setPrivacyChecking(true)
+    try {
+      await window.electronAPI.privacyRunPreflight()
+      await refreshPrivacyStatus()
+    } catch (error) {
+      setPrivacyError(
+        "Privacy check failed to run. " + String((error as Error)?.message ?? error)
+      )
+    } finally {
+      setPrivacyChecking(false)
+    }
+  }
+
+  const runTeachingOperation = async (operation: TeachingOperation) => {
+    if (teachingInFlight.current) return
+    const goal = teachingSession.goal.trim()
+    if (operation === "start" && !goal) return
+    if (
+      operation === "start" &&
+      (!privacyStatus || !evaluatePrivacyGate(privacyStatus).canStart)
+    ) {
+      return
+    }
+
+    teachingInFlight.current = true
+    const requestId = ++teachingRequestId.current
+    dispatchTeaching({ type: "request", operation, requestId })
+
+    try {
+      const provider =
+        operation === "start"
+          ? (await window.electronAPI.getCurrentLlmConfig()).provider
+          : currentModel.provider
+      const outcome = await executeTeachingOperation(
+        operation,
+        goal,
+        provider,
+        {
+          start: window.electronAPI.teachStart,
+          next: window.electronAPI.teachNext
+        },
+        () => requestId === teachingRequestId.current
+      )
+      if (outcome.kind === "provider-blocked") {
+        dispatchTeaching({ type: "provider-blocked", requestId })
+      } else if (outcome.kind === "result") {
+        dispatchTeaching({
+          type: "resolved",
+          requestId,
+          result: outcome.result
+        })
+      }
+    } catch (error) {
+      dispatchTeaching({ type: "rejected", requestId, error })
+    } finally {
+      if (requestId === teachingRequestId.current) {
+        teachingInFlight.current = false
+      }
+    }
+  }
+
+  const stopTeaching = () => {
+    teachingInFlight.current = false
+    const requestId = ++teachingRequestId.current
+    dispatchTeaching({ type: "reset", requestId })
+    setTeachingOpen(false)
+    void window.electronAPI.teachStop().catch(() => {
+      showToast("Teaching stopped", "The teaching overlay was cleared.", "neutral")
+    })
+  }
+
+  const toggleTeaching = () => {
+    if (teachingOpen) {
+      stopTeaching()
+    } else {
+      setTeachingOpen(true)
+      void refreshPrivacyStatus()
+    }
   }
 
   const handleRecordClick = async () => {
@@ -326,7 +450,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             panelsOpen={panelsOpen}
             modelsOpen={isSettingsOpen}
             quickOpen={quickOpen}
+            teachingOpen={teachingOpen}
             onAskAi={handleAskAi}
+            onTeachMe={toggleTeaching}
             onTogglePanels={handleTogglePanels}
             onToggleModels={() => setIsSettingsOpen((v) => !v)}
             onToggleQuick={() => setQuickOpen((v) => !v)}
@@ -347,6 +473,27 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             />
           )}
         </div>
+
+        {teachingOpen && (
+          <TeachingPanel
+            session={teachingSession}
+            privacy={{
+              status: privacyStatus,
+              checking: privacyChecking,
+              error: privacyError
+            }}
+            onGoalChange={(goal) =>
+              dispatchTeaching({ type: "set-goal", goal })
+            }
+            onStart={() => void runTeachingOperation("start")}
+            onNext={() => void runTeachingOperation("next")}
+            onRetry={(operation) => void runTeachingOperation(operation)}
+            onStop={stopTeaching}
+            onClose={stopTeaching}
+            onAcknowledgePrivacy={() => void acknowledgePrivacy()}
+            onRunPrivacyCheck={() => void runPrivacyPreflightCheck()}
+          />
+        )}
 
         {panelsOpen && (
           <div className="grid grid-cols-1 gap-3 w-[min(560px,100%)]">

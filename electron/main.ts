@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage } from "electron"
+import type { WebContents } from "electron"
 import dotenv from "dotenv"
 import path from "node:path"
 import { initializeIpcHandlers } from "./ipcHandlers"
@@ -6,6 +7,8 @@ import { WindowHelper } from "./WindowHelper"
 import { ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
 import { ProcessingHelper } from "./ProcessingHelper"
+import { TeachingOverlayHelper } from "./TeachingOverlayHelper"
+import type { TeachingResult } from "./teaching"
 
 // In a packaged app the cwd isn't the project root, so load the bundled .env
 // from Contents/Resources (see build.extraResources). In dev, use the default.
@@ -25,6 +28,7 @@ export class AppState {
   private screenshotHelper: ScreenshotHelper
   public shortcutsHelper: ShortcutsHelper
   public processingHelper: ProcessingHelper
+  private teachingOverlayHelper: TeachingOverlayHelper
   private tray: Tray | null = null
 
   // View management
@@ -70,6 +74,8 @@ export class AppState {
 
     // Initialize ShortcutsHelper
     this.shortcutsHelper = new ShortcutsHelper(this)
+
+    this.teachingOverlayHelper = new TeachingOverlayHelper()
   }
 
   public static getInstance(): AppState {
@@ -199,6 +205,26 @@ export class AppState {
     this.windowHelper.setOpacity(value)
   }
 
+  public applyTeachingResult(result: TeachingResult): void {
+    if (result.state === "step") {
+      this.teachingOverlayHelper.showTarget(result)
+      return
+    }
+    this.teachingOverlayHelper.clear()
+  }
+
+  public clearTeachingOverlay(): void {
+    this.teachingOverlayHelper.clear()
+  }
+
+  public closeTeachingOverlay(): void {
+    this.teachingOverlayHelper.close()
+  }
+
+  public teachingOverlayReady(renderer: WebContents): boolean {
+    return this.teachingOverlayHelper.rendererReady(renderer)
+  }
+
   public createTray(): void {
     // Create a simple tray icon
     const image = nativeImage.createEmpty()
@@ -311,6 +337,10 @@ async function initializeApp() {
     if (process.platform !== "darwin") {
       app.quit()
     }
+  })
+
+  app.on("before-quit", () => {
+    appState.closeTeachingOverlay()
   })
 
   if (isInvisibleMode()) {

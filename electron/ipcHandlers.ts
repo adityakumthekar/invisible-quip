@@ -2,9 +2,58 @@
 
 import { ipcMain, app } from "electron"
 import fs from "node:fs"
+import path from "node:path"
 import { AppState } from "./main"
+import {
+  TeachingOperationInProgressError,
+  TeachingSessionCoordinator
+} from "./teaching"
+import {
+  PRIVACY_ACKNOWLEDGEMENT_TEXT,
+  PRIVACY_ACKNOWLEDGEMENT_VERSION,
+  type PrivacyGateStatus
+} from "./privacyContract"
+import { PrivacyAcknowledgementStore } from "./privacyAcknowledgement"
+import { evaluatePrivacyGate } from "./privacyGate"
+import { PrivacyPreflightChecker } from "./privacyPreflight"
+import { createElectronPrivacyPreflightDependencies } from "./privacyPreflightRuntime"
+import { PrivacyPreflightSessionState } from "./privacyPreflightSession"
 
 export function initializeIpcHandlers(appState: AppState): void {
+  const teachingSession = new TeachingSessionCoordinator({
+    capture: () => appState.getScreenshotHelper().captureForTeaching(),
+    generate: (goal, history, screenshotPath) =>
+      appState.processingHelper
+        .getLLMHelper()
+        .generateTeachingStep(goal, history, screenshotPath),
+    remove: (screenshotPath) => fs.promises.unlink(screenshotPath)
+  })
+  let teachingLifecycle = 0
+
+  const privacyAcknowledgementStore = new PrivacyAcknowledgementStore(
+    path.join(app.getPath("userData"), "privacy-acknowledgement.json"),
+    {
+      readFile: (filePath) => fs.promises.readFile(filePath, "utf8"),
+      writeFile: (filePath, contents) =>
+        fs.promises.writeFile(filePath, contents, "utf8"),
+      now: () => new Date()
+    }
+  )
+  const privacyPreflightSession = new PrivacyPreflightSessionState()
+  const privacyPreflightChecker = new PrivacyPreflightChecker(
+    createElectronPrivacyPreflightDependencies(appState.getScreenshotHelper())
+  )
+
+  async function getPrivacyGateStatus(): Promise<PrivacyGateStatus> {
+    return {
+      acknowledged: await privacyAcknowledgementStore.isAcknowledged(),
+      acknowledgementText: PRIVACY_ACKNOWLEDGEMENT_TEXT,
+      acknowledgementVersion: PRIVACY_ACKNOWLEDGEMENT_VERSION,
+      preflightPassed: privacyPreflightSession.hasPassed(),
+      lastPreflightResult: privacyPreflightSession.getLastResult()
+    }
+  }
+
   ipcMain.handle(
     "update-content-dimensions",
     async (event, { width, height }: { width: number; height: number }) => {
@@ -126,6 +175,75 @@ export function initializeIpcHandlers(appState: AppState): void {
       fs.promises.unlink(shot).catch(() => {})
     }
   });
+
+  ipcMain.handle("privacy-get-status", async () => getPrivacyGateStatus())
+
+  ipcMain.handle("privacy-acknowledge", async () => {
+    await privacyAcknowledgementStore.acknowledge()
+    return getPrivacyGateStatus()
+  })
+
+  ipcMain.handle("privacy-run-preflight", async () => {
+    const result = await privacyPreflightChecker.run()
+    privacyPreflightSession.recordResult(result)
+    return result
+  })
+
+  ipcMain.handle("teach-start", async (_, goal: string) => {
+    const gate = evaluatePrivacyGate(await getPrivacyGateStatus())
+    if (!gate.canStart) {
+      throw new Error(
+        gate.blockingReason === "acknowledgement"
+          ? "Privacy acknowledgement required before teaching. Acknowledge the privacy notice, then try again."
+          : "Privacy preflight check required before teaching. Run the privacy check, then try again."
+      )
+    }
+
+    const lifecycle = ++teachingLifecycle
+    appState.closeTeachingOverlay()
+    try {
+      const result = await teachingSession.start(goal)
+      if (lifecycle === teachingLifecycle) {
+        appState.applyTeachingResult(result)
+      }
+      return result
+    } catch (error) {
+      if (lifecycle === teachingLifecycle) {
+        appState.closeTeachingOverlay()
+      }
+      throw error
+    }
+  })
+
+  ipcMain.handle("teach-next", async () => {
+    const lifecycle = teachingLifecycle
+    try {
+      const result = await teachingSession.next()
+      if (lifecycle === teachingLifecycle) {
+        appState.applyTeachingResult(result)
+      }
+      return result
+    } catch (error) {
+      if (
+        lifecycle === teachingLifecycle &&
+        !(error instanceof TeachingOperationInProgressError)
+      ) {
+        appState.closeTeachingOverlay()
+      }
+      throw error
+    }
+  })
+
+  ipcMain.handle("teach-stop", () => {
+    teachingLifecycle += 1
+    teachingSession.stop()
+    appState.closeTeachingOverlay()
+    return { success: true }
+  })
+
+  ipcMain.handle("teaching-overlay-ready", (event) => {
+    return appState.teachingOverlayReady(event.sender)
+  })
 
   ipcMain.handle("set-window-opacity", async (_, value: number) => {
     appState.setWindowOpacity(value)

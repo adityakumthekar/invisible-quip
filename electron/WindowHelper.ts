@@ -2,6 +2,7 @@
 import { BrowserWindow, screen } from "electron"
 import { AppState } from "main"
 import path from "node:path"
+import { createMainWindowOptions } from "./mainWindowPolicy"
 
 const isDev = process.env.NODE_ENV === "development"
 
@@ -89,34 +90,15 @@ export class WindowHelper {
     this.screenHeight = workArea.height
 
     
-    const windowSettings: Electron.BrowserWindowConstructorOptions = {
-      width: 400,
-      height: 600,
-      minWidth: 300,
-      minHeight: 200,
-      webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: true,
-        preload: path.join(__dirname, "preload.js")
-      },
-      show: false, // Start hidden, then show after setup
-      alwaysOnTop: true,
-      frame: !invisible,
-      transparent: invisible,
-      fullscreenable: false,
-      hasShadow: !invisible,
-      backgroundColor: invisible ? "#00000000" : "#1a1a1a",
-      focusable: true,
-      resizable: true,
-      movable: true,
-      x: 100, // Start at a visible position
-      y: 100
-    }
+    const { contentProtection, ...windowSettings } = createMainWindowOptions(
+      invisible,
+      path.join(__dirname, "preload.js")
+    )
 
     this.mainWindow = new BrowserWindow(windowSettings)
     // this.mainWindow.webContents.openDevTools()
     // Content protection hides the window from screenshots — must be off for debugging
-    this.mainWindow.setContentProtection(invisible)
+    this.mainWindow.setContentProtection(contentProtection)
 
     if (process.platform === "darwin") {
       this.mainWindow.setVisibleOnAllWorkspaces(true, {

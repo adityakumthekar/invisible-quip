@@ -2,9 +2,14 @@
 
 import path from "node:path"
 import fs from "node:fs"
-import { app, screen } from "electron"
+import { app, desktopCapturer, screen } from "electron"
 import { v4 as uuidv4 } from "uuid"
 import screenshot from "screenshot-desktop"
+import sharp from "sharp"
+import {
+  createTeachingDisplayCaptureInfo,
+  TeachingCapture
+} from "./teaching"
 
 export class ScreenshotHelper {
   private screenshotQueue: string[] = []
@@ -86,6 +91,52 @@ export class ScreenshotHelper {
       throw error
     }
     return filepath
+  }
+
+  /**
+   * Capture only the display under the cursor. The returned file is temporary;
+   * the caller owns unlinking it after the model request finishes.
+   */
+  public async captureForTeaching(): Promise<TeachingCapture> {
+    const activeDisplay = screen.getDisplayNearestPoint(
+      screen.getCursorScreenPoint()
+    )
+    const requestedSize = {
+      width: Math.ceil(activeDisplay.bounds.width * activeDisplay.scaleFactor),
+      height: Math.ceil(activeDisplay.bounds.height * activeDisplay.scaleFactor)
+    }
+    const filepath = path.join(app.getPath("temp"), `quip-teaching-${uuidv4()}.png`)
+
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: requestedSize
+      })
+      const source =
+        sources.find(
+          (candidate) => candidate.display_id === String(activeDisplay.id)
+        ) ?? (sources.length === 1 ? sources[0] : undefined)
+
+      if (!source) {
+        throw new Error("Could not identify the active display for capture.")
+      }
+
+      await fs.promises.writeFile(filepath, source.thumbnail.toPNG())
+      const metadata = await sharp(filepath).metadata()
+
+      return {
+        path: filepath,
+        display: createTeachingDisplayCaptureInfo(activeDisplay, metadata)
+      }
+    } catch (error: any) {
+      await fs.promises.unlink(filepath).catch(() => {})
+      if (String(error?.message ?? error).includes("could not create image")) {
+        throw new Error(
+          "Screen capture blocked by macOS. Grant Screen Recording permission to this app in System Settings → Privacy & Security → Screen Recording, then restart the app."
+        )
+      }
+      throw error
+    }
   }
 
   public setView(view: "queue" | "solutions"): void {

@@ -1,4 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron"
+import { TeachingResult } from "./teaching"
+import type { TeachingOverlayTargetEvent } from "./teachingOverlayContract"
+import type { PrivacyGateStatus, PrivacyPreflightResult } from "./privacyContract"
 
 // Types for the exposed Electron API
 interface ElectronAPI {
@@ -33,6 +36,17 @@ interface ElectronAPI {
   analyzeAudioFromBase64: (data: string, mimeType: string) => Promise<{ text: string; timestamp: number }>
   analyzeAudioFile: (path: string) => Promise<{ text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<void>
+  teachStart: (goal: string) => Promise<TeachingResult>
+  teachNext: () => Promise<TeachingResult>
+  teachStop: () => Promise<{ success: true }>
+  onTeachingOverlayTarget: (
+    callback: (data: TeachingOverlayTargetEvent) => void
+  ) => () => void
+  onTeachingOverlayClear: (callback: () => void) => () => void
+  teachingOverlayReady: () => Promise<boolean>
+  privacyGetStatus: () => Promise<PrivacyGateStatus>
+  privacyAcknowledge: () => Promise<PrivacyGateStatus>
+  privacyRunPreflight: () => Promise<PrivacyPreflightResult>
   quitApp: () => Promise<void>
   
   // LLM Model Management
@@ -178,6 +192,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
   analyzeAudioFromBase64: (data: string, mimeType: string) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType),
   analyzeAudioFile: (path: string) => ipcRenderer.invoke("analyze-audio-file", path),
   analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
+  teachStart: (goal: string) => ipcRenderer.invoke("teach-start", goal),
+  teachNext: () => ipcRenderer.invoke("teach-next"),
+  teachStop: () => ipcRenderer.invoke("teach-stop"),
+  onTeachingOverlayTarget: (
+    callback: (data: TeachingOverlayTargetEvent) => void
+  ) => {
+    const subscription = (_: unknown, data: TeachingOverlayTargetEvent) =>
+      callback(data)
+    ipcRenderer.on("teaching-overlay-target", subscription)
+    return () => {
+      ipcRenderer.removeListener("teaching-overlay-target", subscription)
+    }
+  },
+  onTeachingOverlayClear: (callback: () => void) => {
+    const subscription = () => callback()
+    ipcRenderer.on("teaching-overlay-clear", subscription)
+    return () => {
+      ipcRenderer.removeListener("teaching-overlay-clear", subscription)
+    }
+  },
+  teachingOverlayReady: () => ipcRenderer.invoke("teaching-overlay-ready"),
+  privacyGetStatus: () => ipcRenderer.invoke("privacy-get-status"),
+  privacyAcknowledge: () => ipcRenderer.invoke("privacy-acknowledge"),
+  privacyRunPreflight: () => ipcRenderer.invoke("privacy-run-preflight"),
   quitApp: () => ipcRenderer.invoke("quit-app"),
   
   // LLM Model Management
