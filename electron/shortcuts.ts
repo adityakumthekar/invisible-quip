@@ -96,6 +96,24 @@ export class ShortcutsHelper {
       }
     })
 
+    // Teaching: perform the highlighted action. Signals the renderer (which
+    // owns teaching session state) so the panel and overlay stay in sync; it's
+    // a no-op unless a teaching step is currently showing.
+    globalShortcut.register("CommandOrControl+Shift+Return", () => {
+      const mainWindow = this.appState.getMainWindow()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("teaching-hotkey", "execute")
+      }
+    })
+
+    // Teaching: hard kill switch. Works even when focus is in another app.
+    globalShortcut.register("CommandOrControl+Shift+Backspace", () => {
+      const mainWindow = this.appState.getMainWindow()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("teaching-hotkey", "abort")
+      }
+    })
+
     // Unregister shortcuts when quitting
     app.on("will-quit", () => {
       globalShortcut.unregisterAll()

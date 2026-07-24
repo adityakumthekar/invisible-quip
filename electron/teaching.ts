@@ -1,13 +1,17 @@
 export type TeachingState = "step" | "complete" | "blocked"
 
+/** What the assistant should do at a step's target once the user confirms. */
+export type TeachingAction = "click" | "type"
+
 export interface TeachingTarget {
-  /** X coordinate in screenshot pixel space. */
+  /**
+   * Model output uses Gemini's normalized 0–1000 space (see
+   * `normalizedTeachingTargetToPixels`). After conversion, values are
+   * screenshot pixels before DIP mapping.
+   */
   x: number
-  /** Y coordinate in screenshot pixel space. */
   y: number
-  /** Optional width in screenshot pixel space. */
   width?: number
-  /** Optional height in screenshot pixel space. */
   height?: number
 }
 
@@ -19,6 +23,10 @@ interface TeachingStepResponseBase {
 export interface TeachingStepResponseStep extends TeachingStepResponseBase {
   state: "step"
   target: TeachingTarget
+  /** Defaults to "click" when the model omits it. */
+  action: TeachingAction
+  /** Text to type; present only when action is "type". */
+  text?: string
 }
 
 export interface TeachingStepResponseComplete extends TeachingStepResponseBase {
@@ -89,6 +97,8 @@ export type TeachingResult =
       state: "step"
       instruction: string
       label?: string
+      action: TeachingAction
+      text?: string
       target: DipRect
       displayId: number
       displayBounds: DipRect
@@ -101,18 +111,43 @@ export type TeachingResult =
       displayBounds: DipRect
     }
 
+/**
+ * A confirmed action to actuate on the real screen: where to click (the target
+ * center, in global DIP coordinates) and, for "type", the text to enter.
+ */
+export interface TeachingActuation {
+  action: TeachingAction
+  point: DipPoint
+  text?: string
+}
+
 export interface TeachingSessionDependencies {
   capture: () => Promise<TeachingCapture>
   generate: (
     goal: string,
     history: string[],
-    screenshotPath: string
+    screenshotPath: string,
+    imageSize: { width: number; height: number }
   ) => Promise<TeachingStepResponse>
   remove: (screenshotPath: string) => Promise<void>
+  /**
+   * Performs a confirmed action on the real screen. Optional so callers that
+   * only guide (no input control) can omit it; `execute()` then reports that
+   * input automation is unavailable.
+   */
+  actuate?: (actuation: TeachingActuation) => Promise<void>
 }
 
 const TEACHING_STATES: TeachingState[] = ["step", "complete", "blocked"]
-const RESPONSE_KEYS = new Set(["state", "instruction", "target", "label"])
+const TEACHING_ACTIONS: TeachingAction[] = ["click", "type"]
+const RESPONSE_KEYS = new Set([
+  "state",
+  "instruction",
+  "target",
+  "label",
+  "action",
+  "text"
+])
 const TARGET_KEYS = new Set(["x", "y", "width", "height"])
 const MAX_INSTRUCTION_LENGTH = 500
 
@@ -219,6 +254,42 @@ function parseLabel(raw: unknown): string | undefined {
   return label
 }
 
+function parseAction(raw: unknown): TeachingAction {
+  if (raw === undefined) {
+    return "click"
+  }
+
+  if (
+    typeof raw !== "string" ||
+    !TEACHING_ACTIONS.includes(raw as TeachingAction)
+  ) {
+    throw new TeachingValidationError("action must be one of: click, type")
+  }
+
+  return raw as TeachingAction
+}
+
+function parseTypeText(
+  raw: unknown,
+  action: TeachingAction
+): string | undefined {
+  if (action === "type") {
+    if (typeof raw !== "string") {
+      throw new TeachingValidationError("text is required when action is type")
+    }
+    if (!raw.trim()) {
+      throw new TeachingValidationError("text must not be empty")
+    }
+    return raw
+  }
+
+  if (raw !== undefined) {
+    throw new TeachingValidationError("text is only allowed when action is type")
+  }
+
+  return undefined
+}
+
 export function parseTeachingResponse(raw: unknown): TeachingStepResponse {
   if (!isPlainObject(raw)) {
     throw new TeachingValidationError("response must be an object")
@@ -259,14 +330,21 @@ export function parseTeachingResponse(raw: unknown): TeachingStepResponse {
       throw new TeachingValidationError("step responses must include a target")
     }
 
+    const action = parseAction(raw.action)
+    const text = parseTypeText(raw.text, action)
+
     const step: TeachingStepResponseStep = {
       state,
       instruction,
-      target: parseTarget(raw.target)
+      target: parseTarget(raw.target),
+      action
     }
 
     if (label !== undefined) {
       step.label = label
+    }
+    if (text !== undefined) {
+      step.text = text
     }
 
     return step
@@ -276,6 +354,14 @@ export function parseTeachingResponse(raw: unknown): TeachingStepResponse {
     throw new TeachingValidationError(
       "target is only allowed when state is step"
     )
+  }
+  if (raw.action !== undefined) {
+    throw new TeachingValidationError(
+      "action is only allowed when state is step"
+    )
+  }
+  if (raw.text !== undefined) {
+    throw new TeachingValidationError("text is only allowed when state is step")
   }
 
   const terminal: TeachingStepResponseComplete | TeachingStepResponseBlocked =
@@ -309,6 +395,30 @@ export function screenshotPixelToDip(
   }
 }
 
+/**
+ * Convert Gemini's trained 0–1000 box space into screenshot pixels.
+ * (0,0) is top-left; (1000,1000) is bottom-right of the image.
+ */
+export function normalizedTeachingTargetToPixels(
+  target: TeachingTarget,
+  screenshotWidth: number,
+  screenshotHeight: number
+): TeachingTarget {
+  const toPixel = (value: number, size: number) => (value / 1000) * size
+
+  const converted: TeachingTarget = {
+    x: toPixel(target.x, screenshotWidth),
+    y: toPixel(target.y, screenshotHeight)
+  }
+  if (target.width !== undefined) {
+    converted.width = toPixel(target.width, screenshotWidth)
+  }
+  if (target.height !== undefined) {
+    converted.height = toPixel(target.height, screenshotHeight)
+  }
+  return converted
+}
+
 export function screenshotTargetToDipRect(
   target: TeachingTarget,
   capture: DisplayCaptureInfo
@@ -335,6 +445,14 @@ export function screenshotTargetToDipRect(
     y: origin.y,
     width,
     height
+  }
+}
+
+/** Center of a DIP rect in the same (global) coordinate space as the rect. */
+export function dipRectCenter(rect: DipRect): DipPoint {
+  return {
+    x: rect.x + rect.width / 2,
+    y: rect.y + rect.height / 2
   }
 }
 
@@ -374,11 +492,19 @@ function toTeachingResult(
   const label = step.label === undefined ? {} : { label: step.label }
 
   if (step.state === "step") {
+    const text = step.text === undefined ? {} : { text: step.text }
+    const pixelTarget = normalizedTeachingTargetToPixels(
+      step.target,
+      display.screenshotWidth,
+      display.screenshotHeight
+    )
     return {
       state: step.state,
       instruction: step.instruction,
       ...label,
-      target: screenshotTargetToDipRect(step.target, display),
+      action: step.action,
+      ...text,
+      target: screenshotTargetToDipRect(pixelTarget, display),
       displayId: display.displayId,
       displayBounds: { ...display.bounds }
     }
@@ -401,7 +527,15 @@ export class TeachingSessionCoordinator {
     operationInProgress: boolean
   } | null = null
 
+  /** The last "step" result, retained so `execute()` can actuate it. */
+  private pendingStep: Extract<TeachingResult, { state: "step" }> | null = null
+
   constructor(private readonly dependencies: TeachingSessionDependencies) {}
+
+  private rememberPending(result: TeachingResult): TeachingResult {
+    this.pendingStep = result.state === "step" ? result : null
+    return result
+  }
 
   public async start(rawGoal: string): Promise<TeachingResult> {
     const goal = rawGoal.trim()
@@ -432,7 +566,7 @@ export class TeachingSessionCoordinator {
     }
     session.history = [summarizeTeachingStep(result.step)]
     session.operationInProgress = false
-    return result.result
+    return this.rememberPending(result.result)
   }
 
   public async next(): Promise<TeachingResult> {
@@ -464,11 +598,58 @@ export class TeachingSessionCoordinator {
       summarizeTeachingStep(result.step)
     ].slice(-TeachingSessionCoordinator.MAX_HISTORY)
     session.operationInProgress = false
-    return result.result
+    return this.rememberPending(result.result)
+  }
+
+  /**
+   * Actuate the pending step's confirmed action on the real screen, then
+   * advance to the next step. Requires an `actuate` dependency and a pending
+   * "step" result. Reuses the same lifecycle/stale guards as `next()`.
+   */
+  public async execute(): Promise<TeachingResult> {
+    const session = this.session
+    if (!session) {
+      throw new Error("No active teaching session")
+    }
+    if (session.operationInProgress) {
+      throw new TeachingOperationInProgressError()
+    }
+
+    const pending = this.pendingStep
+    if (!pending) {
+      throw new Error("No teaching action to run")
+    }
+
+    const actuate = this.dependencies.actuate
+    if (!actuate) {
+      throw new Error("Input automation is unavailable")
+    }
+
+    session.operationInProgress = true
+    try {
+      await actuate({
+        action: pending.action,
+        point: dipRectCenter(pending.target),
+        ...(pending.text !== undefined ? { text: pending.text } : {})
+      })
+    } catch (error) {
+      if (this.session !== session) {
+        throw new TeachingSessionStaleError()
+      }
+      session.operationInProgress = false
+      throw error
+    }
+
+    if (this.session !== session) {
+      throw new TeachingSessionStaleError()
+    }
+    session.operationInProgress = false
+    return this.next()
   }
 
   public stop(): void {
     this.session = null
+    this.pendingStep = null
   }
 
   private async generate(
@@ -477,7 +658,10 @@ export class TeachingSessionCoordinator {
   ): Promise<{ step: TeachingStepResponse; result: TeachingResult }> {
     const capture = await this.dependencies.capture()
     try {
-      const step = await this.dependencies.generate(goal, history, capture.path)
+      const step = await this.dependencies.generate(goal, history, capture.path, {
+        width: capture.display.screenshotWidth,
+        height: capture.display.screenshotHeight
+      })
       return {
         step,
         result: toTeachingResult(step, capture.display)

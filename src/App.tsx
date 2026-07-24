@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react"
 import Solutions from "./_pages/Solutions"
 import { QueryClient, QueryClientProvider } from "react-query"
 import TeachingTargetOverlay from "./components/teaching/TeachingTargetOverlay"
+import { useClickThrough } from "./hooks/useClickThrough"
 
 const MainApp: React.FC = () => {
   const [queryClient] = useState(
@@ -20,6 +21,7 @@ const MainApp: React.FC = () => {
   )
   const [view, setView] = useState<"queue" | "solutions" | "debug">("queue")
   const containerRef = useRef<HTMLDivElement>(null)
+  useClickThrough()
 
   // Effect for height monitoring
   useEffect(() => {
@@ -62,11 +64,11 @@ const MainApp: React.FC = () => {
       updateHeight()
     })
 
+    // childList only — watching attributes/characterData fired setSize on every
+    // incidental class or text tick, which stutters an in-flight window drag.
     mutationObserver.observe(containerRef.current, {
       childList: true,
-      subtree: true,
-      attributes: true,
-      characterData: true
+      subtree: true
     })
 
     return () => {

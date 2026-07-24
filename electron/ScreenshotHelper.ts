@@ -2,16 +2,20 @@
 
 import path from "node:path"
 import fs from "node:fs"
-import { app, desktopCapturer, screen } from "electron"
+import { app, desktopCapturer, screen, systemPreferences } from "electron"
 import { v4 as uuidv4 } from "uuid"
-import screenshot from "screenshot-desktop"
 import sharp from "sharp"
 import {
   createTeachingDisplayCaptureInfo,
   TeachingCapture
 } from "./teaching"
+import { matchCaptureSource } from "./displayTopology"
+import { toDisplayDescriptor } from "./displayTopologyRuntime"
 
 export class ScreenshotHelper {
+  private static readonly SCREEN_PERMISSION_ERROR =
+    "Screen capture blocked by macOS. Grant Screen Recording permission to this app in System Settings → Privacy & Security → Screen Recording, then restart the app."
+
   private screenshotQueue: string[] = []
   private extraScreenshotQueue: string[] = []
   private readonly MAX_SCREENSHOTS = 5
@@ -31,12 +35,13 @@ export class ScreenshotHelper {
       "extra_screenshots"
     )
 
-    // Create directories if they don't exist
+    // Create directories if they don't exist. Recursive guards against the
+    // parent userData dir not existing yet (this runs before app.whenReady()).
     if (!fs.existsSync(this.screenshotDir)) {
-      fs.mkdirSync(this.screenshotDir)
+      fs.mkdirSync(this.screenshotDir, { recursive: true })
     }
     if (!fs.existsSync(this.extraScreenshotDir)) {
-      fs.mkdirSync(this.extraScreenshotDir)
+      fs.mkdirSync(this.extraScreenshotDir, { recursive: true })
     }
   }
 
@@ -45,27 +50,73 @@ export class ScreenshotHelper {
   }
 
   /**
-   * Resolve the screenshot-desktop `screen` index (0-based, primary-first) for the
-   * monitor under the cursor. screenshot-desktop numbers displays 0..N with the
-   * primary at 0 — NOT by Electron's display.id — so we map via primary + order.
-   * ponytail: primary is always exact; picking between multiple secondaries on 3+
-   * monitors is best-effort (screencapture's order isn't exposed). Match by pixel
-   * bounds if that ever matters.
+   * Pick the desktopCapturer screen source for the display under the cursor.
+   * Re-reads the display topology on every capture (monitors get plugged in and
+   * rearranged mid-session) and returns the display the chosen pixels actually
+   * belong to — which is not always the cursor's display when Electron reports
+   * an empty `display_id`. See matchCaptureSource for the matching rules.
    */
-  private resolveActiveScreenId(): number | undefined {
-    try {
-      const displays = screen.getAllDisplays()
-      if (displays.length <= 1) return undefined // single display → default capture
-      const primaryId = screen.getPrimaryDisplay().id
-      const active = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-      if (active.id === primaryId) return 0
-      const secondaries = displays.filter((d) => d.id !== primaryId)
-      const pos = secondaries.findIndex((d) => d.id === active.id)
-      return pos >= 0 ? pos + 1 : undefined
-    } catch (error) {
-      console.error("Error resolving active display:", error)
-      return undefined
+  private async pickActiveScreenSource() {
+    // Fail fast with an actionable message when Screen Recording is off —
+    // otherwise desktopCapturer silently returns a black frame.
+    if (process.platform === "darwin") {
+      const status = systemPreferences.getMediaAccessStatus("screen")
+      if (status === "denied" || status === "restricted") {
+        throw new Error(ScreenshotHelper.SCREEN_PERMISSION_ERROR)
+      }
     }
+
+    const activeDisplay = screen.getDisplayNearestPoint(
+      screen.getCursorScreenPoint()
+    )
+    const thumbnailSize = {
+      width: Math.ceil(activeDisplay.bounds.width * activeDisplay.scaleFactor),
+      height: Math.ceil(activeDisplay.bounds.height * activeDisplay.scaleFactor)
+    }
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize
+    })
+    if (sources.length === 0) {
+      throw new Error(ScreenshotHelper.SCREEN_PERMISSION_ERROR)
+    }
+
+    const match = matchCaptureSource(
+      sources.map((source) => ({
+        source,
+        id: source.id,
+        name: source.name,
+        display_id: source.display_id,
+        ...source.thumbnail.getSize()
+      })),
+      toDisplayDescriptor(activeDisplay),
+      screen.getAllDisplays().map(toDisplayDescriptor)
+    )
+
+    console.log(
+      `[capture] "${match.source.name}" (${match.source.width}x${match.source.height}) → display ${match.display.id} via ${match.matchedBy}`
+    )
+    match.warnings.forEach((warning) => console.warn(`[capture] ${warning}`))
+
+    return { source: match.source.source, display: match.display }
+  }
+
+  /**
+   * Capture the active display to `filepath` as PNG. Always writes a file on
+   * success so downstream reads can't ENOENT; throws an actionable permission
+   * error when the capture comes back empty (blocked Screen Recording).
+   */
+  private async captureDisplayToFile(filepath: string): Promise<void> {
+    const { source } = await this.pickActiveScreenSource()
+    if (source.thumbnail.isEmpty()) {
+      throw new Error(ScreenshotHelper.SCREEN_PERMISSION_ERROR)
+    }
+    const png = source.thumbnail.toPNG()
+    if (!png || png.length === 0) {
+      throw new Error(ScreenshotHelper.SCREEN_PERMISSION_ERROR)
+    }
+    await fs.promises.mkdir(path.dirname(filepath), { recursive: true })
+    await fs.promises.writeFile(filepath, png)
   }
 
   /**
@@ -74,22 +125,8 @@ export class ScreenshotHelper {
    * protection) and does not touch the screenshot queue.
    */
   public async captureForChat(): Promise<string> {
-    const screenId = this.resolveActiveScreenId()
     const filepath = path.join(this.screenshotDir, `${uuidv4()}.png`)
-    try {
-      await screenshot(
-        screenId !== undefined
-          ? { screen: screenId, filename: filepath }
-          : { filename: filepath }
-      )
-    } catch (error: any) {
-      if (String(error?.message ?? error).includes("could not create image")) {
-        throw new Error(
-          "Screen capture blocked by macOS. Grant Screen Recording permission to this app in System Settings → Privacy & Security → Screen Recording, then restart the app."
-        )
-      }
-      throw error
-    }
+    await this.captureDisplayToFile(filepath)
     return filepath
   }
 
@@ -98,27 +135,12 @@ export class ScreenshotHelper {
    * the caller owns unlinking it after the model request finishes.
    */
   public async captureForTeaching(): Promise<TeachingCapture> {
-    const activeDisplay = screen.getDisplayNearestPoint(
-      screen.getCursorScreenPoint()
-    )
-    const requestedSize = {
-      width: Math.ceil(activeDisplay.bounds.width * activeDisplay.scaleFactor),
-      height: Math.ceil(activeDisplay.bounds.height * activeDisplay.scaleFactor)
-    }
     const filepath = path.join(app.getPath("temp"), `quip-teaching-${uuidv4()}.png`)
 
     try {
-      const sources = await desktopCapturer.getSources({
-        types: ["screen"],
-        thumbnailSize: requestedSize
-      })
-      const source =
-        sources.find(
-          (candidate) => candidate.display_id === String(activeDisplay.id)
-        ) ?? (sources.length === 1 ? sources[0] : undefined)
-
-      if (!source) {
-        throw new Error("Could not identify the active display for capture.")
+      const { source, display } = await this.pickActiveScreenSource()
+      if (source.thumbnail.isEmpty()) {
+        throw new Error(ScreenshotHelper.SCREEN_PERMISSION_ERROR)
       }
 
       await fs.promises.writeFile(filepath, source.thumbnail.toPNG())
@@ -126,15 +148,10 @@ export class ScreenshotHelper {
 
       return {
         path: filepath,
-        display: createTeachingDisplayCaptureInfo(activeDisplay, metadata)
+        display: createTeachingDisplayCaptureInfo(display, metadata)
       }
     } catch (error: any) {
       await fs.promises.unlink(filepath).catch(() => {})
-      if (String(error?.message ?? error).includes("could not create image")) {
-        throw new Error(
-          "Screen capture blocked by macOS. Grant Screen Recording permission to this app in System Settings → Privacy & Security → Screen Recording, then restart the app."
-        )
-      }
       throw error
     }
   }
@@ -189,15 +206,10 @@ export class ScreenshotHelper {
       }
       
       let screenshotPath = ""
-      const screenId = this.resolveActiveScreenId()
-      const capture = (filename: string) =>
-        screenshot(
-          screenId !== undefined ? { screen: screenId, filename } : { filename }
-        )
 
       if (this.view === "queue") {
         screenshotPath = path.join(this.screenshotDir, `${uuidv4()}.png`)
-        await capture(screenshotPath)
+        await this.captureDisplayToFile(screenshotPath)
 
         this.screenshotQueue.push(screenshotPath)
         if (this.screenshotQueue.length > this.MAX_SCREENSHOTS) {
@@ -212,7 +224,7 @@ export class ScreenshotHelper {
         }
       } else {
         screenshotPath = path.join(this.extraScreenshotDir, `${uuidv4()}.png`)
-        await capture(screenshotPath)
+        await this.captureDisplayToFile(screenshotPath)
 
         this.extraScreenshotQueue.push(screenshotPath)
         if (this.extraScreenshotQueue.length > this.MAX_SCREENSHOTS) {

@@ -15,12 +15,16 @@ describe("teaching prompt and model response", () => {
   it("asks for exactly one concise instruction and the strict teaching schema", () => {
     const buildTeachingPrompt = (llmModule as any).buildTeachingPrompt
 
-    const prompt = buildTeachingPrompt("Share my screen", [
-      "[step] Open the Share menu."
-    ])
+    const prompt = buildTeachingPrompt(
+      "Share my screen",
+      ["[step] Open the Share menu."],
+      { width: 2560, height: 1600 }
+    )
 
     expect(prompt).toContain("Share my screen")
     expect(prompt).toContain("[step] Open the Share menu.")
+    expect(prompt).toContain("2560×1600")
+    expect(prompt).toMatch(/0–1000|0-1000/)
     expect(prompt).toMatch(/exactly one concise instruction/i)
     expect(prompt).toContain('"state": "step" | "complete" | "blocked"')
     expect(prompt).toMatch(/target.*only.*step/is)
@@ -47,7 +51,8 @@ describe("teaching prompt and model response", () => {
     const result = await (helper as any).generateTeachingStep(
       "Share my screen",
       ["[step] Open Zoom."],
-      "/tmp/screen.png"
+      "/tmp/screen.png",
+      { width: 2560, height: 1600 }
     )
 
     expect(result.state).toBe("step")
@@ -57,6 +62,12 @@ describe("teaching prompt and model response", () => {
       temperature: 0,
       candidateCount: 1
     })
+    // gemini-3.5-flash is a thinking model: maxOutputTokens is a TOTAL budget
+    // that includes invisible reasoning tokens. It must be large enough that
+    // the model can think AND still emit the full JSON without truncation
+    // (finishReason MAX_TOKENS). 350 was far too low.
+    expect(request.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(1024)
+    expect(request.contents[0].parts[0].text).toContain("2560×1600")
     expect(request.contents[0].parts[1]).toEqual({
       inlineData: { data: "png", mimeType: "image/png" }
     })
@@ -67,7 +78,10 @@ describe("teaching prompt and model response", () => {
     ;(helper as any).useOllama = true
 
     await expect(
-      (helper as any).generateTeachingStep("Do a task", [], "/missing.png")
+      (helper as any).generateTeachingStep("Do a task", [], "/missing.png", {
+        width: 100,
+        height: 100
+      })
     ).rejects.toThrow(/teaching.*gemini/i)
   })
 
@@ -80,6 +94,122 @@ describe("teaching prompt and model response", () => {
         JSON.stringify({ state: "step", instruction: "Click it." })
       )
     ).toThrow(/target/i)
+  })
+
+  it("parses Gemini output wrapped in a markdown code fence", () => {
+    const parseTeachingModelText = (llmModule as any).parseTeachingModelText
+
+    const payload = JSON.stringify({
+      state: "step",
+      instruction: "Click Share.",
+      target: { x: 10, y: 20, width: 30, height: 40 }
+    })
+
+    for (const fenced of [
+      "```json\n" + payload + "\n```",
+      "```\n" + payload + "\n```"
+    ]) {
+      const result = parseTeachingModelText(fenced)
+      expect(result.state).toBe("step")
+      expect(result.instruction).toBe("Click Share.")
+      expect(result.target).toEqual({ x: 10, y: 20, width: 30, height: 40 })
+    }
+  })
+})
+
+describe("teaching action schema (click + type)", () => {
+  const parseTeachingResponse = (raw: unknown) =>
+    (teachingModule as any).parseTeachingResponse(raw)
+
+  it("defaults a step's action to click when the model omits it", () => {
+    const step = parseTeachingResponse({
+      state: "step",
+      instruction: "Click Share.",
+      target: { x: 10, y: 20 }
+    })
+    expect(step.action).toBe("click")
+    expect(step.text).toBeUndefined()
+  })
+
+  it("accepts a type action with text", () => {
+    const step = parseTeachingResponse({
+      state: "step",
+      instruction: "Type the search query.",
+      action: "type",
+      text: "discover weekly",
+      target: { x: 10, y: 20 }
+    })
+    expect(step.action).toBe("type")
+    expect(step.text).toBe("discover weekly")
+  })
+
+  it("rejects a type action without text", () => {
+    expect(() =>
+      parseTeachingResponse({
+        state: "step",
+        instruction: "Type something.",
+        action: "type",
+        target: { x: 10, y: 20 }
+      })
+    ).toThrow(/text/i)
+  })
+
+  it("rejects text on a click action", () => {
+    expect(() =>
+      parseTeachingResponse({
+        state: "step",
+        instruction: "Click it.",
+        action: "click",
+        text: "nope",
+        target: { x: 10, y: 20 }
+      })
+    ).toThrow(/text/i)
+  })
+
+  it("rejects an unknown action value", () => {
+    expect(() =>
+      parseTeachingResponse({
+        state: "step",
+        instruction: "Scroll down.",
+        action: "scroll",
+        target: { x: 10, y: 20 }
+      })
+    ).toThrow(/action/i)
+  })
+
+  it("rejects action or text on a terminal state", () => {
+    expect(() =>
+      parseTeachingResponse({
+        state: "complete",
+        instruction: "All done.",
+        action: "click"
+      })
+    ).toThrow(/action/i)
+  })
+})
+
+describe("dipRectCenter", () => {
+  it("returns the center point of a DIP rect", () => {
+    const dipRectCenter = (teachingModule as any).dipRectCenter
+    expect(dipRectCenter({ x: 10, y: 20, width: 40, height: 60 })).toEqual({
+      x: 30,
+      y: 50
+    })
+  })
+})
+
+describe("normalizedTeachingTargetToPixels", () => {
+  it("scales Gemini 0–1000 coords into screenshot pixels", () => {
+    const normalizedTeachingTargetToPixels = (teachingModule as any)
+      .normalizedTeachingTargetToPixels
+
+    expect(
+      normalizedTeachingTargetToPixels(
+        { x: 250, y: 500, width: 100, height: 50 },
+        2000,
+        1000
+      )
+    ).toEqual({ x: 500, y: 500, width: 200, height: 50 })
   })
 })
 
@@ -127,9 +257,11 @@ describe("TeachingSessionCoordinator", () => {
     generate = vi.fn().mockResolvedValue({
       state: "step",
       instruction: "Click Share.",
+      action: "click",
       target: { x: 200, y: 100, width: 80, height: 40 }
     }),
-    remove = vi.fn().mockResolvedValue(undefined)
+    remove = vi.fn().mockResolvedValue(undefined),
+    actuate?: ReturnType<typeof vi.fn>
   ) {
     let captureNumber = 0
     const capture = vi.fn(async () => ({
@@ -138,14 +270,15 @@ describe("TeachingSessionCoordinator", () => {
     }))
     const Coordinator = (teachingModule as any).TeachingSessionCoordinator
     return {
-      coordinator: new Coordinator({ capture, generate, remove }),
+      coordinator: new Coordinator({ capture, generate, remove, actuate }),
       capture,
       generate,
-      remove
+      remove,
+      actuate
     }
   }
 
-  it("starts a session, maps target pixels to display DIP, and cleans up", async () => {
+  it("starts a session, maps normalized targets to display DIP, and cleans up", async () => {
     const { coordinator, generate, remove } = makeCoordinator()
 
     const result = await coordinator.start("  Share my screen  ")
@@ -153,12 +286,16 @@ describe("TeachingSessionCoordinator", () => {
     expect(generate).toHaveBeenCalledWith(
       "Share my screen",
       [],
-      "/tmp/teaching-1.png"
+      "/tmp/teaching-1.png",
+      { width: 2560, height: 1600 }
     )
+    // Mock target {200,100,80,40} is 0–1000 space on a 2560×1600 PNG /
+    // 1280×800 DIP display at (1440, -100).
     expect(result).toEqual({
       state: "step",
       instruction: "Click Share.",
-      target: { x: 1540, y: -50, width: 40, height: 20 },
+      action: "click",
+      target: { x: 1696, y: -20, width: 102.4, height: 32 },
       displayId: 7,
       displayBounds: display.bounds
     })
@@ -452,5 +589,82 @@ describe("TeachingSessionCoordinator", () => {
     )
 
     consoleError.mockRestore()
+  })
+
+  it("actuates a pending click at the target center, then advances", async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        state: "step",
+        instruction: "Click Share.",
+        action: "click",
+        target: { x: 200, y: 100, width: 80, height: 40 }
+      })
+      .mockResolvedValueOnce({ state: "complete", instruction: "Shared." })
+    const actuate = vi.fn().mockResolvedValue(undefined)
+    const { coordinator } = makeCoordinator(generate, undefined, actuate)
+
+    await coordinator.start("Share my screen")
+    const result = await coordinator.execute()
+
+    expect(actuate).toHaveBeenCalledWith({
+      action: "click",
+      point: { x: 1747.2, y: -4 }
+    })
+    expect(result).toMatchObject({ state: "complete", instruction: "Shared." })
+  })
+
+  it("actuates a pending type action with click-to-focus then text", async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        state: "step",
+        instruction: "Type the query.",
+        action: "type",
+        text: "discover weekly",
+        target: { x: 200, y: 100, width: 80, height: 40 }
+      })
+      .mockResolvedValueOnce({ state: "complete", instruction: "Typed." })
+    const actuate = vi.fn().mockResolvedValue(undefined)
+    const { coordinator } = makeCoordinator(generate, undefined, actuate)
+
+    await coordinator.start("Search")
+    await coordinator.execute()
+
+    expect(actuate).toHaveBeenCalledWith({
+      action: "type",
+      point: { x: 1747.2, y: -4 },
+      text: "discover weekly"
+    })
+  })
+
+  it("rejects execute without an active session", async () => {
+    const { coordinator, actuate } = makeCoordinator(
+      undefined,
+      undefined,
+      vi.fn()
+    )
+    await expect(coordinator.execute()).rejects.toThrow(
+      /no active teaching session/i
+    )
+    expect(actuate).not.toHaveBeenCalled()
+  })
+
+  it("rejects execute when the pending step is terminal", async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValue({ state: "complete", instruction: "Done." })
+    const actuate = vi.fn()
+    const { coordinator } = makeCoordinator(generate, undefined, actuate)
+    await coordinator.start("Anything")
+
+    await expect(coordinator.execute()).rejects.toThrow(/no teaching action/i)
+    expect(actuate).not.toHaveBeenCalled()
+  })
+
+  it("rejects execute when input automation is unavailable", async () => {
+    const { coordinator } = makeCoordinator()
+    await coordinator.start("Share my screen")
+    await expect(coordinator.execute()).rejects.toThrow(/input automation/i)
   })
 })

@@ -5,7 +5,11 @@ import {
   TeachingStepResponse
 } from "./teaching"
 
-export function buildTeachingPrompt(goal: string, history: string[]): string {
+export function buildTeachingPrompt(
+  goal: string,
+  history: string[],
+  imageSize: { width: number; height: number }
+): string {
   const priorSteps =
     history.length > 0
       ? history.map((step, index) => `${index + 1}. ${step}`).join("\n")
@@ -17,26 +21,42 @@ ${goal}
 Prior step summaries:
 ${priorSteps}
 
-Inspect the attached screenshot and return exactly one concise instruction for only the immediate next action. Do not provide a list or multiple actions.
+Inspect the attached screenshot (${imageSize.width}×${imageSize.height} pixels) and return exactly one concise instruction for only the immediate next action. Do not provide a list or multiple actions. After you respond, the user confirms and the app performs the action for them, so choose one small, safe, reversible action at a time.
 
 Return only one strict JSON object with this exact contract:
 {
   "state": "step" | "complete" | "blocked",
   "instruction": "one concise instruction",
   "label": "optional short visible label",
+  "action": "click" | "type",
+  "text": "text to type (only when action is type)",
   "target": { "x": number, "y": number, "width": number, "height": number }
 }
 
-Use state "step" when the user can take a visible next action. target is required only for state "step" and must locate that action in screenshot pixel coordinates; x/y are its top-left corner and width/height may be omitted when unavailable.
+Use state "step" when the user can take a visible next action. target is required only for state "step".
+IMPORTANT — target coordinates use Gemini's normalized 0–1000 space (NOT raw screenshot pixels):
+- (0, 0) is the top-left of the image; (1000, 1000) is the bottom-right.
+- x/y are the top-left corner of the UI element in that 0–1000 space.
+- width/height are also in 0–1000 space. Always provide them so the click lands on the element center.
+- Example: an element covering the middle of the screen might be {"x":400,"y":450,"width":200,"height":100}.
+Set action to "click" to click the target, or "type" to click the target and then enter text. Include "text" only when action is "type"; omit it for clicks. Default to "click" when unsure.
 Use state "complete" when the screenshot shows the goal is finished.
 Use state "blocked" when no safe visible next action can be identified, and briefly explain what is missing.
-For "complete" and "blocked", omit target. Omit label when it is not useful. Do not add properties, markdown, or commentary.`
+For "complete" and "blocked", omit target, action, and text. Omit label when it is not useful. Do not add properties, markdown, or commentary.`
 }
 
 export function parseTeachingModelText(text: string): TeachingStepResponse {
+  // Gemini often wraps JSON in a ```json code fence even when told not to;
+  // strip it before parsing, mirroring cleanJsonResponse on the other paths.
+  const cleaned = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim()
+
   let parsed: unknown
   try {
-    parsed = JSON.parse(text.trim())
+    parsed = JSON.parse(cleaned)
   } catch {
     throw new Error("Invalid teaching JSON response")
   }
@@ -348,7 +368,8 @@ export class LLMHelper {
   public async generateTeachingStep(
     goal: string,
     history: string[],
-    screenshotPath: string
+    screenshotPath: string,
+    imageSize: { width: number; height: number }
   ): Promise<TeachingStepResponse> {
     if (this.useOllama) {
       throw new Error(
@@ -364,17 +385,49 @@ export class LLMHelper {
       contents: [
         {
           role: "user",
-          parts: [{ text: buildTeachingPrompt(goal, history) }, imagePart]
+          parts: [
+            { text: buildTeachingPrompt(goal, history, imageSize) },
+            imagePart
+          ]
         }
       ],
       generationConfig: {
         temperature: 0,
         candidateCount: 1,
-        maxOutputTokens: 350
+        // gemini-3.5-flash is a thinking model and maxOutputTokens caps the
+        // TOTAL output including invisible reasoning tokens. 350 was consumed
+        // by thinking, truncating the JSON (finishReason MAX_TOKENS). Give
+        // generous headroom so the model can think AND emit the full object;
+        // it stops naturally (finishReason STOP) once done, so a high cap only
+        // adds safety, not cost. Override with TEACHING_MAX_OUTPUT_TOKENS.
+        maxOutputTokens: Number(process.env.TEACHING_MAX_OUTPUT_TOKENS) || 8192
       }
     })
     const response = await result.response
-    return parseTeachingModelText(response.text())
+
+    const finishReason = (response as any).candidates?.[0]?.finishReason
+    let rawText = ""
+    try {
+      rawText = response.text()
+    } catch (err) {
+      console.error("[teaching] response.text() threw:", err)
+    }
+
+    // Turn a truncated/empty response into a clear, actionable error instead of
+    // a cryptic "Invalid teaching JSON response".
+    if (finishReason === "MAX_TOKENS") {
+      throw new Error(
+        "Teaching response was cut off before completing (MAX_TOKENS). " +
+          "Increase maxOutputTokens or simplify the step and retry."
+      )
+    }
+    if (!rawText.trim()) {
+      throw new Error(
+        `Teaching model returned no text (finishReason: ${finishReason ?? "unknown"}).`
+      )
+    }
+
+    return parseTeachingModelText(rawText)
   }
 
   public isUsingOllama(): boolean {

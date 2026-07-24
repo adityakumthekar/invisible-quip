@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { cn } from "../../lib/utils"
 import { SHORTCUTS } from "../../lib/shortcuts"
+import { beginWindowDrag, endWindowDrag } from "../../lib/windowDrag"
 import MicWaveform from "./MicWaveform"
 
 interface ControlBarProps {
@@ -51,6 +52,30 @@ const ControlBar: React.FC<ControlBarProps> = ({
   const [isTooltipVisible, setIsTooltipVisible] = useState(false)
   const tooltipRef = useRef<HTMLDivElement>(null)
 
+  // End the drag on any release, even one the grip never sees (window blur,
+  // pointer lost outside the transparent window).
+  useEffect(() => {
+    const stop = () => endWindowDrag()
+    window.addEventListener("pointerup", stop)
+    window.addEventListener("pointercancel", stop)
+    window.addEventListener("blur", stop)
+    return () => {
+      window.removeEventListener("pointerup", stop)
+      window.removeEventListener("pointercancel", stop)
+      window.removeEventListener("blur", stop)
+      endWindowDrag()
+    }
+  }, [])
+
+  const onGripPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    // Pointer capture keeps the release on this element even once the window
+    // has slid out from under the cursor.
+    event.currentTarget.setPointerCapture(event.pointerId)
+    beginWindowDrag()
+  }
+
   useEffect(() => {
     let tooltipHeight = 0
     if (tooltipRef.current && isTooltipVisible) {
@@ -62,6 +87,20 @@ const ControlBar: React.FC<ControlBarProps> = ({
   return (
     <div className="w-fit relative">
       <div className="glass-bar draggable-area flex items-center gap-1 px-2 py-1.5">
+        {/* Dedicated grip. Explicitly no-drag: Chromium's app-region drag is
+            unreliable on this transparent click-through window, so the move is
+            driven manually from the main process instead. */}
+        <div
+          className="drag-grip no-drag flex items-center justify-center self-stretch px-1 -ml-0.5 mr-0.5 shrink-0"
+          title="Drag to move"
+          aria-hidden
+          onPointerDown={onGripPointerDown}
+          onPointerUp={() => endWindowDrag()}
+          onPointerCancel={() => endWindowDrag()}
+        >
+          <span className="drag-grip-dots" />
+        </div>
+
         {isRecording && micStream && (
           <MicWaveform stream={micStream} seconds={recordingSeconds} />
         )}

@@ -11,6 +11,7 @@ const step: TeachingResult = {
   state: "step",
   instruction: "Open Settings.",
   label: "Settings",
+  action: "click",
   target: { x: 10, y: 20, width: 30, height: 40 },
   displayId: 1,
   displayBounds: { x: 0, y: 0, width: 1440, height: 900 }
@@ -99,7 +100,8 @@ describe("executeTeachingOperation", () => {
   it("gates start for Ollama without invoking teaching IPC", async () => {
     const api = {
       start: vi.fn(),
-      next: vi.fn()
+      next: vi.fn(),
+      execute: vi.fn()
     }
 
     const outcome = await executeTeachingOperation(
@@ -117,7 +119,8 @@ describe("executeTeachingOperation", () => {
   it("does not invoke teaching IPC after the request becomes stale", async () => {
     const api = {
       start: vi.fn().mockResolvedValue(step),
-      next: vi.fn().mockResolvedValue(step)
+      next: vi.fn().mockResolvedValue(step),
+      execute: vi.fn().mockResolvedValue(step)
     }
 
     const outcome = await executeTeachingOperation(
@@ -136,7 +139,8 @@ describe("executeTeachingOperation", () => {
   it("invokes the operation selected for retry", async () => {
     const api = {
       start: vi.fn().mockResolvedValue(step),
-      next: vi.fn().mockResolvedValue(step)
+      next: vi.fn().mockResolvedValue(step),
+      execute: vi.fn().mockResolvedValue(step)
     }
 
     const outcome = await executeTeachingOperation(
@@ -149,5 +153,26 @@ describe("executeTeachingOperation", () => {
     expect(outcome).toEqual({ kind: "result", result: step })
     expect(api.next).toHaveBeenCalledOnce()
     expect(api.start).not.toHaveBeenCalled()
+  })
+
+  it("invokes execute to perform the confirmed action", async () => {
+    const nextStep: TeachingResult = { ...step, instruction: "Now click Save." }
+    const api = {
+      start: vi.fn().mockResolvedValue(step),
+      next: vi.fn().mockResolvedValue(step),
+      execute: vi.fn().mockResolvedValue(nextStep)
+    }
+
+    const outcome = await executeTeachingOperation(
+      "execute",
+      "Learn settings",
+      "gemini",
+      api
+    )
+
+    expect(outcome).toEqual({ kind: "result", result: nextStep })
+    expect(api.execute).toHaveBeenCalledOnce()
+    expect(api.start).not.toHaveBeenCalled()
+    expect(api.next).not.toHaveBeenCalled()
   })
 })

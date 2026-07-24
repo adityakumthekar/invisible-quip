@@ -7,6 +7,9 @@ export interface ElectronAPI {
     width: number
     height: number
   }) => Promise<void>
+  setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
+  startWindowDrag: () => Promise<void>
+  endWindowDrag: () => Promise<void>
   getScreenshots: () => Promise<Array<{ path: string; preview: string }>>
   deleteScreenshot: (path: string) => Promise<{ success: boolean; error?: string }>
   onScreenshotTaken: (callback: (data: { path: string; preview: string }) => void) => () => void
@@ -21,21 +24,25 @@ export interface ElectronAPI {
   onSolutionSuccess: (callback: (data: any) => void) => () => void
   onUnauthorized: (callback: () => void) => () => void
   onDebugError: (callback: (error: string) => void) => () => void
-  takeScreenshot: () => Promise<void>
+  takeScreenshot: () => Promise<{ path: string; preview: string }>
   moveWindowLeft: () => Promise<void>
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
   analyzeAudioFromBase64: (data: string, mimeType: string) => Promise<{ text: string; timestamp: number }>
   analyzeAudioFile: (path: string) => Promise<{ text: string; timestamp: number }>
-  analyzeImageFile: (path: string) => Promise<void>
+  analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>
+  teachExecute: () => Promise<TeachingResult>
   teachStop: () => Promise<{ success: true }>
   onTeachingOverlayTarget: (
     callback: (data: TeachingOverlayTargetEvent) => void
   ) => () => void
   onTeachingOverlayClear: (callback: () => void) => () => void
+  onTeachingHotkey: (
+    callback: (kind: "execute" | "abort") => void
+  ) => () => void
   teachingOverlayReady: () => Promise<boolean>
   privacyGetStatus: () => Promise<PrivacyGateStatus>
   privacyAcknowledge: () => Promise<PrivacyGateStatus>

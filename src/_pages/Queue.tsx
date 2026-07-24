@@ -53,6 +53,14 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   )
   const teachingRequestId = useRef(0)
   const teachingInFlight = useRef(false)
+  // Latest-value refs so the global-hotkey listener (subscribed once) always
+  // sees the current teaching state and handlers.
+  const runTeachingOperationRef = useRef<(op: TeachingOperation) => void>(
+    () => {}
+  )
+  const stopTeachingRef = useRef<() => void>(() => {})
+  const teachingPhaseRef = useRef(teachingSession.phase)
+  const teachingOpenRef = useRef(teachingOpen)
   const [privacyStatus, setPrivacyStatus] = useState<PrivacyGateStatus | null>(null)
   const [privacyChecking, setPrivacyChecking] = useState(false)
   const [privacyError, setPrivacyError] = useState<string | null>(null)
@@ -211,7 +219,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         provider,
         {
           start: window.electronAPI.teachStart,
-          next: window.electronAPI.teachNext
+          next: window.electronAPI.teachNext,
+          execute: window.electronAPI.teachExecute
         },
         () => requestId === teachingRequestId.current
       )
@@ -251,6 +260,45 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       void refreshPrivacyStatus()
     }
   }
+
+  // Keep the latest-value refs current for the global-hotkey listener.
+  useEffect(() => {
+    runTeachingOperationRef.current = (op) => void runTeachingOperation(op)
+    stopTeachingRef.current = stopTeaching
+    teachingPhaseRef.current = teachingSession.phase
+    teachingOpenRef.current = teachingOpen
+  })
+
+  // Global execute/abort hotkeys (Cmd/Ctrl+Shift+Enter / +Backspace). The main
+  // process signals here so the panel and overlay update from one round-trip.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onTeachingHotkey((kind) => {
+      if (kind === "abort") {
+        if (teachingOpenRef.current) stopTeachingRef.current()
+        return
+      }
+      if (teachingPhaseRef.current === "step") {
+        runTeachingOperationRef.current("execute")
+      }
+    })
+    return () => {
+      unsubscribe && unsubscribe()
+    }
+  }, [])
+
+  // Esc aborts while the teaching panel is focused (the global Backspace combo
+  // covers the case where focus has moved to the app being controlled).
+  useEffect(() => {
+    if (!teachingOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        stopTeaching()
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [teachingOpen])
 
   const handleRecordClick = async () => {
     if (!isRecording) {
@@ -333,7 +381,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     const updateDimensions = () => {
       if (contentRef.current) {
         let contentHeight = contentRef.current.scrollHeight
-        const contentWidth = Math.max(contentRef.current.scrollWidth, 720)
+        const contentWidth = contentRef.current.scrollWidth
         if (isTooltipVisible) contentHeight += tooltipHeight
         window.electronAPI.updateContentDimensions({
           width: contentWidth,
@@ -428,7 +476,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   return (
     <div
       ref={contentRef}
-      className="select-none relative w-full pointer-events-auto"
+      className="select-none relative w-full"
     >
       <div className="px-2 py-1 space-y-3">
         <Toast

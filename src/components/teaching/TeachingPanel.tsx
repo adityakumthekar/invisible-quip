@@ -225,6 +225,25 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
               <span className="glass-text">{session.result.label}</span>
             </p>
           )}
+          {session.result.state === "step" && (
+            <div className="mt-3 rounded-lg bg-white/5 px-2.5 py-2">
+              <p className="text-[11px] glass-text">
+                {session.result.action === "type" ? (
+                  <>
+                    Will click, then type{" "}
+                    <span className="glass-heading">
+                      “{session.result.text}”
+                    </span>
+                  </>
+                ) : (
+                  "Will click the highlighted target"
+                )}
+              </p>
+              <p className="mt-1 text-[10px] glass-muted">
+                Press ⌘/Ctrl+⇧+Enter to perform · Esc to stop
+              </p>
+            </div>
+          )}
         </div>
       )}
 

@@ -31,49 +31,139 @@ export class WindowHelper {
   // Initialize with explicit number type and 0 value
   private screenWidth: number = 0
   private screenHeight: number = 0
-  private step: number = 0
+  /** Pixels to nudge per Cmd/Ctrl+Arrow. Was left at 0, so arrows did nothing. */
+  private step: number = 60
   private currentX: number = 0
   private currentY: number = 0
+  /** When true, clicks pass through; mousemove still reaches the renderer via `forward`. */
+  private ignoringMouseEvents: boolean = true
+  /** Active manual grip drag (see startWindowDrag). */
+  private dragSession: {
+    timer: NodeJS.Timeout
+    offsetX: number
+    offsetY: number
+  } | null = null
 
   constructor(appState: AppState) {
     this.appState = appState
   }
 
-  public setWindowDimensions(width: number, height: number): void {
+  /**
+   * Selective click-through: ignore empty areas (`true` + forward) so apps underneath
+   * receive clicks; disable ignore when the cursor is over interactive glass UI.
+   */
+  public setIgnoreMouseEvents(ignore: boolean): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+    if (this.ignoringMouseEvents === ignore) return
+    this.ignoringMouseEvents = ignore
+    if (ignore) {
+      this.mainWindow.setIgnoreMouseEvents(true, { forward: true })
+    } else {
+      this.mainWindow.setIgnoreMouseEvents(false)
+    }
+  }
+
+  /**
+   * Move the window with the cursor until stopWindowDrag().
+   *
+   * Chromium's `-webkit-app-region: drag` is unusable here: on a transparent
+   * window running setIgnoreMouseEvents(true, { forward: true }) the drag
+   * gesture arrives as a mouseleave with `buttons === 0`, so the renderer turns
+   * click-through back on mid-gesture and the window snaps back. Tracking the
+   * OS cursor from the main process sidesteps the renderer entirely — the same
+   * reason Cmd+arrows always worked.
+   */
+  public startWindowDrag(): void {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return
 
-    // Get current window position
-    const [currentX, currentY] = this.mainWindow.getPosition()
+    this.stopWindowDrag()
+
+    const cursor = screen.getCursorScreenPoint()
+    const [x, y] = this.mainWindow.getPosition()
+
+    // Stay interactive for the whole gesture; the renderer's click-through
+    // bookkeeping must not fire while the window is following the cursor.
+    this.setIgnoreMouseEvents(false)
+
+    this.dragSession = {
+      offsetX: cursor.x - x,
+      offsetY: cursor.y - y,
+      timer: setInterval(() => this.followCursor(), 16)
+    }
+  }
+
+  public stopWindowDrag(): void {
+    if (!this.dragSession) return
+    clearInterval(this.dragSession.timer)
+    this.dragSession = null
+    this.syncPositionFromWindow()
+  }
+
+  public isDraggingWindow(): boolean {
+    return this.dragSession !== null
+  }
+
+  private followCursor(): void {
+    if (!this.dragSession) return
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      this.stopWindowDrag()
+      return
+    }
+
+    const cursor = screen.getCursorScreenPoint()
+    // setPosition, never setBounds — rewriting size mid-drag makes the window
+    // jump and re-triggers the resize observers.
+    this.mainWindow.setPosition(
+      Math.round(cursor.x - this.dragSession.offsetX),
+      Math.round(cursor.y - this.dragSession.offsetY)
+    )
+  }
+
+  public setWindowDimensions(width: number, height: number): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+    // Resizing mid-drag fights followCursor and makes the window stutter.
+    if (this.dragSession) return
 
     // Work area of the display the window currently sits on (multi-monitor aware)
-    const workArea = screen.getDisplayMatching(this.mainWindow.getBounds()).workArea
+    const bounds = this.mainWindow.getBounds()
+    const workArea = screen.getDisplayMatching(bounds).workArea
 
     // Allow wider overlay for two-panel glass layout
     const maxAllowedWidth = Math.floor(
       workArea.width * (this.appState.getHasDebugged() ? 0.8 : 0.7)
     )
 
-    // Ensure width doesn't exceed max allowed width and height is reasonable
     const newWidth = Math.min(width + 32, maxAllowedWidth)
     const newHeight = Math.ceil(height)
 
-    // Keep the window within its current display's horizontal bounds
-    const minX = workArea.x
+    // Skip no-op updates — setBounds mid-drag cancels native window dragging.
+    if (
+      this.windowSize?.width === newWidth &&
+      this.windowSize?.height === newHeight
+    ) {
+      return
+    }
+
+    // Resize in place. Prefer setSize so we don't rewrite x/y (which aborts drag).
+    this.mainWindow.setSize(newWidth, newHeight)
+
+    // If the window now hangs past the right edge after shrinking/growing, nudge X only.
+    const [currentX, currentY] = this.mainWindow.getPosition()
     const maxX = workArea.x + workArea.width - newWidth
-    const newX = Math.min(Math.max(currentX, minX), maxX)
+    const minX = workArea.x
+    if (currentX > maxX || currentX < minX) {
+      const newX = Math.min(Math.max(currentX, minX), maxX)
+      this.mainWindow.setPosition(newX, currentY)
+      this.windowPosition = { x: newX, y: currentY }
+      this.currentX = newX
+      this.currentY = currentY
+    } else {
+      this.windowPosition = { x: currentX, y: currentY }
+      this.currentX = currentX
+      this.currentY = currentY
+    }
 
-    // Update window bounds
-    this.mainWindow.setBounds({
-      x: newX,
-      y: currentY,
-      width: newWidth,
-      height: newHeight
-    })
-
-    // Update internal state
-    this.windowPosition = { x: newX, y: currentY }
     this.windowSize = { width: newWidth, height: newHeight }
-    this.currentX = newX
   }
 
   public createWindow(): void {
@@ -118,6 +208,10 @@ export class WindowHelper {
     } 
     this.mainWindow.setSkipTaskbar(invisible)
     this.mainWindow.setAlwaysOnTop(true)
+
+    // Pass clicks through transparent regions; renderer toggles this when over UI.
+    this.ignoringMouseEvents = true
+    this.mainWindow.setIgnoreMouseEvents(true, { forward: true })
 
     this.mainWindow.loadURL(startUrl).catch((err) => {
       console.error("Failed to load URL:", err)
@@ -171,6 +265,7 @@ export class WindowHelper {
     })
 
     this.mainWindow.on("closed", () => {
+      this.stopWindowDrag()
       this.mainWindow = null
       this.isWindowVisible = false
       this.windowPosition = null
@@ -279,22 +374,16 @@ export class WindowHelper {
     this.mainWindow.setOpacity(clampOpacity(value))
   }
 
-  // New methods for window movement
-  // ponytail: nudge still clamps to primary screen size; widen to current display if users report it.
+  // New methods for window movement — nudge against the display the window is on.
   public moveWindowRight(): void {
     if (!this.mainWindow) return
 
-    const windowWidth = this.windowSize?.width || 0
-    const halfWidth = windowWidth / 2
+    this.syncPositionFromWindow()
+    const workArea = screen.getDisplayMatching(this.mainWindow.getBounds()).workArea
+    const windowWidth = this.windowSize?.width || this.mainWindow.getBounds().width
+    const maxX = workArea.x + workArea.width - Math.min(windowWidth, workArea.width)
 
-    // Ensure currentX and currentY are numbers
-    this.currentX = Number(this.currentX) || 0
-    this.currentY = Number(this.currentY) || 0
-
-    this.currentX = Math.min(
-      this.screenWidth - halfWidth,
-      this.currentX + this.step
-    )
+    this.currentX = Math.min(maxX, this.currentX + this.step)
     this.mainWindow.setPosition(
       Math.round(this.currentX),
       Math.round(this.currentY)
@@ -304,14 +393,10 @@ export class WindowHelper {
   public moveWindowLeft(): void {
     if (!this.mainWindow) return
 
-    const windowWidth = this.windowSize?.width || 0
-    const halfWidth = windowWidth / 2
+    this.syncPositionFromWindow()
+    const workArea = screen.getDisplayMatching(this.mainWindow.getBounds()).workArea
 
-    // Ensure currentX and currentY are numbers
-    this.currentX = Number(this.currentX) || 0
-    this.currentY = Number(this.currentY) || 0
-
-    this.currentX = Math.max(-halfWidth, this.currentX - this.step)
+    this.currentX = Math.max(workArea.x, this.currentX - this.step)
     this.mainWindow.setPosition(
       Math.round(this.currentX),
       Math.round(this.currentY)
@@ -321,17 +406,14 @@ export class WindowHelper {
   public moveWindowDown(): void {
     if (!this.mainWindow) return
 
-    const windowHeight = this.windowSize?.height || 0
-    const halfHeight = windowHeight / 2
+    this.syncPositionFromWindow()
+    const workArea = screen.getDisplayMatching(this.mainWindow.getBounds()).workArea
+    const windowHeight =
+      this.windowSize?.height || this.mainWindow.getBounds().height
+    const maxY =
+      workArea.y + workArea.height - Math.min(windowHeight, workArea.height)
 
-    // Ensure currentX and currentY are numbers
-    this.currentX = Number(this.currentX) || 0
-    this.currentY = Number(this.currentY) || 0
-
-    this.currentY = Math.min(
-      this.screenHeight - halfHeight,
-      this.currentY + this.step
-    )
+    this.currentY = Math.min(maxY, this.currentY + this.step)
     this.mainWindow.setPosition(
       Math.round(this.currentX),
       Math.round(this.currentY)
@@ -341,17 +423,21 @@ export class WindowHelper {
   public moveWindowUp(): void {
     if (!this.mainWindow) return
 
-    const windowHeight = this.windowSize?.height || 0
-    const halfHeight = windowHeight / 2
+    this.syncPositionFromWindow()
+    const workArea = screen.getDisplayMatching(this.mainWindow.getBounds()).workArea
 
-    // Ensure currentX and currentY are numbers
-    this.currentX = Number(this.currentX) || 0
-    this.currentY = Number(this.currentY) || 0
-
-    this.currentY = Math.max(-halfHeight, this.currentY - this.step)
+    this.currentY = Math.max(workArea.y, this.currentY - this.step)
     this.mainWindow.setPosition(
       Math.round(this.currentX),
       Math.round(this.currentY)
     )
+  }
+
+  private syncPositionFromWindow(): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+    const [x, y] = this.mainWindow.getPosition()
+    this.currentX = x
+    this.currentY = y
+    this.windowPosition = { x, y }
   }
 }

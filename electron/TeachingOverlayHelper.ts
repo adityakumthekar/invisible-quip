@@ -83,7 +83,8 @@ export class TeachingOverlayHelper {
     const { contentProtection, ...windowOptions } = policy
     const overlayWindow = new BrowserWindow(windowOptions)
     this.overlayWindow = overlayWindow
-    this.replay.activate(overlayWindow.webContents)
+    const renderer = overlayWindow.webContents
+    this.replay.activate(renderer)
 
     overlayWindow.setIgnoreMouseEvents(true)
     overlayWindow.setContentProtection(contentProtection)
@@ -93,7 +94,10 @@ export class TeachingOverlayHelper {
     overlayWindow.setAlwaysOnTop(true, "screen-saver")
 
     overlayWindow.on("closed", () => {
-      this.replay.deactivate(overlayWindow.webContents)
+      // The window (and its webContents) is already destroyed here, so we must
+      // not read overlayWindow.webContents — that accessor throws "Object has
+      // been destroyed". deactivate() only needs the renderer by identity.
+      this.replay.deactivate(renderer)
       if (this.overlayWindow === overlayWindow) {
         this.overlayWindow = null
       }

@@ -33,6 +33,7 @@ describe("parseTeachingResponse", () => {
     expect(result).toEqual({
       state: "step",
       instruction: "Click the Share button in the toolbar.",
+      action: "click",
       target: { x: 400, y: 200, width: 80, height: 32 },
       label: "Share"
     })

@@ -8,6 +8,8 @@ import {
   TeachingOperationInProgressError,
   TeachingSessionCoordinator
 } from "./teaching"
+import { InputAutomationHelper } from "./InputAutomationHelper"
+import { ensureAccessibilityPermission } from "./accessibility"
 import {
   PRIVACY_ACKNOWLEDGEMENT_TEXT,
   PRIVACY_ACKNOWLEDGEMENT_VERSION,
@@ -20,13 +22,23 @@ import { createElectronPrivacyPreflightDependencies } from "./privacyPreflightRu
 import { PrivacyPreflightSessionState } from "./privacyPreflightSession"
 
 export function initializeIpcHandlers(appState: AppState): void {
+  const inputAutomation = new InputAutomationHelper()
   const teachingSession = new TeachingSessionCoordinator({
     capture: () => appState.getScreenshotHelper().captureForTeaching(),
-    generate: (goal, history, screenshotPath) =>
+    generate: (goal, history, screenshotPath, imageSize) =>
       appState.processingHelper
         .getLLMHelper()
-        .generateTeachingStep(goal, history, screenshotPath),
-    remove: (screenshotPath) => fs.promises.unlink(screenshotPath)
+        .generateTeachingStep(goal, history, screenshotPath, imageSize),
+    remove: (screenshotPath) => fs.promises.unlink(screenshotPath),
+    actuate: async (actuation) => {
+      // Input control needs macOS Accessibility permission (≠ Screen Recording).
+      ensureAccessibilityPermission()
+      // Click the target first; for "type" that also focuses the field.
+      await inputAutomation.clickAt(actuation.point)
+      if (actuation.action === "type" && actuation.text) {
+        await inputAutomation.typeText(actuation.text)
+      }
+    }
   })
   let teachingLifecycle = 0
 
@@ -62,6 +74,23 @@ export function initializeIpcHandlers(appState: AppState): void {
       }
     }
   )
+
+  ipcMain.handle(
+    "set-ignore-mouse-events",
+    async (_event, ignore: boolean) => {
+      appState.setIgnoreMouseEvents(Boolean(ignore))
+    }
+  )
+
+  // Manual grip drag — the renderer only signals the gesture boundaries; main
+  // follows the OS cursor in between (see WindowHelper.startWindowDrag).
+  ipcMain.handle("window-drag-start", async () => {
+    appState.startWindowDrag()
+  })
+
+  ipcMain.handle("window-drag-end", async () => {
+    appState.stopWindowDrag()
+  })
 
   ipcMain.handle("delete-screenshot", async (event, path: string) => {
     return appState.deleteScreenshot(path)
@@ -165,14 +194,15 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   // Chat that includes a screenshot of the active display (📸 toggle)
   ipcMain.handle("chat-with-screen", async (event, message: string) => {
-    const shot = await appState.getScreenshotHelper().captureForChat()
+    let shot: string | undefined
     try {
+      shot = await appState.getScreenshotHelper().captureForChat()
       return await appState.processingHelper.getLLMHelper().chatWithImage(message, [shot])
     } catch (error: any) {
       console.error("Error in chat-with-screen handler:", error)
       throw error
     } finally {
-      fs.promises.unlink(shot).catch(() => {})
+      if (shot) fs.promises.unlink(shot).catch(() => {})
     }
   });
 
@@ -232,6 +262,18 @@ export function initializeIpcHandlers(appState: AppState): void {
       }
       throw error
     }
+  })
+
+  // Perform the confirmed action for the current step, then advance. Unlike
+  // teach-next, a failure (e.g. Accessibility not yet granted) leaves the
+  // overlay in place so the user can grant permission and press execute again.
+  ipcMain.handle("teach-execute", async () => {
+    const lifecycle = teachingLifecycle
+    const result = await teachingSession.execute()
+    if (lifecycle === teachingLifecycle) {
+      appState.applyTeachingResult(result)
+    }
+    return result
   })
 
   ipcMain.handle("teach-stop", () => {

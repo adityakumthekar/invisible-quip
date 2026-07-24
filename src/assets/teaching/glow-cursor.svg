@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Hotspot: the pointer tip at (10, 6) — 15.6% across, 9.4% down. The overlay
+       translates by those fractions so the tip lands exactly on the click point.
+       Keep that geometry if you swap this file for a PNG. -->
+  <defs>
+    <filter id="neon" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <path
+    d="M10 6 L10 45 L23.5 34 L39.9 32.5 Z"
+    fill="#05040a"
+    stroke="#e935ff"
+    stroke-width="3"
+    stroke-linejoin="round"
+    filter="url(#neon)"
+  />
+</svg>

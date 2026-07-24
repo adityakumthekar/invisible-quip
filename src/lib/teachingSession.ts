@@ -1,6 +1,6 @@
 import type { TeachingResult } from "./teaching"
 
-export type TeachingOperation = "start" | "next"
+export type TeachingOperation = "start" | "next" | "execute"
 export type TeachingPhase =
   | "idle"
   | "loading"
@@ -153,6 +153,7 @@ export function teachingSessionReducer(
 export interface TeachingOperationApi {
   start: (goal: string) => Promise<TeachingResult>
   next: () => Promise<TeachingResult>
+  execute: () => Promise<TeachingResult>
 }
 
 export type TeachingOperationOutcome =
@@ -175,6 +176,10 @@ export async function executeTeachingOperation(
   }
 
   const result =
-    operation === "start" ? await api.start(goal) : await api.next()
+    operation === "start"
+      ? await api.start(goal)
+      : operation === "next"
+        ? await api.next()
+        : await api.execute()
   return { kind: "result", result }
 }

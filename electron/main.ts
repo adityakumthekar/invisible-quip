@@ -8,6 +8,7 @@ import { ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
 import { ProcessingHelper } from "./ProcessingHelper"
 import { TeachingOverlayHelper } from "./TeachingOverlayHelper"
+import { watchDisplayTopology } from "./displayTopologyRuntime"
 import type { TeachingResult } from "./teaching"
 
 // In a packaged app the cwd isn't the project root, so load the bundled .env
@@ -148,6 +149,18 @@ export class AppState {
 
   public setWindowDimensions(width: number, height: number): void {
     this.windowHelper.setWindowDimensions(width, height)
+  }
+
+  public setIgnoreMouseEvents(ignore: boolean): void {
+    this.windowHelper.setIgnoreMouseEvents(ignore)
+  }
+
+  public startWindowDrag(): void {
+    this.windowHelper.startWindowDrag()
+  }
+
+  public stopWindowDrag(): void {
+    this.windowHelper.stopWindowDrag()
   }
 
   public clearQueues(): void {
@@ -319,6 +332,9 @@ async function initializeApp() {
 
   app.whenReady().then(() => {
     console.log("App is ready")
+    // Log the monitor layout up front and keep it current — teaching capture
+    // targeting depends on it.
+    watchDisplayTopology()
     appState.createWindow()
     appState.createTray()
     // Register global shortcuts using ShortcutsHelper
