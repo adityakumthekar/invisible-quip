@@ -1,5 +1,5 @@
 import { globalShortcut, app } from "electron"
-import { AppState } from "./main" // Adjust the import path if necessary
+import { AppState } from "./main"
 
 export class ShortcutsHelper {
   private appState: AppState

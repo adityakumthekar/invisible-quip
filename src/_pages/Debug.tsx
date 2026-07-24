@@ -1,19 +1,16 @@
 // Debug.tsx
 import React, { useState, useEffect, useRef } from "react"
-import { useQuery, useQueryClient } from "react-query"
+import { useQueryClient } from "react-query"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { ComplexitySection, ContentSection } from "./Solutions"
 import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
-import {
-  Toast,
-  ToastDescription,
-  ToastMessage,
-  ToastTitle,
-  ToastVariant
-} from "../components/ui/toast"
-import ExtraScreenshotsQueueHelper from "../components/Solutions/SolutionCommands"
+import { Toast, ToastDescription, ToastTitle } from "../components/ui/toast"
+import SolutionCommands from "../components/Solutions/SolutionCommands"
 import { diffLines } from "diff"
+import { useToast } from "../hooks/useToast"
+import { useExtraScreenshots } from "../hooks/useExtraScreenshots"
+import { useContentDimensions } from "../hooks/useContentDimensions"
 
 type DiffLine = {
   value: string
@@ -215,57 +212,18 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
     null
   )
 
-  const [toastOpen, setToastOpen] = useState(false)
-  const [toastMessage, setToastMessage] = useState<ToastMessage>({
-    title: "",
-    description: "",
-    variant: "neutral"
-  })
+  const { toastOpen, setToastOpen, toastMessage, showToast } = useToast()
+  const { extraScreenshots, refetch, handleDeleteExtraScreenshot } =
+    useExtraScreenshots()
 
   const [isTooltipVisible, setIsTooltipVisible] = useState(false)
   const [tooltipHeight, setTooltipHeight] = useState(0)
 
-  const { data: extraScreenshots = [], refetch } = useQuery({
-    queryKey: ["extras"],
-    queryFn: async () => {
-      try {
-        const existing = await window.electronAPI.getScreenshots()
-        return existing
-      } catch (error) {
-        console.error("Error loading extra screenshots:", error)
-        return []
-      }
-    },
-    staleTime: Infinity,
-    cacheTime: Infinity
-  })
-
-  const showToast = (
-    title: string,
-    description: string,
-    variant: ToastVariant
-  ) => {
-    setToastMessage({ title, description, variant })
-    setToastOpen(true)
-  }
-
-  const handleDeleteExtraScreenshot = async (index: number) => {
-    const screenshotToDelete = extraScreenshots[index]
-
-    try {
-      const response = await window.electronAPI.deleteScreenshot(
-        screenshotToDelete.path
-      )
-
-      if (response.success) {
-        refetch()
-      } else {
-        console.error("Failed to delete extra screenshot:", response.error)
-      }
-    } catch (error) {
-      console.error("Error deleting extra screenshot:", error)
-    }
-  }
+  useContentDimensions(
+    contentRef,
+    isTooltipVisible ? tooltipHeight : 0,
+    [isTooltipVisible, tooltipHeight]
+  )
 
   useEffect(() => {
     // Try to get the new solution data from cache first
@@ -308,29 +266,7 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
       })
     ]
 
-    // Set up resize observer
-    const updateDimensions = () => {
-      if (contentRef.current) {
-        let contentHeight = contentRef.current.scrollHeight
-        const contentWidth = contentRef.current.scrollWidth
-        if (isTooltipVisible) {
-          contentHeight += tooltipHeight
-        }
-        window.electronAPI.updateContentDimensions({
-          width: contentWidth,
-          height: contentHeight
-        })
-      }
-    }
-
-    const resizeObserver = new ResizeObserver(updateDimensions)
-    if (contentRef.current) {
-      resizeObserver.observe(contentRef.current)
-    }
-    updateDimensions()
-
     return () => {
-      resizeObserver.disconnect()
       cleanupFunctions.forEach((cleanup) => cleanup())
     }
   }, [queryClient])
@@ -366,7 +302,7 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
       </div>
 
       {/* Navbar of commands with the tooltip */}
-      <ExtraScreenshotsQueueHelper
+      <SolutionCommands
         extraScreenshots={extraScreenshots}
         onTooltipVisibilityChange={handleTooltipVisibilityChange}
       />

@@ -1,21 +1,18 @@
 // Solutions.tsx
 import React, { useState, useEffect, useRef } from "react"
-import { useQuery, useQueryClient } from "react-query"
+import { useQueryClient } from "react-query"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
 
 import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
-import {
-  Toast,
-  ToastDescription,
-  ToastMessage,
-  ToastTitle,
-  ToastVariant
-} from "../components/ui/toast"
+import { Toast, ToastDescription, ToastTitle } from "../components/ui/toast"
 import { ProblemStatementData } from "../types/solutions"
 import { AudioResult } from "../types/audio"
 import SolutionCommands from "../components/Solutions/SolutionCommands"
 import Debug from "./Debug"
+import { useToast } from "../hooks/useToast"
+import { useExtraScreenshots } from "../hooks/useExtraScreenshots"
+import { useContentDimensions } from "../hooks/useContentDimensions"
 
 // (Using global ElectronAPI type from src/types/electron.d.ts)
 
@@ -112,15 +109,11 @@ export const ComplexitySection = ({
 )
 
 interface SolutionsProps {
-  setView: React.Dispatch<React.SetStateAction<"queue" | "solutions" | "debug">>
+  setView: React.Dispatch<React.SetStateAction<"queue" | "solutions">>
 }
 const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
   const queryClient = useQueryClient()
   const contentRef = useRef<HTMLDivElement>(null)
-
-  // Audio recording state
-  const [audioRecording, setAudioRecording] = useState(false)
-  const [audioResult, setAudioResult] = useState<AudioResult | null>(null)
 
   const [debugProcessing, setDebugProcessing] = useState(false)
   const [problemStatementData, setProblemStatementData] =
@@ -133,87 +126,24 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
   const [spaceComplexityData, setSpaceComplexityData] = useState<string | null>(
     null
   )
-  const [customContent, setCustomContent] = useState<string | null>(null)
 
-  const [toastOpen, setToastOpen] = useState(false)
-  const [toastMessage, setToastMessage] = useState<ToastMessage>({
-    title: "",
-    description: "",
-    variant: "neutral"
-  })
+  const { toastOpen, setToastOpen, toastMessage, showToast } = useToast()
 
   const [isTooltipVisible, setIsTooltipVisible] = useState(false)
   const [tooltipHeight, setTooltipHeight] = useState(0)
 
   const [isResetting, setIsResetting] = useState(false)
 
-  const { data: extraScreenshots = [], refetch } = useQuery<Array<{ path: string; preview: string }>, Error>(
-    ["extras"],
-    async () => {
-      try {
-        const existing = await window.electronAPI.getScreenshots()
-        return existing
-      } catch (error) {
-        console.error("Error loading extra screenshots:", error)
-        return []
-      }
-    },
-    {
-      staleTime: Infinity,
-      cacheTime: Infinity
-    }
+  const { extraScreenshots, refetch, handleDeleteExtraScreenshot } =
+    useExtraScreenshots()
+
+  useContentDimensions(
+    contentRef,
+    isTooltipVisible ? tooltipHeight : 0,
+    [isTooltipVisible, tooltipHeight]
   )
 
-  const showToast = (
-    title: string,
-    description: string,
-    variant: ToastVariant
-  ) => {
-    setToastMessage({ title, description, variant })
-    setToastOpen(true)
-  }
-
-  const handleDeleteExtraScreenshot = async (index: number) => {
-    const screenshotToDelete = extraScreenshots[index]
-
-    try {
-      const response = await window.electronAPI.deleteScreenshot(
-        screenshotToDelete.path
-      )
-
-      if (response.success) {
-        refetch() // Refetch screenshots instead of managing state directly
-      } else {
-        console.error("Failed to delete extra screenshot:", response.error)
-      }
-    } catch (error) {
-      console.error("Error deleting extra screenshot:", error)
-    }
-  }
-
   useEffect(() => {
-    // Height update logic
-    const updateDimensions = () => {
-      if (contentRef.current) {
-        let contentHeight = contentRef.current.scrollHeight
-        const contentWidth = contentRef.current.scrollWidth
-        if (isTooltipVisible) {
-          contentHeight += tooltipHeight
-        }
-        window.electronAPI.updateContentDimensions({
-          width: contentWidth,
-          height: contentHeight
-        })
-      }
-    }
-
-    // Initialize resize observer
-    const resizeObserver = new ResizeObserver(updateDimensions)
-    if (contentRef.current) {
-      resizeObserver.observe(contentRef.current)
-    }
-    updateDimensions()
-
     // Set up event listeners
     const cleanupFunctions = [
       window.electronAPI.onScreenshotTaken(() => refetch()),
@@ -239,8 +169,6 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
         setThoughtsData(null)
         setTimeComplexityData(null)
         setSpaceComplexityData(null)
-        setCustomContent(null)
-        setAudioResult(null)
 
         // Start audio recording from user's microphone
         try {
@@ -249,11 +177,9 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
           const chunks: Blob[] = []
           mediaRecorder.ondataavailable = (e) => chunks.push(e.data)
           mediaRecorder.start()
-          setAudioRecording(true)
           // Record for 5 seconds (or adjust as needed)
           setTimeout(() => mediaRecorder.stop(), 5000)
           mediaRecorder.onstop = async () => {
-            setAudioRecording(false)
             const blob = new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' })
             const reader = new FileReader()
             reader.onloadend = async () => {
@@ -266,7 +192,6 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
                 )
                 // Store result in react-query cache
                 queryClient.setQueryData(["audio_result"], result)
-                setAudioResult(result)
               } catch (err) {
                 console.error('Audio analysis failed:', err)
               }
@@ -276,13 +201,6 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
         } catch (err) {
           console.error('Audio recording error:', err)
         }
-
-        // Simulate receiving custom content shortly after start
-        setTimeout(() => {
-          setCustomContent(
-            "This is the dynamically generated content appearing after loading starts."
-          )
-        }, 1500) // Example delay
       }),
       //if there was an error processing the initial solution
       window.electronAPI.onSolutionError((error: string) => {
@@ -363,10 +281,10 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
     ]
 
     return () => {
-      resizeObserver.disconnect()
       cleanupFunctions.forEach((cleanup) => cleanup())
     }
-  }, [isTooltipVisible, tooltipHeight])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     setProblemStatementData(

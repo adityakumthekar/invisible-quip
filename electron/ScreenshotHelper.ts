@@ -171,22 +171,24 @@ export class ScreenshotHelper {
   public clearQueues(): void {
     // Clear screenshotQueue
     this.screenshotQueue.forEach((screenshotPath) => {
-      fs.unlink(screenshotPath, (err) => {
-        if (err)
+      fs.promises
+        .unlink(screenshotPath)
+        .catch((err) =>
           console.error(`Error deleting screenshot at ${screenshotPath}:`, err)
-      })
+        )
     })
     this.screenshotQueue = []
 
     // Clear extraScreenshotQueue
     this.extraScreenshotQueue.forEach((screenshotPath) => {
-      fs.unlink(screenshotPath, (err) => {
-        if (err)
+      fs.promises
+        .unlink(screenshotPath)
+        .catch((err) =>
           console.error(
             `Error deleting extra screenshot at ${screenshotPath}:`,
             err
           )
-      })
+        )
     })
     this.extraScreenshotQueue = []
   }
@@ -242,7 +244,8 @@ export class ScreenshotHelper {
       return screenshotPath
     } catch (error) {
       console.error("Error taking screenshot:", error)
-      throw new Error(`Failed to take screenshot: ${error.message}`)
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Failed to take screenshot: ${message}`)
     } finally {
       if (!keepVisible) {
         // Ensure window is always shown again
@@ -278,7 +281,10 @@ export class ScreenshotHelper {
       return { success: true }
     } catch (error) {
       console.error("Error deleting file:", error)
-      return { success: false, error: error.message }
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
     }
   }
 }

@@ -108,7 +108,6 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   ipcMain.handle("get-screenshots", async () => {
-    console.log({ view: appState.getView() })
     try {
       let previews = []
       if (appState.getView() === "queue") {
@@ -126,7 +125,6 @@ export function initializeIpcHandlers(appState: AppState): void {
           }))
         )
       }
-      previews.forEach((preview: any) => console.log(preview.path))
       return previews
     } catch (error) {
       console.error("Error getting screenshots:", error)

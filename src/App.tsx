@@ -19,7 +19,7 @@ const MainApp: React.FC = () => {
         }
       })
   )
-  const [view, setView] = useState<"queue" | "solutions" | "debug">("queue")
+  const [view, setView] = useState<"queue" | "solutions">("queue")
   const containerRef = useRef<HTMLDivElement>(null)
   useClickThrough()
 
@@ -118,10 +118,8 @@ const MainApp: React.FC = () => {
         <ToastProvider>
           {view === "queue" ? (
             <Queue setView={setView} />
-          ) : view === "solutions" ? (
-            <Solutions setView={setView} />
           ) : (
-            <></>
+            <Solutions setView={setView} />
           )}
           <ToastViewport />
         </ToastProvider>

@@ -1,8 +1,7 @@
-import React, { useEffect, useRef, useState } from "react"
+import React, { useEffect } from "react"
 import {
   GraduationCap,
   Eye,
-  HelpCircle,
   LayoutGrid,
   LogOut,
   Mic,
@@ -13,6 +12,7 @@ import { cn } from "../../lib/utils"
 import { SHORTCUTS } from "../../lib/shortcuts"
 import { beginWindowDrag, endWindowDrag } from "../../lib/windowDrag"
 import MicWaveform from "./MicWaveform"
+import ShortcutsTooltip from "./ShortcutsTooltip"
 
 interface ControlBarProps {
   screenshots: Array<{ path: string; preview: string }>
@@ -49,9 +49,6 @@ const ControlBar: React.FC<ControlBarProps> = ({
   onRecordClick,
   onTooltipVisibilityChange
 }) => {
-  const [isTooltipVisible, setIsTooltipVisible] = useState(false)
-  const tooltipRef = useRef<HTMLDivElement>(null)
-
   // End the drag on any release, even one the grip never sees (window blur,
   // pointer lost outside the transparent window).
   useEffect(() => {
@@ -75,14 +72,6 @@ const ControlBar: React.FC<ControlBarProps> = ({
     event.currentTarget.setPointerCapture(event.pointerId)
     beginWindowDrag()
   }
-
-  useEffect(() => {
-    let tooltipHeight = 0
-    if (tooltipRef.current && isTooltipVisible) {
-      tooltipHeight = tooltipRef.current.offsetHeight + 10
-    }
-    onTooltipVisibilityChange(isTooltipVisible, tooltipHeight)
-  }, [isTooltipVisible, onTooltipVisibilityChange])
 
   return (
     <div className="w-fit relative">
@@ -187,37 +176,10 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <Settings2 className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
 
-        <div
-          className="relative no-drag"
-          onMouseEnter={() => setIsTooltipVisible(true)}
-          onMouseLeave={() => setIsTooltipVisible(false)}
-        >
-          <button type="button" className="icon-btn" title="Shortcuts">
-            <HelpCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
-          </button>
-          {isTooltipVisible && (
-            <div
-              ref={tooltipRef}
-              className="absolute top-full right-0 mt-2 w-72 z-50"
-            >
-              <div className="glass-panel-dark p-3 text-[11px] glass-text space-y-2.5">
-                <p className="font-medium glass-heading">Shortcuts</p>
-                {SHORTCUTS.map((s) => (
-                  <div key={s.action} className="flex justify-between gap-3">
-                    <span className="glass-muted">{s.action}</span>
-                    <span className="flex gap-1">
-                      {s.keys.map((k, i) => (
-                        <span key={i} className="kbd">
-                          {k}
-                        </span>
-                      ))}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        <ShortcutsTooltip
+          shortcuts={SHORTCUTS}
+          onTooltipVisibilityChange={onTooltipVisibilityChange}
+        />
 
         <button
           type="button"

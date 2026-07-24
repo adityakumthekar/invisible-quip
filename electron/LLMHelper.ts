@@ -68,6 +68,17 @@ interface OllamaResponse {
   done: boolean
 }
 
+const SOLUTION_JSON_FORMAT = `{
+  "solution": {
+    "code": "The code or main answer here.",
+    "problem_statement": "Restate the problem or situation.",
+    "context": "Relevant background/context.",
+    "suggested_responses": ["First possible answer or action", "Second possible answer or action", "..."],
+    "reasoning": "Explanation of why these suggestions are appropriate."
+  }
+}
+Important: Return ONLY the JSON object, without any markdown formatting or code blocks.`
+
 export class LLMHelper {
   private model: GenerativeModel | null = null
   private systemPrompt = `You are Quip, a helpful, proactive assistant for any kind of problem or situation (not just coding). For any user input, analyze the situation, provide a clear problem statement, relevant context, and suggest several possible responses or actions the user could take next. Always explain your reasoning. Present your suggestions as a list of options or next steps.`
@@ -140,7 +151,8 @@ export class LLMHelper {
       return data.response
     } catch (error) {
       console.error("[LLMHelper] Error calling Ollama:", error)
-      throw new Error(`Failed to connect to Ollama: ${error.message}. Make sure Ollama is running on ${this.ollamaUrl}`)
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Failed to connect to Ollama: ${message}. Make sure Ollama is running on ${this.ollamaUrl}`)
     }
   }
 
@@ -168,10 +180,11 @@ export class LLMHelper {
       }
 
       // Test the selected model works
-      const testResult = await this.callOllama("Hello")
+      await this.callOllama("Hello")
       console.log(`[LLMHelper] Successfully initialized with model: ${this.ollamaModel}`)
     } catch (error) {
-      console.error(`[LLMHelper] Failed to initialize Ollama model: ${error.message}`)
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[LLMHelper] Failed to initialize Ollama model: ${message}`)
       // Try to use first available model as fallback
       try {
         const models = await this.getOllamaModels()
@@ -180,7 +193,11 @@ export class LLMHelper {
           console.log(`[LLMHelper] Fallback to: ${this.ollamaModel}`)
         }
       } catch (fallbackError) {
-        console.error(`[LLMHelper] Fallback also failed: ${fallbackError.message}`)
+        const fallbackMessage =
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : String(fallbackError)
+        console.error(`[LLMHelper] Fallback also failed: ${fallbackMessage}`)
       }
     }
   }
@@ -207,15 +224,7 @@ export class LLMHelper {
   }
 
   public async generateSolution(problemInfo: any) {
-    const prompt = `${this.systemPrompt}\n\nGiven this problem or situation:\n${JSON.stringify(problemInfo, null, 2)}\n\nPlease provide your response in the following JSON format:\n{
-  "solution": {
-    "code": "The code or main answer here.",
-    "problem_statement": "Restate the problem or situation.",
-    "context": "Relevant background/context.",
-    "suggested_responses": ["First possible answer or action", "Second possible answer or action", "..."],
-    "reasoning": "Explanation of why these suggestions are appropriate."
-  }
-}\nImportant: Return ONLY the JSON object, without any markdown formatting or code blocks.`
+    const prompt = `${this.systemPrompt}\n\nGiven this problem or situation:\n${JSON.stringify(problemInfo, null, 2)}\n\nPlease provide your response in the following JSON format:\n${SOLUTION_JSON_FORMAT}`
 
     console.log("[LLMHelper] Calling Gemini LLM for solution...");
     try {
@@ -236,15 +245,7 @@ export class LLMHelper {
     try {
       const imageParts = await Promise.all(debugImagePaths.map(path => this.fileToGenerativePart(path)))
       
-      const prompt = `${this.systemPrompt}\n\nYou are a wingman. Given:\n1. The original problem or situation: ${JSON.stringify(problemInfo, null, 2)}\n2. The current response or approach: ${currentCode}\n3. The debug information in the provided images\n\nPlease analyze the debug information and provide feedback in this JSON format:\n{
-  "solution": {
-    "code": "The code or main answer here.",
-    "problem_statement": "Restate the problem or situation.",
-    "context": "Relevant background/context.",
-    "suggested_responses": ["First possible answer or action", "Second possible answer or action", "..."],
-    "reasoning": "Explanation of why these suggestions are appropriate."
-  }
-}\nImportant: Return ONLY the JSON object, without any markdown formatting or code blocks.`
+      const prompt = `${this.systemPrompt}\n\nYou are a wingman. Given:\n1. The original problem or situation: ${JSON.stringify(problemInfo, null, 2)}\n2. The current response or approach: ${currentCode}\n3. The debug information in the provided images\n\nPlease analyze the debug information and provide feedback in this JSON format:\n${SOLUTION_JSON_FORMAT}`
 
       const result = await this.model.generateContent([prompt, ...imageParts])
       const response = await result.response
@@ -510,7 +511,10 @@ export class LLMHelper {
         }
       }
     } catch (error) {
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
     }
   }
 } 
