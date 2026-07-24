@@ -173,6 +173,10 @@ export class AppState {
     this.setView("queue")
   }
 
+  public async deleteAllScreenshotFiles(): Promise<void> {
+    return this.screenshotHelper.deleteAllScreenshotFiles()
+  }
+
   // Screenshot management methods
   public async takeScreenshot(): Promise<string> {
     if (!this.getMainWindow()) throw new Error("No main window available")
@@ -355,8 +359,20 @@ async function initializeApp() {
     }
   })
 
-  app.on("before-quit", () => {
-    appState.closeTeachingOverlay()
+  // Wipe screenshot files before actually quitting. before-quit fires
+  // synchronously and won't wait for promises, so we preventDefault, run the
+  // async cleanup, then re-invoke app.quit() — the isQuitting guard lets that
+  // second call fall through to the real quit instead of looping.
+  let isQuitting = false
+  app.on("before-quit", (event) => {
+    if (isQuitting) return
+    event.preventDefault()
+    isQuitting = true
+    ;(async () => {
+      appState.closeTeachingOverlay()
+      await appState.deleteAllScreenshotFiles()
+      app.quit()
+    })()
   })
 
   if (isInvisibleMode()) {

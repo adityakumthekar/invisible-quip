@@ -193,6 +193,28 @@ export class ScreenshotHelper {
     this.extraScreenshotQueue = []
   }
 
+  /**
+   * Wipe every file in both screenshot directories, not just what's tracked
+   * in the in-memory queues — catches orphans left behind by a prior session
+   * or crash. Used on app quit so no screenshots persist on disk afterward.
+   */
+  public async deleteAllScreenshotFiles(): Promise<void> {
+    await Promise.all(
+      [this.screenshotDir, this.extraScreenshotDir].map(async (dir) => {
+        const entries = await fs.promises.readdir(dir).catch(() => [] as string[])
+        await Promise.all(
+          entries.map((name) =>
+            fs.promises.unlink(path.join(dir, name)).catch((err) =>
+              console.error(`Error deleting ${name} during quit cleanup:`, err)
+            )
+          )
+        )
+      })
+    )
+    this.screenshotQueue = []
+    this.extraScreenshotQueue = []
+  }
+
   public async takeScreenshot(
     hideMainWindow: () => void,
     showMainWindow: () => void

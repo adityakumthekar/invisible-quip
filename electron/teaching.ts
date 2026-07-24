@@ -498,13 +498,27 @@ function toTeachingResult(
       display.screenshotWidth,
       display.screenshotHeight
     )
+    const dipTarget = screenshotTargetToDipRect(pixelTarget, display)
+    // DIAGNOSTIC (remove once the overlay offset is fixed): shows each layer of
+    // the target conversion so a bad model box can be told apart from a bad
+    // pixel->DIP mapping. Compare `dip center` against where the element
+    // actually sits on screen.
+    const center = dipRectCenter(dipTarget)
+    console.log(
+      `[teaching] model 0-1000 ${JSON.stringify(step.target)}` +
+        ` | capture ${display.screenshotWidth}x${display.screenshotHeight}` +
+        ` bounds ${display.bounds.width}x${display.bounds.height}@${display.bounds.x},${display.bounds.y}` +
+        ` | dip rect ${dipTarget.width.toFixed(1)}x${dipTarget.height.toFixed(1)}@${dipTarget.x.toFixed(1)},${dipTarget.y.toFixed(1)}` +
+        ` | dip center ${center.x.toFixed(1)},${center.y.toFixed(1)}` +
+        ` | "${step.instruction}"`
+    )
     return {
       state: step.state,
       instruction: step.instruction,
       ...label,
       action: step.action,
       ...text,
-      target: screenshotTargetToDipRect(pixelTarget, display),
+      target: dipTarget,
       displayId: display.displayId,
       displayBounds: { ...display.bounds }
     }
