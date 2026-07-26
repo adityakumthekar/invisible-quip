@@ -107,6 +107,13 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
+  // Runs the queued-screenshot solver. Cmd+Enter no longer routes here — it
+  // captures and analyzes the current screen instead — so this is reached only
+  // from the Solve button, which appears once the Cmd+H queue is non-empty.
+  ipcMain.handle("process-screenshot-queue", async () => {
+    await appState.processingHelper.processScreenshots()
+  })
+
   ipcMain.handle("get-screenshots", async () => {
     try {
       let previews = []

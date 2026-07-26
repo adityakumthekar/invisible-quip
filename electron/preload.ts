@@ -26,6 +26,7 @@ interface ElectronAPI {
   onDebugSuccess: (callback: (data: any) => void) => () => void
   onSolutionError: (callback: (error: string) => void) => () => void
   onProcessingNoScreenshots: (callback: () => void) => () => void
+  onAskAiHotkey: (callback: () => void) => () => void
   onProblemExtracted: (callback: (data: any) => void) => () => void
   onSolutionSuccess: (callback: (data: any) => void) => () => void
 
@@ -165,6 +166,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on(PROCESSING_EVENTS.NO_SCREENSHOTS, subscription)
     return () => {
       ipcRenderer.removeListener(PROCESSING_EVENTS.NO_SCREENSHOTS, subscription)
+    }
+  },
+
+  onAskAiHotkey: (callback: () => void) => {
+    const subscription = () => callback()
+    ipcRenderer.on("ask-ai-hotkey", subscription)
+    return () => {
+      ipcRenderer.removeListener("ask-ai-hotkey", subscription)
     }
   },
 

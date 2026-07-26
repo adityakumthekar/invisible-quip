@@ -8,7 +8,7 @@ export interface Shortcut {
 export const SHORTCUTS: Shortcut[] = [
   { action: "Show / hide window", keys: ["⌘", "B"] },
   { action: "Screenshot", keys: ["⌘", "H"] },
-  { action: "Ask AI / Solve", keys: ["⌘", "↵"] },
+  { action: "Ask about my screen", keys: ["⌘", "↵"] },
   { action: "Move window", keys: ["⌘", "↑↓←→"] },
   { action: "Reset", keys: ["⌘", "R"] },
   { action: "Quit", keys: ["⌘", "Q"] }

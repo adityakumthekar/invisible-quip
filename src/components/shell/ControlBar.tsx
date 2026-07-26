@@ -25,7 +25,7 @@ interface ControlBarProps {
   teachingOpen: boolean
   onAskAi: () => void
   onTeachMe: () => void
-  onTogglePanels: () => void
+  onSolve: () => void
   onToggleModels: () => void
   onToggleQuick: () => void
   onRecordClick: () => void
@@ -43,7 +43,7 @@ const ControlBar: React.FC<ControlBarProps> = ({
   teachingOpen,
   onAskAi,
   onTeachMe,
-  onTogglePanels,
+  onSolve,
   onToggleModels,
   onToggleQuick,
   onRecordClick,
@@ -139,13 +139,13 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <span className="kbd">B</span>
         </button>
 
-        <div className="mx-0.5 h-4 w-px bg-white/15" />
+        <div className="mx-0.5 h-4 w-px bg-glass-line" />
 
         <button
           type="button"
           className={cn(
             "icon-btn no-drag",
-            isRecording && "active text-red-300"
+            isRecording && "active text-glass-danger"
           )}
           onClick={onRecordClick}
           title={isRecording ? "Stop recording" : "Record voice"}
@@ -158,12 +158,10 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <button
             type="button"
             className="icon-btn no-drag"
-            onClick={onTogglePanels}
-            title="Open panels"
+            onClick={onSolve}
+            title={`Solve ${screenshots.length} queued screenshot(s)`}
           >
             <span>Solve</span>
-            <span className="kbd">⌘</span>
-            <span className="kbd">↵</span>
           </button>
         )}
 
@@ -183,7 +181,7 @@ const ControlBar: React.FC<ControlBarProps> = ({
 
         <button
           type="button"
-          className="icon-btn no-drag text-red-300/80 hover:text-red-300"
+          className="icon-btn no-drag text-glass-danger opacity-80 hover:opacity-100"
           onClick={() => window.electronAPI.quitApp()}
           title="Quit"
         >

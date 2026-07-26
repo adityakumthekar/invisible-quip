@@ -62,13 +62,13 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
           >
             Teach Me
           </h2>
-          <p className="mt-0.5 text-[10px] glass-subtle">
+          <p className="mt-0.5 text-[11px] glass-subtle">
             Step-by-step guidance from your current screen
           </p>
         </div>
         <button
           type="button"
-          className="p-1.5 rounded-md glass-icon hover:text-white hover:bg-white/10"
+          className="p-1.5 rounded-md glass-icon hover:text-glass-heading hover:bg-glass-hover"
           onClick={onClose}
           aria-label="Close teaching"
         >
@@ -127,7 +127,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
                     ? "status"
                     : "alert"
                 }
-                className="rounded-lg bg-white/5 px-2.5 py-2"
+                className="rounded-lg bg-glass-soft px-2.5 py-2"
               >
                 <p className="text-[11px] glass-muted">
                   {privacy.status.lastPreflightResult.reason}
@@ -209,7 +209,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
 
       {hasResult && session.result && (
         <div className="mt-4" aria-live="polite">
-          <p className="text-[10px] uppercase tracking-wide glass-muted">
+          <p className="text-[11px] uppercase tracking-wide glass-muted">
             {session.result.state === "step"
               ? "Current instruction"
               : session.result.state === "complete"
@@ -226,7 +226,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
             </p>
           )}
           {session.result.state === "step" && (
-            <div className="mt-3 rounded-lg bg-white/5 px-2.5 py-2">
+            <div className="mt-3 rounded-lg bg-glass-soft px-2.5 py-2">
               <p className="text-[11px] glass-text">
                 {session.result.action === "type" ? (
                   <>
@@ -239,7 +239,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
                   "Will click the highlighted target"
                 )}
               </p>
-              <p className="mt-1 text-[10px] glass-muted">
+              <p className="mt-1 text-[11px] glass-muted">
                 Press ⌘/Ctrl+⇧+Enter to perform · Esc to stop
               </p>
             </div>

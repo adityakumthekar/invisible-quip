@@ -158,7 +158,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   return (
     <div className="glass-panel-dark panel-enter w-[336px] p-3 no-drag">
       {/* Tab strip */}
-      <div className="flex items-center gap-0.5 rounded-lg bg-white/5 border border-white/10 p-0.5">
+      <div className="flex items-center gap-0.5 rounded-lg bg-glass-soft border border-glass p-0.5">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -170,7 +170,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               "flex-1 flex items-center justify-center rounded-md py-1.5 transition-colors",
               tab === id
                 ? "glass-action"
-                : "glass-muted hover:bg-white/10 hover:text-white"
+                : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
             )}
           >
             <Icon className="w-3.5 h-3.5" strokeWidth={1.75} />
@@ -181,7 +181,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       <div className="pt-3 space-y-3">
         {tab === "modes" && (
           <>
-            <p className="text-[10px] uppercase tracking-wide glass-muted">
+            <p className="text-[11px] uppercase tracking-wide glass-muted">
               Mode
             </p>
             <div className="grid grid-cols-1 gap-1">
@@ -196,7 +196,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </div>
             {groups.map((g) => (
               <div key={g} className="space-y-1">
-                <p className="text-[10px] glass-subtle">{g}</p>
+                <p className="text-[11px] glass-subtle">{g}</p>
                 {MODES.filter((m) => m.group === g).map((m) => (
                   <ModeRow
                     key={m.id}
@@ -207,7 +207,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 ))}
               </div>
             ))}
-            <p className="text-[10px] glass-subtle leading-relaxed">
+            <p className="text-[11px] glass-subtle leading-relaxed">
               A mode changes how the assistant responds. It applies to your next
               message.
             </p>
@@ -217,10 +217,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {tab === "provider" && (
           <>
             <div className="flex items-center justify-between">
-              <p className="text-[10px] uppercase tracking-wide glass-muted">
+              <p className="text-[11px] uppercase tracking-wide glass-muted">
                 AI provider
               </p>
-              <span className="text-[10px] glass-subtle truncate max-w-[150px]">
+              <span className="text-[11px] glass-subtle truncate max-w-[150px]">
                 {status === "working"
                   ? "Working…"
                   : status === "ok"
@@ -230,7 +230,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       : currentLabel}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-white/5 border border-white/10">
+            <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-glass-soft border border-glass">
               <button
                 type="button"
                 onClick={() => setSelectedProvider("gemini")}
@@ -238,7 +238,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
                   selectedProvider === "gemini"
                     ? "glass-action"
-                    : "glass-muted hover:bg-white/10 hover:text-white"
+                    : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
                 )}
               >
                 <Cloud className="w-3 h-3" strokeWidth={1.75} />
@@ -251,7 +251,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
                   selectedProvider === "ollama"
                     ? "glass-action"
-                    : "glass-muted hover:bg-white/10 hover:text-white"
+                    : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
                 )}
               >
                 <Home className="w-3 h-3" strokeWidth={1.75} />
@@ -261,7 +261,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
             {selectedProvider === "gemini" ? (
               <div className="space-y-1.5">
-                <label className="text-[10px] uppercase tracking-wide glass-muted">
+                <label className="text-[11px] uppercase tracking-wide glass-muted">
                   API key
                 </label>
                 <input
@@ -275,7 +275,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             ) : (
               <div className="space-y-2.5">
                 <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase tracking-wide glass-muted">
+                  <label className="text-[11px] uppercase tracking-wide glass-muted">
                     Ollama URL
                   </label>
                   <input
@@ -287,13 +287,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 </div>
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-[10px] uppercase tracking-wide glass-muted">
+                    <label className="text-[11px] uppercase tracking-wide glass-muted">
                       Model
                     </label>
                     <button
                       type="button"
                       onClick={() => void loadOllamaModels()}
-                      className="p-1 rounded glass-icon hover:text-white"
+                      className="p-1 rounded glass-icon hover:text-glass-heading"
                       title="Refresh"
                     >
                       <RefreshCw className="w-3 h-3" strokeWidth={1.75} />
@@ -333,7 +333,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 type="button"
                 onClick={() => void test()}
                 disabled={status === "working"}
-                className="glass-control min-h-7 rounded-lg px-3 py-2 text-[11px] hover:bg-white/15 disabled:opacity-50"
+                className="glass-control min-h-7 rounded-lg px-3 py-2 text-[11px] hover:bg-glass-hover disabled:opacity-50"
               >
                 Test
               </button>
@@ -344,14 +344,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {tab === "appearance" && (
           <>
             <div className="flex items-center justify-between">
-              <label className="text-[10px] uppercase tracking-wide glass-muted">
+              <label className="text-[11px] uppercase tracking-wide glass-muted">
                 Theme
               </label>
-              <span className="text-[10px] glass-subtle capitalize">
+              <span className="text-[11px] glass-subtle capitalize">
                 {glassTheme === "royal" ? "Royal blue" : glassTheme}
               </span>
             </div>
-            <div className="grid grid-cols-3 gap-1 rounded-lg bg-white/5 p-0.5 border border-white/10">
+            <div className="grid grid-cols-3 gap-1 rounded-lg bg-glass-soft p-0.5 border border-glass">
               {(
                 [
                   ["neutral", "Neutral"],
@@ -368,10 +368,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   }}
                   aria-pressed={glassTheme === theme}
                   className={cn(
-                    "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[10px] transition-colors",
+                    "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
                     glassTheme === theme
                       ? "glass-action"
-                      : "glass-muted hover:bg-white/10 hover:text-white"
+                      : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
                   )}
                 >
                   <span className={`theme-swatch theme-swatch-${theme}`} />
@@ -380,10 +380,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               ))}
             </div>
             <div className="space-y-1.5">
-              <label className="text-[10px] uppercase tracking-wide glass-muted">
+              <label className="text-[11px] uppercase tracking-wide glass-muted">
                 Glass strength
               </label>
-              <div className="grid grid-cols-3 gap-1 rounded-lg bg-white/5 p-0.5 border border-white/10">
+              <div className="grid grid-cols-3 gap-1 rounded-lg bg-glass-soft p-0.5 border border-glass">
                 {(
                   [
                     ["clear", "Clear"],
@@ -400,10 +400,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     }}
                     aria-pressed={glassStrength === strength}
                     className={cn(
-                      "min-h-7 rounded-md px-1.5 text-[10px] transition-colors",
+                      "min-h-7 rounded-md px-1.5 text-[11px] transition-colors",
                       glassStrength === strength
                         ? "glass-action"
-                        : "glass-muted hover:bg-white/10 hover:text-white"
+                        : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
                     )}
                   >
                     {label}
@@ -467,7 +467,7 @@ const ModeRow: React.FC<{
       "w-full text-left rounded-lg px-3 py-2 text-[12px] transition-colors",
       active
         ? "glass-action"
-        : "glass-control glass-muted hover:bg-white/15 hover:text-white"
+        : "glass-control glass-muted hover:bg-glass-hover hover:text-glass-heading"
     )}
   >
     {label}
