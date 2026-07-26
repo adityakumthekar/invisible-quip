@@ -33,10 +33,12 @@ interface ToastProps
   variant?: ToastVariant
 }
 
+// Semantics live in a 3px left border rather than a saturated fill: quieter
+// against the rest of the glass, and readable without relying on hue alone.
 const toastVariants: Record<ToastVariant, string> = {
-  neutral: "bg-yellow-500 text-white",
-  success: "bg-green-500 text-white",
-  error: "bg-red-500 text-white"
+  neutral: "glass-toast glass-toast-neutral",
+  success: "glass-toast glass-toast-success",
+  error: "glass-toast glass-toast-error"
 }
 
 const Toast = React.forwardRef<
@@ -46,7 +48,7 @@ const Toast = React.forwardRef<
   <ToastPrimitive.Root
     ref={ref}
     className={cn(
-      "hit-region group fixed top-4 left-4 z-50 w-auto max-w-sm px-4 py-2 rounded-lg shadow-lg animate-in fade-in slide-in-from-bottom",
+      "hit-region group fixed top-4 left-4 z-50 w-auto max-w-sm px-4 py-2.5 animate-in fade-in slide-in-from-bottom",
       toastVariants[variant],
       className
     )}
@@ -61,7 +63,10 @@ const ToastAction = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Action
     ref={ref}
-    className={cn("text-xs font-medium text-white hover:opacity-90", className)}
+    className={cn(
+      "text-xs font-medium text-glass-heading hover:opacity-90",
+      className
+    )}
     {...props}
   />
 ))

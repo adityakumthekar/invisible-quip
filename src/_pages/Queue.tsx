@@ -26,6 +26,12 @@ interface QueueProps {
   setView: React.Dispatch<React.SetStateAction<"queue" | "solutions">>
 }
 
+// What Cmd+Enter asks when the input is empty. Phrased to get oriented context
+// plus one concrete next step, rather than a bare description of the screen.
+const SCREEN_GLANCE_PROMPT =
+  "Look at my screen and tell me what's going on. Lead with the context that's " +
+  "actually useful right now, then the single best next action I could take."
+
 const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [toastOpen, setToastOpen] = useState(false)
   const [toastMessage, setToastMessage] = useState<ToastMessage>({
@@ -61,6 +67,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const stopTeachingRef = useRef<() => void>(() => {})
   const teachingPhaseRef = useRef(teachingSession.phase)
   const teachingOpenRef = useRef(teachingOpen)
+  const handleAskAiRef = useRef<() => void>(() => {})
   const [privacyStatus, setPrivacyStatus] = useState<PrivacyGateStatus | null>(null)
   const [privacyChecking, setPrivacyChecking] = useState(false)
   const [privacyError, setPrivacyError] = useState<string | null>(null)
@@ -142,12 +149,31 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     await sendPrompt(prompt)
   }
 
+  // Ask AI, from both Cmd+Enter and the bar button — they used to disagree, the
+  // button only opening the panel while the shortcut ran a queue consumer that
+  // toasted "No Screenshots". Both now capture the screen and analyze it.
   const handleAskAi = () => {
+    if (chatLoading) return
     openPanels()
+    const typed = chatInput.trim()
+    if (typed) {
+      setChatInput("")
+      void sendPrompt(typed, { useScreen: true })
+    } else {
+      void sendPrompt(SCREEN_GLANCE_PROMPT, {
+        useScreen: true,
+        silentUser: true
+      })
+    }
   }
 
-  const handleTogglePanels = () => {
-    setPanelsOpen((open) => !open)
+  // The queued-screenshot solver, which used to be what Cmd+Enter ran.
+  const handleSolve = () => {
+    void window.electronAPI
+      .invoke("process-screenshot-queue")
+      .catch((err: unknown) => {
+        showToast("Solve failed", String(err), "error")
+      })
   }
 
   const runQuickAction = (prompt: string, useScreen: boolean) => {
@@ -267,7 +293,19 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     stopTeachingRef.current = stopTeaching
     teachingPhaseRef.current = teachingSession.phase
     teachingOpenRef.current = teachingOpen
+    handleAskAiRef.current = handleAskAi
   })
+
+  // Cmd/Ctrl+Enter. Subscribed once, so it reads through a ref — closing over
+  // chatInput directly would pin it to its value at mount.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onAskAiHotkey(() => {
+      handleAskAiRef.current()
+    })
+    return () => {
+      unsubscribe && unsubscribe()
+    }
+  }, [])
 
   // Global execute/abort hotkeys (Cmd/Ctrl+Shift+Enter / +Backspace). The main
   // process signals here so the panel and overlay update from one round-trip.
@@ -394,8 +432,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     if (contentRef.current) resizeObserver.observe(contentRef.current)
     updateDimensions()
 
+    // Note: onScreenshotTaken is subscribed in its own effect below, which also
+    // runs the refetch — registering it here too made every Cmd+H refetch twice.
     const cleanupFunctions = [
-      window.electronAPI.onScreenshotTaken(() => refetch()),
       window.electronAPI.onResetView(() => {
         refetch()
         setPanelsOpen(false)
@@ -478,7 +517,12 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       ref={contentRef}
       className="select-none relative w-full"
     >
-      <div className="px-2 py-1 space-y-3">
+      {/* Bottom padding is load-bearing: the window is sized to this element's
+          scrollHeight, and box-shadows don't contribute to layout, so anything
+          the surfaces cast beyond this padding is clipped off at the
+          transparent window edge. Keep pb >= the largest shadow reach
+          (offset + blur/2) in index.css. */}
+      <div className="px-3 pt-2 pb-8 space-y-3">
         <Toast
           open={toastOpen}
           onOpenChange={setToastOpen}
@@ -501,7 +545,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             teachingOpen={teachingOpen}
             onAskAi={handleAskAi}
             onTeachMe={toggleTeaching}
-            onTogglePanels={handleTogglePanels}
+            onSolve={handleSolve}
             onToggleModels={() => setIsSettingsOpen((v) => !v)}
             onToggleQuick={() => setQuickOpen((v) => !v)}
             onRecordClick={() => void handleRecordClick()}

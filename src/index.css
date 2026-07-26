@@ -2,27 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The overlay lives on a transparent, frameless Electron window. Note that
+   `backdrop-filter` there only blurs content *inside* the page — it cannot blur
+   the desktop behind the window (electron#30412). So the surfaces below are
+   really a flat translucent scrim over unblurred desktop, and ~28% of whatever
+   sits behind bleeds through as high-frequency noise. Readability is bought by
+   a neutral (non-tinting) fill, high text alphas, and a per-glyph text shadow —
+   NOT by the blur, which is kept only as free progressive enhancement.
+   Raising the alpha is deliberately not the lever: the overlay is meant to stay
+   see-through. */
 :root {
   color-scheme: dark;
-  --glass-primary-rgb: 8 25 66;
-  --glass-secondary-rgb: 27 52 99;
+  /* Default theme is neutral graphite: a saturated fill tints everything behind
+     it and shifts hue per background, which is what made text swim. */
+  --glass-primary-rgb: 18 19 23;
+  --glass-secondary-rgb: 30 32 38;
   --glass-primary-alpha: 0.72;
   --glass-secondary-alpha: 0.7;
-  --glass-primary-border: rgba(143, 176, 255, 0.38);
-  --glass-secondary-border: rgba(168, 193, 255, 0.32);
-  --glass-heading: rgba(255, 255, 255, 0.98);
-  --glass-text: rgba(247, 249, 255, 0.92);
-  --glass-muted: rgba(225, 234, 255, 0.72);
-  --glass-subtle: rgba(225, 234, 255, 0.58);
-  --glass-accent: #8fb0ff;
-  --glass-accent-strong: #3b6ff5;
-  --glass-accent-soft: rgba(143, 176, 255, 0.2);
-  --glass-hover: rgba(143, 176, 255, 0.14);
-  --glass-control-bg: rgba(255, 255, 255, 0.09);
-  --glass-control-border: rgba(255, 255, 255, 0.18);
+  --glass-primary-border: rgba(255, 255, 255, 0.13);
+  --glass-secondary-border: rgba(255, 255, 255, 0.1);
+  --glass-heading: rgb(255, 255, 255);
+  --glass-text: rgba(247, 249, 255, 0.96);
+  --glass-muted: rgba(232, 236, 245, 0.82);
+  --glass-subtle: rgba(232, 236, 245, 0.7);
+  --glass-accent: #e6e8ec;
+  --glass-accent-strong: #aab1bd;
+  --glass-accent-soft: rgba(255, 255, 255, 0.09);
+  --glass-hover: rgba(255, 255, 255, 0.07);
+  /* Links need their own hue — the accent is near-white on this theme and
+     would be indistinguishable from body text. */
+  --glass-link: #8ab4ff;
+  /* Status hues, lightened so they clear contrast on a dark translucent fill —
+     the Tailwind 400/500 ramps components reached for are too dark here. */
+  --glass-danger: #ff8f8f;
+  --glass-success: #6fd694;
+  --glass-warning: #f2c46b;
+  /* A dark well, not a light one: typed text needs a solid backing, and a
+     light fill only compounds the bleed-through. */
+  --glass-control-bg: rgba(0, 0, 0, 0.24);
+  --glass-control-border: rgba(255, 255, 255, 0.16);
   --glass-blur: blur(30px) saturate(155%);
-  --glass-radius: 16px;
+  --glass-radius: 18px;
+  --glass-radius-sm: 12px;
   --glass-radius-pill: 999px;
+
+  /* Local contrast per glyph, so text survives whatever bleeds through. Same
+     trick subtitles and desktop icon labels use. Set to `none` to disable. */
+  --glass-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  /* For the small, low-contrast tiers. Tighter radius but higher opacity than
+     the base: a 2px blur under 10px type starts filling in counters and reads
+     smeary, so buy density with alpha instead of spread. */
+  --glass-text-shadow-strong: 0 1px 1.5px rgba(0, 0, 0, 0.72),
+    0 0 1.5px rgba(0, 0, 0, 0.6);
+  /* Extra density behind running text only, so panel chrome stays airy. */
+  --glass-scrim: rgba(10, 11, 14, 0.22);
 
   /* Compatibility aliases for older surfaces. */
   --glass-dark-bg: rgb(var(--glass-primary-rgb) / var(--glass-primary-alpha));
@@ -35,42 +68,63 @@
   --glass-light-muted: var(--glass-muted);
 }
 
+/* `neutral` is the :root default above — it needs no block of its own.
+   The tinted themes below darken and desaturate relative to their old values so
+   they stay readable at the same alpha, and drop the bright border glow that
+   used to halo every panel. */
+[data-glass-theme="royal"] {
+  --glass-primary-rgb: 11 26 62;
+  --glass-secondary-rgb: 24 46 96;
+  --glass-primary-border: rgba(160, 190, 255, 0.24);
+  --glass-secondary-border: rgba(160, 190, 255, 0.2);
+  --glass-accent: #9cb6ff;
+  --glass-accent-strong: #3b6ff5;
+  --glass-accent-soft: rgba(143, 176, 255, 0.16);
+  --glass-hover: rgba(143, 176, 255, 0.12);
+  --glass-link: #a8c4ff;
+}
+
 [data-glass-theme="purple"] {
-  --glass-primary-rgb: 38 15 70;
-  --glass-secondary-rgb: 66 37 103;
-  --glass-primary-border: rgba(196, 181, 253, 0.38);
-  --glass-secondary-border: rgba(216, 202, 255, 0.32);
-  --glass-muted: rgba(238, 229, 255, 0.74);
-  --glass-subtle: rgba(238, 229, 255, 0.6);
-  --glass-accent: #c4b5fd;
+  --glass-primary-rgb: 34 16 62;
+  --glass-secondary-rgb: 56 30 98;
+  --glass-primary-border: rgba(198, 180, 255, 0.24);
+  --glass-secondary-border: rgba(198, 180, 255, 0.2);
+  --glass-accent: #c9b6ff;
   --glass-accent-strong: #7c5cff;
-  --glass-accent-soft: rgba(196, 181, 253, 0.2);
-  --glass-hover: rgba(196, 181, 253, 0.14);
+  --glass-accent-soft: rgba(168, 140, 255, 0.16);
+  --glass-hover: rgba(168, 140, 255, 0.12);
+  --glass-link: #cbb8ff;
 }
 
-[data-glass-theme="neutral"] {
-  --glass-primary-rgb: 31 33 38;
-  --glass-secondary-rgb: 53 56 63;
-  --glass-primary-border: rgba(255, 255, 255, 0.26);
-  --glass-secondary-border: rgba(255, 255, 255, 0.22);
-  --glass-muted: rgba(235, 235, 240, 0.74);
-  --glass-subtle: rgba(235, 235, 240, 0.6);
-  --glass-accent: #d1d5db;
-  --glass-accent-strong: #8b93a1;
-  --glass-accent-soft: rgba(209, 213, 219, 0.17);
-  --glass-hover: rgba(209, 213, 219, 0.12);
-}
-
+/* Strength is how much desktop bleeds through — it is not a blur amount, since
+   the blur never reaches the desktop. Each level pays for its own transparency:
+   as the fill thins, the text tiers, halo, and reading scrim all step up to
+   compensate, so the 4.5:1 floor over a white desktop holds at every setting.
+   Measured worst case (subtle tier, white backdrop): clear 4.94:1,
+   balanced 4.94:1, solid 6.86:1. */
 [data-glass-strength="clear"] {
-  --glass-primary-alpha: 0.58;
-  --glass-secondary-alpha: 0.56;
-  --glass-blur: blur(34px) saturate(165%);
+  --glass-primary-alpha: 0.62;
+  --glass-secondary-alpha: 0.6;
+  --glass-muted: rgba(232, 236, 245, 0.88);
+  --glass-subtle: rgba(232, 236, 245, 0.78);
+  --glass-scrim: rgba(10, 11, 14, 0.3);
+  --glass-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.62);
+  --glass-text-shadow-strong: 0 1px 1.5px rgba(0, 0, 0, 0.78),
+    0 0 1.5px rgba(0, 0, 0, 0.68);
 }
 
+[data-glass-strength="balanced"] {
+  --glass-primary-alpha: 0.72;
+  --glass-secondary-alpha: 0.7;
+}
+
+/* Dense enough that the halo is pure cost — it would only look heavy here. */
 [data-glass-strength="solid"] {
-  --glass-primary-alpha: 0.86;
-  --glass-secondary-alpha: 0.84;
-  --glass-blur: blur(24px) saturate(145%);
+  --glass-primary-alpha: 0.9;
+  --glass-secondary-alpha: 0.88;
+  --glass-scrim: rgba(10, 11, 14, 0.12);
+  --glass-text-shadow: none;
+  --glass-text-shadow-strong: 0 1px 1.5px rgba(0, 0, 0, 0.4);
 }
 
 html,
@@ -79,6 +133,10 @@ body,
   background: transparent;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
     system-ui, sans-serif;
+  /* Base type scale. Bigger glyphs carry more ink and hold up better against
+     the noise bleeding through the scrim. */
+  font-size: 13px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   /* Click-through: only glass / .hit-region surfaces receive hits */
   pointer-events: none;
@@ -108,7 +166,11 @@ body,
   pointer-events: none;
 }
 
-/* Markdown — light panel context */
+/* Markdown — light panel context.
+   The wrapping rules are load-bearing, not cosmetic: the window is sized from
+   contentRef.scrollWidth, so one long unbroken URL in a reply would otherwise
+   inflate the overlay to the 70%-of-display cap. */
+.chat-md { overflow-wrap: anywhere; word-break: break-word; }
 .chat-md > *:first-child { margin-top: 0; }
 .chat-md > *:last-child { margin-bottom: 0; }
 .chat-md p { margin: 0.45em 0; }
@@ -139,6 +201,7 @@ body,
   padding: 0.7em;
   border-radius: 8px;
   overflow-x: auto;
+  max-width: 100%;
   margin: 0.5em 0;
 }
 .chat-md pre code { background: none; padding: 0; }
@@ -149,21 +212,81 @@ body,
   color: var(--glass-light-muted);
 }
 
+/* GFM. remark-gfm is enabled, so tables/strikethrough/task lists can all show
+   up in a reply and need real styles. */
+.chat-md img { max-width: 100%; height: auto; border-radius: 6px; }
+.chat-md hr {
+  border: 0;
+  border-top: 1px solid var(--glass-primary-border);
+  margin: 0.8em 0;
+}
+.chat-md del { opacity: 0.65; }
+.chat-md table {
+  width: 100%;
+  margin: 0.55em 0;
+  border-collapse: collapse;
+  font-size: 0.94em;
+  display: block;
+  overflow-x: auto;
+}
+.chat-md th,
+.chat-md td {
+  padding: 0.35em 0.6em;
+  text-align: left;
+  border-bottom: 1px solid var(--glass-primary-border);
+}
+.chat-md th {
+  font-weight: 600;
+  color: var(--glass-heading);
+  white-space: nowrap;
+}
+.chat-md tr:last-child td { border-bottom: 0; }
+/* remark-gfm emits these exact class names for task lists. */
+.chat-md ul.contains-task-list { list-style: none; padding-left: 0.1em; }
+.chat-md li.task-list-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+}
+.chat-md li.task-list-item input[type="checkbox"] {
+  margin: 0;
+  flex: 0 0 auto;
+  transform: translateY(1px);
+  accent-color: var(--glass-accent);
+}
+
 /* Markdown on dark panels */
 .chat-md-dark {
   color: var(--glass-dark-text);
+  text-shadow: var(--glass-text-shadow);
 }
-.chat-md-dark a { color: var(--glass-accent); }
+.chat-md-dark a { color: var(--glass-link); }
+.chat-md-dark h1,
+.chat-md-dark h2,
+.chat-md-dark h3,
+.chat-md-dark h4 {
+  color: var(--glass-heading);
+}
+/* Dark chips rather than light ones: they add local density exactly where code
+   sits, the same way the scrim does for running text. */
 .chat-md-dark code,
 .chat-md-dark pre {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* A shadow on monospace glyphs sitting on their own chip just reads muddy. */
+  text-shadow: none;
 }
+.chat-md-dark pre code { border: 0; }
 .chat-md-dark blockquote {
   border-left-color: rgba(255, 255, 255, 0.2);
   color: var(--glass-dark-muted);
 }
+.chat-md-dark th { background: rgba(0, 0, 0, 0.18); }
 
-/* ——— Glass surfaces ——— */
+/* ——— Glass surfaces ———
+   Each surface carries two rings: a dark outer one so the edge stays defined
+   against a bright desktop, and the light inset one so it stays defined against
+   a dark desktop. A single hairline disappears on one or the other. */
 .glass-bar {
   background: var(--glass-dark-bg);
   backdrop-filter: var(--glass-blur);
@@ -171,7 +294,14 @@ body,
   border: 1px solid var(--glass-dark-border);
   border-radius: var(--glass-radius-pill);
   color: var(--glass-dark-text);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.34);
+  /* Reach (offset + blur/2) is kept under the wrapper padding in Queue.tsx —
+     the window is sized to content and shadows don't affect layout, so
+     anything taller than that padding gets hard-clipped at the window edge. */
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 2px 5px rgba(0, 0, 0, 0.24),
+    0 8px 24px rgba(0, 0, 0, 0.46);
 }
 
 .glass-panel-secondary,
@@ -183,8 +313,10 @@ body,
   border-radius: var(--glass-radius);
   color: var(--glass-text);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 12px 40px rgba(0, 0, 0, 0.3);
+    0 0 0 1px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 2px 6px rgba(0, 0, 0, 0.26),
+    0 10px 28px rgba(0, 0, 0, 0.44);
 }
 
 .glass-panel-dark {
@@ -195,44 +327,71 @@ body,
   border-radius: var(--glass-radius);
   color: var(--glass-text);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 12px 40px rgba(0, 0, 0, 0.38);
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 2px 6px rgba(0, 0, 0, 0.26),
+    0 10px 28px rgba(0, 0, 0, 0.48);
 }
 
-@supports not (backdrop-filter: blur()) {
-  .glass-bar,
-  .glass-panel-dark {
-    background: var(--glass-dark-bg);
-  }
-  .glass-panel-light {
-    background: var(--glass-light-bg);
-  }
+/* Denser backing for running text, so the panel chrome can stay see-through
+   while the words themselves sit on ~0.78 effective alpha. Edge-to-edge on
+   purpose — inset from the sides it would read as a box-in-a-box. */
+.glass-reading {
+  background: var(--glass-scrim);
 }
 
+/* An alert has to be unambiguous, so the toast sits denser than the panels.
+   It is transient, so little translucency is lost in practice. */
+.glass-toast {
+  background: rgb(var(--glass-primary-rgb) / 0.92);
+  border: 1px solid var(--glass-primary-border);
+  border-left-width: 3px;
+  border-radius: var(--glass-radius-sm, 12px);
+  color: var(--glass-text);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.26),
+    0 10px 28px rgba(0, 0, 0, 0.48);
+  text-shadow: none;
+}
+
+.glass-toast-neutral { border-left-color: var(--glass-warning); }
+.glass-toast-success { border-left-color: var(--glass-success); }
+.glass-toast-error { border-left-color: var(--glass-danger); }
+
+/* The lower-contrast tiers get the stronger halo — they are the ones that
+   actually stop clearing 4.5:1 when a bright window sits behind the panel. */
 .glass-heading {
   color: var(--glass-heading);
+  text-shadow: var(--glass-text-shadow);
 }
 
 .glass-text {
   color: var(--glass-text);
+  text-shadow: var(--glass-text-shadow);
 }
 
 .glass-muted {
   color: var(--glass-muted);
+  text-shadow: var(--glass-text-shadow-strong);
 }
 
 .glass-subtle {
   color: var(--glass-subtle);
+  text-shadow: var(--glass-text-shadow-strong);
 }
 
 .glass-icon {
   color: var(--glass-muted);
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.6));
 }
 
 .glass-control {
   color: var(--glass-text);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
+  /* Sits on its own well, so it needs no halo. */
+  text-shadow: none;
 }
 
 .glass-control::placeholder {
@@ -248,6 +407,7 @@ body,
   color: var(--glass-heading);
   background: var(--glass-accent-soft);
   border: 1px solid var(--glass-primary-border);
+  text-shadow: var(--glass-text-shadow);
 }
 
 .glass-action:hover {
@@ -271,9 +431,12 @@ textarea:focus-visible {
   border-radius: 5px;
   font-size: 10px;
   line-height: 1;
-  color: var(--glass-dark-muted);
-  background: var(--glass-accent-soft);
-  border: 1px solid var(--glass-dark-border);
+  color: var(--glass-muted);
+  /* Dark chip, not a light one — a key cap needs to read as recessed, and the
+     extra density is what keeps 10px glyphs legible over a busy desktop. */
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  text-shadow: none;
 }
 
 .icon-btn {
@@ -283,9 +446,10 @@ textarea:focus-visible {
   gap: 0.35rem;
   padding: 0.35rem 0.65rem;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1;
-  color: var(--glass-dark-text);
+  color: var(--glass-text);
+  text-shadow: var(--glass-text-shadow);
   background: transparent;
   border: none;
   transition: background 0.15s ease, color 0.15s ease;
@@ -322,18 +486,28 @@ textarea:focus-visible {
   background: #8b93a1;
 }
 
+/* Named `panel-reveal`, not `panel-in`: tailwind.config.js used to define a
+   second `panel-in` keyframe with different values, and whichever landed later
+   in the bundle silently won. Transform-only on purpose — animating a layout
+   property would re-trigger the ResizeObserver that sizes the window. */
 .panel-enter {
-  animation: panel-in 0.22s ease-out;
+  animation: panel-reveal 0.28s cubic-bezier(0.2, 0.9, 0.25, 1.15);
 }
 
-@keyframes panel-in {
+@keyframes panel-reveal {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(10px) scale(0.985);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-enter {
+    animation: none;
   }
 }
 
@@ -398,7 +572,8 @@ textarea:focus-visible {
     var(--glass-dark-muted) 0 2px,
     transparent 2px 4px
   );
-  opacity: 0.7;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.5));
+  opacity: 0.8;
 }
 
 button,

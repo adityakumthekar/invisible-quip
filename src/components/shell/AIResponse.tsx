@@ -60,18 +60,23 @@ const AIResponse: React.FC<AIResponseProps> = ({
   return (
     <div
       className={cn(
-        "glass-panel-dark panel-enter flex flex-col w-full transition-[min-height] duration-200",
-        hasContent ? "min-h-[240px] max-h-[420px]" : "min-h-0",
+        "glass-panel-dark panel-enter flex flex-col w-full overflow-hidden transition-[min-height] duration-200",
+        hasContent ? "min-h-[240px] max-h-[460px]" : "min-h-0",
         className
       )}
     >
-      <div className="flex items-center justify-between gap-2 px-4 pt-3.5 pb-2">
+      <div
+        className={cn(
+          "flex items-center justify-between gap-2 px-4 pt-3.5 pb-2.5",
+          hasContent && "border-b border-glass"
+        )}
+      >
         <div className="flex items-baseline gap-2 min-w-0">
           <h2 className="text-[13px] font-semibold tracking-tight glass-heading">
             {title}
           </h2>
           {!hasContent && (
-            <span className="text-[10px] glass-subtle truncate">
+            <span className="text-[11px] glass-subtle truncate">
               {modelLabel}
             </span>
           )}
@@ -79,7 +84,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
         <div className="flex items-center gap-0.5">
           <button
             type="button"
-            className="no-drag p-1.5 rounded-md glass-icon hover:text-white hover:bg-white/10"
+            className="no-drag p-1.5 rounded-md glass-icon hover:text-white hover:bg-glass-hover"
             onClick={handleCopy}
             title="Copy last response"
             disabled={!lastAssistant}
@@ -89,7 +94,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
           {onClose && (
             <button
               type="button"
-              className="no-drag p-1.5 rounded-md glass-icon hover:text-white hover:bg-white/10"
+              className="no-drag p-1.5 rounded-md glass-icon hover:text-white hover:bg-glass-hover"
               onClick={onClose}
               aria-label="Close"
             >
@@ -102,16 +107,16 @@ const AIResponse: React.FC<AIResponseProps> = ({
       {hasContent && (
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto px-4 pb-2 space-y-3 min-h-[120px]"
+          className="glass-reading flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[120px]"
         >
           {messages.length > 0 &&
           messages.map((msg, idx) => (
             <div
               key={idx}
               className={cn(
-                "text-[12.5px] leading-relaxed",
+                "text-[13px] leading-[1.6]",
                 msg.role === "user"
-                  ? "glass-muted pl-3 border-l border-white/25"
+                  ? "glass-muted pl-3 border-l-2 border-glass"
                   : "glass-text"
               )}
             >
@@ -133,7 +138,11 @@ const AIResponse: React.FC<AIResponseProps> = ({
       )}
 
       <form
-        className="no-drag flex items-center gap-1.5 px-3 pb-3 pt-1"
+        className={cn(
+          "no-drag flex items-center gap-1.5 px-3 pb-3 pt-2.5",
+          // Conditional, or an empty panel renders two abutting 1px lines.
+          hasContent && "border-t border-glass"
+        )}
         onSubmit={(e) => {
           e.preventDefault()
           onSend()
@@ -150,16 +159,14 @@ const AIResponse: React.FC<AIResponseProps> = ({
           aria-pressed={includeScreen}
           className={cn(
             "p-2 rounded-lg border transition-colors",
-            includeScreen
-              ? "glass-action"
-              : "glass-control glass-icon hover:bg-white/15"
+            includeScreen ? "glass-action" : "glass-control glass-icon"
           )}
         >
           <Monitor className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
         <input
           ref={inputRef}
-          className="glass-control flex-1 rounded-lg px-3 py-2 text-[12px]"
+          className="glass-control flex-1 rounded-lg px-3 py-2 text-[12.5px]"
           placeholder={
             includeScreen ? "Ask about your screen…" : "Ask a follow-up…"
           }

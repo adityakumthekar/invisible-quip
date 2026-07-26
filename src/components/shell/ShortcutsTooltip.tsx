@@ -19,7 +19,10 @@ const ShortcutsTooltip: React.FC<ShortcutsTooltipProps> = ({
   useEffect(() => {
     let tooltipHeight = 0
     if (tooltipRef.current && isTooltipVisible) {
-      tooltipHeight = tooltipRef.current.offsetHeight + 10
+      // The tooltip is absolutely positioned, so its height is reported into
+      // the window measurement by hand. The slack covers the panel's drop
+      // shadow, which would otherwise be clipped at the window edge.
+      tooltipHeight = tooltipRef.current.offsetHeight + 26
     }
     onTooltipVisibilityChange(isTooltipVisible, tooltipHeight)
   }, [isTooltipVisible, onTooltipVisibilityChange])

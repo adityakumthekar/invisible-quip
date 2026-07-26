@@ -23,29 +23,29 @@ const SolutionCommands: React.FC<SolutionCommandsProps> = ({
 
   return (
     <div className="w-fit">
-      <div className="glass-bar draggable-area flex items-center gap-3 px-3 py-1.5 text-[11px] text-white/85">
+      <div className="glass-bar draggable-area flex items-center gap-3 px-3 py-1.5 text-[11px] glass-text">
         <div className="flex items-center gap-1.5 whitespace-nowrap no-drag">
-          <span className="text-white/70">Show/Hide</span>
+          <span className="glass-muted">Show/Hide</span>
           <span className="kbd">⌘</span>
           <span className="kbd">B</span>
         </div>
 
         <div className="flex items-center gap-1.5 whitespace-nowrap no-drag">
-          <span className="text-white/70 truncate">Screenshot</span>
+          <span className="glass-muted truncate">Screenshot</span>
           <span className="kbd">⌘</span>
           <span className="kbd">H</span>
         </div>
 
         {extraScreenshots.length > 0 && (
           <div className="flex items-center gap-1.5 whitespace-nowrap no-drag">
-            <span className="text-white/70">Debug</span>
+            <span className="glass-muted">Debug</span>
             <span className="kbd">⌘</span>
             <span className="kbd">↵</span>
           </div>
         )}
 
         <div className="flex items-center gap-1.5 whitespace-nowrap no-drag">
-          <span className="text-white/70">Start over</span>
+          <span className="glass-muted">Start over</span>
           <span className="kbd">⌘</span>
           <span className="kbd">R</span>
         </div>

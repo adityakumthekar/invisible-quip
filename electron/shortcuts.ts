@@ -32,8 +32,17 @@ export class ShortcutsHelper {
       }
     })
 
-    globalShortcut.register("CommandOrControl+Enter", async () => {
-      await this.appState.processingHelper.processScreenshots()
+    // Ask AI. Capture-and-analyze is the default action, so this works from a
+    // cold start with nothing queued. The renderer owns the chat state, so it
+    // does the capture (via the existing chat-with-screen path) and we only
+    // signal it — same shape as the teaching hotkeys below.
+    globalShortcut.register("CommandOrControl+Enter", () => {
+      const mainWindow = this.appState.getMainWindow()
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      if (!this.appState.isVisible()) {
+        this.appState.showMainWindow()
+      }
+      mainWindow.webContents.send("ask-ai-hotkey")
     })
 
     globalShortcut.register("CommandOrControl+R", () => {
