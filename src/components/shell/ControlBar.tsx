@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from "react"
+import React, { useEffect } from "react"
 import {
+  GraduationCap,
   Eye,
-  HelpCircle,
   LayoutGrid,
   LogOut,
   Mic,
@@ -10,7 +10,9 @@ import {
 } from "lucide-react"
 import { cn } from "../../lib/utils"
 import { SHORTCUTS } from "../../lib/shortcuts"
+import { beginWindowDrag, endWindowDrag } from "../../lib/windowDrag"
 import MicWaveform from "./MicWaveform"
+import ShortcutsTooltip from "./ShortcutsTooltip"
 
 interface ControlBarProps {
   screenshots: Array<{ path: string; preview: string }>
@@ -20,7 +22,9 @@ interface ControlBarProps {
   panelsOpen: boolean
   modelsOpen: boolean
   quickOpen: boolean
+  teachingOpen: boolean
   onAskAi: () => void
+  onTeachMe: () => void
   onTogglePanels: () => void
   onToggleModels: () => void
   onToggleQuick: () => void
@@ -36,27 +40,56 @@ const ControlBar: React.FC<ControlBarProps> = ({
   panelsOpen,
   modelsOpen,
   quickOpen,
+  teachingOpen,
   onAskAi,
+  onTeachMe,
   onTogglePanels,
   onToggleModels,
   onToggleQuick,
   onRecordClick,
   onTooltipVisibilityChange
 }) => {
-  const [isTooltipVisible, setIsTooltipVisible] = useState(false)
-  const tooltipRef = useRef<HTMLDivElement>(null)
-
+  // End the drag on any release, even one the grip never sees (window blur,
+  // pointer lost outside the transparent window).
   useEffect(() => {
-    let tooltipHeight = 0
-    if (tooltipRef.current && isTooltipVisible) {
-      tooltipHeight = tooltipRef.current.offsetHeight + 10
+    const stop = () => endWindowDrag()
+    window.addEventListener("pointerup", stop)
+    window.addEventListener("pointercancel", stop)
+    window.addEventListener("blur", stop)
+    return () => {
+      window.removeEventListener("pointerup", stop)
+      window.removeEventListener("pointercancel", stop)
+      window.removeEventListener("blur", stop)
+      endWindowDrag()
     }
-    onTooltipVisibilityChange(isTooltipVisible, tooltipHeight)
-  }, [isTooltipVisible, onTooltipVisibilityChange])
+  }, [])
+
+  const onGripPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    // Pointer capture keeps the release on this element even once the window
+    // has slid out from under the cursor.
+    event.currentTarget.setPointerCapture(event.pointerId)
+    beginWindowDrag()
+  }
 
   return (
     <div className="w-fit relative">
       <div className="glass-bar draggable-area flex items-center gap-1 px-2 py-1.5">
+        {/* Dedicated grip. Explicitly no-drag: Chromium's app-region drag is
+            unreliable on this transparent click-through window, so the move is
+            driven manually from the main process instead. */}
+        <div
+          className="drag-grip no-drag flex items-center justify-center self-stretch px-1 -ml-0.5 mr-0.5 shrink-0"
+          title="Drag to move"
+          aria-hidden
+          onPointerDown={onGripPointerDown}
+          onPointerUp={() => endWindowDrag()}
+          onPointerCancel={() => endWindowDrag()}
+        >
+          <span className="drag-grip-dots" />
+        </div>
+
         {isRecording && micStream && (
           <MicWaveform stream={micStream} seconds={recordingSeconds} />
         )}
@@ -71,6 +104,18 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <span>Ask AI</span>
           <span className="kbd">⌘</span>
           <span className="kbd">↵</span>
+        </button>
+
+        <button
+          type="button"
+          className={cn("icon-btn no-drag", teachingOpen && "active")}
+          onClick={onTeachMe}
+          title="Teach Me"
+          aria-label="Teach Me"
+          aria-pressed={teachingOpen}
+        >
+          <GraduationCap className="w-3.5 h-3.5" strokeWidth={1.75} />
+          <span>Teach Me</span>
         </button>
 
         <button
@@ -131,37 +176,10 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <Settings2 className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
 
-        <div
-          className="relative no-drag"
-          onMouseEnter={() => setIsTooltipVisible(true)}
-          onMouseLeave={() => setIsTooltipVisible(false)}
-        >
-          <button type="button" className="icon-btn" title="Shortcuts">
-            <HelpCircle className="w-3.5 h-3.5" strokeWidth={1.75} />
-          </button>
-          {isTooltipVisible && (
-            <div
-              ref={tooltipRef}
-              className="absolute top-full right-0 mt-2 w-72 z-50"
-            >
-              <div className="glass-panel-dark p-3 text-[11px] glass-text space-y-2.5">
-                <p className="font-medium glass-heading">Shortcuts</p>
-                {SHORTCUTS.map((s) => (
-                  <div key={s.action} className="flex justify-between gap-3">
-                    <span className="glass-muted">{s.action}</span>
-                    <span className="flex gap-1">
-                      {s.keys.map((k, i) => (
-                        <span key={i} className="kbd">
-                          {k}
-                        </span>
-                      ))}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        <ShortcutsTooltip
+          shortcuts={SHORTCUTS}
+          onTooltipVisibilityChange={onTooltipVisibilityChange}
+        />
 
         <button
           type="button"

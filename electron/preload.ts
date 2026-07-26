@@ -1,4 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron"
+import { TeachingResult } from "./teaching"
+import type { TeachingOverlayTargetEvent } from "./teachingOverlayContract"
+import type { PrivacyGateStatus, PrivacyPreflightResult } from "./privacyContract"
 
 // Types for the exposed Electron API
 interface ElectronAPI {
@@ -6,6 +9,9 @@ interface ElectronAPI {
     width: number
     height: number
   }) => Promise<void>
+  setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
+  startWindowDrag: () => Promise<void>
+  endWindowDrag: () => Promise<void>
   getScreenshots: () => Promise<Array<{ path: string; preview: string }>>
   deleteScreenshot: (
     path: string
@@ -25,14 +31,29 @@ interface ElectronAPI {
 
   onUnauthorized: (callback: () => void) => () => void
   onDebugError: (callback: (error: string) => void) => () => void
-  takeScreenshot: () => Promise<void>
+  takeScreenshot: () => Promise<{ path: string; preview: string }>
   moveWindowLeft: () => Promise<void>
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
   analyzeAudioFromBase64: (data: string, mimeType: string) => Promise<{ text: string; timestamp: number }>
   analyzeAudioFile: (path: string) => Promise<{ text: string; timestamp: number }>
-  analyzeImageFile: (path: string) => Promise<void>
+  analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
+  teachStart: (goal: string) => Promise<TeachingResult>
+  teachNext: () => Promise<TeachingResult>
+  teachExecute: () => Promise<TeachingResult>
+  teachStop: () => Promise<{ success: true }>
+  onTeachingOverlayTarget: (
+    callback: (data: TeachingOverlayTargetEvent) => void
+  ) => () => void
+  onTeachingOverlayClear: (callback: () => void) => () => void
+  onTeachingHotkey: (
+    callback: (kind: "execute" | "abort") => void
+  ) => () => void
+  teachingOverlayReady: () => Promise<boolean>
+  privacyGetStatus: () => Promise<PrivacyGateStatus>
+  privacyAcknowledge: () => Promise<PrivacyGateStatus>
+  privacyRunPreflight: () => Promise<PrivacyPreflightResult>
   quitApp: () => Promise<void>
   
   // LLM Model Management
@@ -66,6 +87,10 @@ export const PROCESSING_EVENTS = {
 contextBridge.exposeInMainWorld("electronAPI", {
   updateContentDimensions: (dimensions: { width: number; height: number }) =>
     ipcRenderer.invoke("update-content-dimensions", dimensions),
+  setIgnoreMouseEvents: (ignore: boolean) =>
+    ipcRenderer.invoke("set-ignore-mouse-events", ignore),
+  startWindowDrag: () => ipcRenderer.invoke("window-drag-start"),
+  endWindowDrag: () => ipcRenderer.invoke("window-drag-end"),
   takeScreenshot: () => ipcRenderer.invoke("take-screenshot"),
   getScreenshots: () => ipcRenderer.invoke("get-screenshots"),
   deleteScreenshot: (path: string) =>
@@ -112,11 +137,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   onDebugSuccess: (callback: (data: any) => void) => {
-    ipcRenderer.on("debug-success", (_event, data) => callback(data))
+    const subscription = (_: any, data: any) => callback(data)
+    ipcRenderer.on("debug-success", subscription)
     return () => {
-      ipcRenderer.removeListener("debug-success", (_event, data) =>
-        callback(data)
-      )
+      ipcRenderer.removeListener("debug-success", subscription)
     }
   },
   onDebugError: (callback: (error: string) => void) => {
@@ -178,6 +202,39 @@ contextBridge.exposeInMainWorld("electronAPI", {
   analyzeAudioFromBase64: (data: string, mimeType: string) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType),
   analyzeAudioFile: (path: string) => ipcRenderer.invoke("analyze-audio-file", path),
   analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
+  teachStart: (goal: string) => ipcRenderer.invoke("teach-start", goal),
+  teachNext: () => ipcRenderer.invoke("teach-next"),
+  teachExecute: () => ipcRenderer.invoke("teach-execute"),
+  teachStop: () => ipcRenderer.invoke("teach-stop"),
+  onTeachingOverlayTarget: (
+    callback: (data: TeachingOverlayTargetEvent) => void
+  ) => {
+    const subscription = (_: unknown, data: TeachingOverlayTargetEvent) =>
+      callback(data)
+    ipcRenderer.on("teaching-overlay-target", subscription)
+    return () => {
+      ipcRenderer.removeListener("teaching-overlay-target", subscription)
+    }
+  },
+  onTeachingOverlayClear: (callback: () => void) => {
+    const subscription = () => callback()
+    ipcRenderer.on("teaching-overlay-clear", subscription)
+    return () => {
+      ipcRenderer.removeListener("teaching-overlay-clear", subscription)
+    }
+  },
+  onTeachingHotkey: (callback: (kind: "execute" | "abort") => void) => {
+    const subscription = (_: unknown, kind: "execute" | "abort") =>
+      callback(kind)
+    ipcRenderer.on("teaching-hotkey", subscription)
+    return () => {
+      ipcRenderer.removeListener("teaching-hotkey", subscription)
+    }
+  },
+  teachingOverlayReady: () => ipcRenderer.invoke("teaching-overlay-ready"),
+  privacyGetStatus: () => ipcRenderer.invoke("privacy-get-status"),
+  privacyAcknowledge: () => ipcRenderer.invoke("privacy-acknowledge"),
+  privacyRunPreflight: () => ipcRenderer.invoke("privacy-run-preflight"),
   quitApp: () => ipcRenderer.invoke("quit-app"),
   
   // LLM Model Management

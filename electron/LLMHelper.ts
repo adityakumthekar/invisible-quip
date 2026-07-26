@@ -1,10 +1,83 @@
 import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai"
 import fs from "fs"
+import {
+  parseTeachingResponse,
+  TeachingStepResponse
+} from "./teaching"
+
+export function buildTeachingPrompt(
+  goal: string,
+  history: string[],
+  imageSize: { width: number; height: number }
+): string {
+  const priorSteps =
+    history.length > 0
+      ? history.map((step, index) => `${index + 1}. ${step}`).join("\n")
+      : "None."
+
+  return `You are a visual teaching assistant guiding a user toward this goal:
+${goal}
+
+Prior step summaries:
+${priorSteps}
+
+Inspect the attached screenshot (${imageSize.width}×${imageSize.height} pixels) and return exactly one concise instruction for only the immediate next action. Do not provide a list or multiple actions. After you respond, the user confirms and the app performs the action for them, so choose one small, safe, reversible action at a time.
+
+Return only one strict JSON object with this exact contract:
+{
+  "state": "step" | "complete" | "blocked",
+  "instruction": "one concise instruction",
+  "label": "optional short visible label",
+  "action": "click" | "type",
+  "text": "text to type (only when action is type)",
+  "target": { "x": number, "y": number, "width": number, "height": number }
+}
+
+Use state "step" when the user can take a visible next action. target is required only for state "step".
+IMPORTANT — target coordinates use Gemini's normalized 0–1000 space (NOT raw screenshot pixels):
+- (0, 0) is the top-left of the image; (1000, 1000) is the bottom-right.
+- x/y are the top-left corner of the UI element in that 0–1000 space.
+- width/height are also in 0–1000 space. Always provide them so the click lands on the element center.
+- Example: an element covering the middle of the screen might be {"x":400,"y":450,"width":200,"height":100}.
+Set action to "click" to click the target, or "type" to click the target and then enter text. Include "text" only when action is "type"; omit it for clicks. Default to "click" when unsure.
+Use state "complete" when the screenshot shows the goal is finished.
+Use state "blocked" when no safe visible next action can be identified, and briefly explain what is missing.
+For "complete" and "blocked", omit target, action, and text. Omit label when it is not useful. Do not add properties, markdown, or commentary.`
+}
+
+export function parseTeachingModelText(text: string): TeachingStepResponse {
+  // Gemini often wraps JSON in a ```json code fence even when told not to;
+  // strip it before parsing, mirroring cleanJsonResponse on the other paths.
+  const cleaned = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim()
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(cleaned)
+  } catch {
+    throw new Error("Invalid teaching JSON response")
+  }
+  return parseTeachingResponse(parsed)
+}
 
 interface OllamaResponse {
   response: string
   done: boolean
 }
+
+const SOLUTION_JSON_FORMAT = `{
+  "solution": {
+    "code": "The code or main answer here.",
+    "problem_statement": "Restate the problem or situation.",
+    "context": "Relevant background/context.",
+    "suggested_responses": ["First possible answer or action", "Second possible answer or action", "..."],
+    "reasoning": "Explanation of why these suggestions are appropriate."
+  }
+}
+Important: Return ONLY the JSON object, without any markdown formatting or code blocks.`
 
 export class LLMHelper {
   private model: GenerativeModel | null = null
@@ -78,7 +151,8 @@ export class LLMHelper {
       return data.response
     } catch (error) {
       console.error("[LLMHelper] Error calling Ollama:", error)
-      throw new Error(`Failed to connect to Ollama: ${error.message}. Make sure Ollama is running on ${this.ollamaUrl}`)
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Failed to connect to Ollama: ${message}. Make sure Ollama is running on ${this.ollamaUrl}`)
     }
   }
 
@@ -106,10 +180,11 @@ export class LLMHelper {
       }
 
       // Test the selected model works
-      const testResult = await this.callOllama("Hello")
+      await this.callOllama("Hello")
       console.log(`[LLMHelper] Successfully initialized with model: ${this.ollamaModel}`)
     } catch (error) {
-      console.error(`[LLMHelper] Failed to initialize Ollama model: ${error.message}`)
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[LLMHelper] Failed to initialize Ollama model: ${message}`)
       // Try to use first available model as fallback
       try {
         const models = await this.getOllamaModels()
@@ -118,7 +193,11 @@ export class LLMHelper {
           console.log(`[LLMHelper] Fallback to: ${this.ollamaModel}`)
         }
       } catch (fallbackError) {
-        console.error(`[LLMHelper] Fallback also failed: ${fallbackError.message}`)
+        const fallbackMessage =
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : String(fallbackError)
+        console.error(`[LLMHelper] Fallback also failed: ${fallbackMessage}`)
       }
     }
   }
@@ -145,15 +224,7 @@ export class LLMHelper {
   }
 
   public async generateSolution(problemInfo: any) {
-    const prompt = `${this.systemPrompt}\n\nGiven this problem or situation:\n${JSON.stringify(problemInfo, null, 2)}\n\nPlease provide your response in the following JSON format:\n{
-  "solution": {
-    "code": "The code or main answer here.",
-    "problem_statement": "Restate the problem or situation.",
-    "context": "Relevant background/context.",
-    "suggested_responses": ["First possible answer or action", "Second possible answer or action", "..."],
-    "reasoning": "Explanation of why these suggestions are appropriate."
-  }
-}\nImportant: Return ONLY the JSON object, without any markdown formatting or code blocks.`
+    const prompt = `${this.systemPrompt}\n\nGiven this problem or situation:\n${JSON.stringify(problemInfo, null, 2)}\n\nPlease provide your response in the following JSON format:\n${SOLUTION_JSON_FORMAT}`
 
     console.log("[LLMHelper] Calling Gemini LLM for solution...");
     try {
@@ -174,15 +245,7 @@ export class LLMHelper {
     try {
       const imageParts = await Promise.all(debugImagePaths.map(path => this.fileToGenerativePart(path)))
       
-      const prompt = `${this.systemPrompt}\n\nYou are a wingman. Given:\n1. The original problem or situation: ${JSON.stringify(problemInfo, null, 2)}\n2. The current response or approach: ${currentCode}\n3. The debug information in the provided images\n\nPlease analyze the debug information and provide feedback in this JSON format:\n{
-  "solution": {
-    "code": "The code or main answer here.",
-    "problem_statement": "Restate the problem or situation.",
-    "context": "Relevant background/context.",
-    "suggested_responses": ["First possible answer or action", "Second possible answer or action", "..."],
-    "reasoning": "Explanation of why these suggestions are appropriate."
-  }
-}\nImportant: Return ONLY the JSON object, without any markdown formatting or code blocks.`
+      const prompt = `${this.systemPrompt}\n\nYou are a wingman. Given:\n1. The original problem or situation: ${JSON.stringify(problemInfo, null, 2)}\n2. The current response or approach: ${currentCode}\n3. The debug information in the provided images\n\nPlease analyze the debug information and provide feedback in this JSON format:\n${SOLUTION_JSON_FORMAT}`
 
       const result = await this.model.generateContent([prompt, ...imageParts])
       const response = await result.response
@@ -303,6 +366,71 @@ export class LLMHelper {
     }
   }
 
+  public async generateTeachingStep(
+    goal: string,
+    history: string[],
+    screenshotPath: string,
+    imageSize: { width: number; height: number }
+  ): Promise<TeachingStepResponse> {
+    if (this.useOllama) {
+      throw new Error(
+        "Teaching mode requires Gemini. Switch to Gemini and try again."
+      )
+    }
+    if (!this.model) {
+      throw new Error("Gemini is not configured for teaching mode.")
+    }
+
+    const imagePart = await this.fileToGenerativePart(screenshotPath)
+    const result = await this.model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: buildTeachingPrompt(goal, history, imageSize) },
+            imagePart
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0,
+        candidateCount: 1,
+        // gemini-3.5-flash is a thinking model and maxOutputTokens caps the
+        // TOTAL output including invisible reasoning tokens. 350 was consumed
+        // by thinking, truncating the JSON (finishReason MAX_TOKENS). Give
+        // generous headroom so the model can think AND emit the full object;
+        // it stops naturally (finishReason STOP) once done, so a high cap only
+        // adds safety, not cost. Override with TEACHING_MAX_OUTPUT_TOKENS.
+        maxOutputTokens: Number(process.env.TEACHING_MAX_OUTPUT_TOKENS) || 8192
+      }
+    })
+    const response = await result.response
+
+    const finishReason = (response as any).candidates?.[0]?.finishReason
+    let rawText = ""
+    try {
+      rawText = response.text()
+    } catch (err) {
+      console.error("[teaching] response.text() threw:", err)
+    }
+
+    // Turn a truncated/empty response into a clear, actionable error instead of
+    // a cryptic "Invalid teaching JSON response".
+    if (finishReason === "MAX_TOKENS") {
+      throw new Error(
+        "Teaching response was cut off before completing (MAX_TOKENS). " +
+          "Increase maxOutputTokens or simplify the step and retry."
+      )
+    }
+    if (!rawText.trim()) {
+      throw new Error(
+        `Teaching model returned no text (finishReason: ${finishReason ?? "unknown"}).`
+      )
+    }
+
+    return parseTeachingModelText(rawText)
+  }
+
   public isUsingOllama(): boolean {
     return this.useOllama;
   }
@@ -383,7 +511,10 @@ export class LLMHelper {
         }
       }
     } catch (error) {
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
     }
   }
 } 

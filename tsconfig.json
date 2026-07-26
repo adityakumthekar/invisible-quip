@@ -16,5 +16,5 @@
     "skipLibCheck": true
   },
   "include": ["src"], // Only React source files
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "exclude": ["src/**/*.test.ts"]
 }

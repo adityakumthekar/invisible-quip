@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useReducer, useRef } from "react"
 import { useQuery } from "react-query"
 import {
   Toast,
@@ -11,10 +11,19 @@ import ControlBar from "../components/shell/ControlBar"
 import AIResponse from "../components/shell/AIResponse"
 import SettingsPanel from "../components/shell/SettingsPanel"
 import QuickActions from "../components/shell/QuickActions"
+import TeachingPanel from "../components/teaching/TeachingPanel"
 import { applySavedMode } from "../lib/modes"
+import {
+  executeTeachingOperation,
+  initialTeachingSessionState,
+  teachingSessionReducer,
+  type TeachingOperation
+} from "../lib/teachingSession"
+import type { PrivacyGateStatus } from "../lib/privacyContract"
+import { evaluatePrivacyGate } from "../lib/privacyGate"
 
 interface QueueProps {
-  setView: React.Dispatch<React.SetStateAction<"queue" | "solutions" | "debug">>
+  setView: React.Dispatch<React.SetStateAction<"queue" | "solutions">>
 }
 
 const Queue: React.FC<QueueProps> = ({ setView }) => {
@@ -37,6 +46,24 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [panelsOpen, setPanelsOpen] = useState(false)
   const [includeScreen, setIncludeScreen] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
+  const [teachingOpen, setTeachingOpen] = useState(false)
+  const [teachingSession, dispatchTeaching] = useReducer(
+    teachingSessionReducer,
+    initialTeachingSessionState
+  )
+  const teachingRequestId = useRef(0)
+  const teachingInFlight = useRef(false)
+  // Latest-value refs so the global-hotkey listener (subscribed once) always
+  // sees the current teaching state and handlers.
+  const runTeachingOperationRef = useRef<(op: TeachingOperation) => void>(
+    () => {}
+  )
+  const stopTeachingRef = useRef<() => void>(() => {})
+  const teachingPhaseRef = useRef(teachingSession.phase)
+  const teachingOpenRef = useRef(teachingOpen)
+  const [privacyStatus, setPrivacyStatus] = useState<PrivacyGateStatus | null>(null)
+  const [privacyChecking, setPrivacyChecking] = useState(false)
+  const [privacyError, setPrivacyError] = useState<string | null>(null)
 
   const [isRecording, setIsRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
@@ -46,7 +73,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [currentModel, setCurrentModel] = useState<{
-    provider: string
+    provider: "ollama" | "gemini"
     model: string
   }>({ provider: "gemini", model: "gemini-3.5-flash" })
 
@@ -127,6 +154,151 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setQuickOpen(false)
     void sendPrompt(prompt, { useScreen })
   }
+
+  const refreshPrivacyStatus = async () => {
+    try {
+      const status = await window.electronAPI.privacyGetStatus()
+      setPrivacyStatus(status)
+      setPrivacyError(null)
+    } catch (error) {
+      setPrivacyError(
+        "Couldn't check privacy status. " + String((error as Error)?.message ?? error)
+      )
+    }
+  }
+
+  const acknowledgePrivacy = async () => {
+    try {
+      const status = await window.electronAPI.privacyAcknowledge()
+      setPrivacyStatus(status)
+      setPrivacyError(null)
+    } catch (error) {
+      setPrivacyError(
+        "Couldn't save acknowledgement. " + String((error as Error)?.message ?? error)
+      )
+    }
+  }
+
+  const runPrivacyPreflightCheck = async () => {
+    setPrivacyChecking(true)
+    try {
+      await window.electronAPI.privacyRunPreflight()
+      await refreshPrivacyStatus()
+    } catch (error) {
+      setPrivacyError(
+        "Privacy check failed to run. " + String((error as Error)?.message ?? error)
+      )
+    } finally {
+      setPrivacyChecking(false)
+    }
+  }
+
+  const runTeachingOperation = async (operation: TeachingOperation) => {
+    if (teachingInFlight.current) return
+    const goal = teachingSession.goal.trim()
+    if (operation === "start" && !goal) return
+    if (
+      operation === "start" &&
+      (!privacyStatus || !evaluatePrivacyGate(privacyStatus).canStart)
+    ) {
+      return
+    }
+
+    teachingInFlight.current = true
+    const requestId = ++teachingRequestId.current
+    dispatchTeaching({ type: "request", operation, requestId })
+
+    try {
+      const provider =
+        operation === "start"
+          ? (await window.electronAPI.getCurrentLlmConfig()).provider
+          : currentModel.provider
+      const outcome = await executeTeachingOperation(
+        operation,
+        goal,
+        provider,
+        {
+          start: window.electronAPI.teachStart,
+          next: window.electronAPI.teachNext,
+          execute: window.electronAPI.teachExecute
+        },
+        () => requestId === teachingRequestId.current
+      )
+      if (outcome.kind === "provider-blocked") {
+        dispatchTeaching({ type: "provider-blocked", requestId })
+      } else if (outcome.kind === "result") {
+        dispatchTeaching({
+          type: "resolved",
+          requestId,
+          result: outcome.result
+        })
+      }
+    } catch (error) {
+      dispatchTeaching({ type: "rejected", requestId, error })
+    } finally {
+      if (requestId === teachingRequestId.current) {
+        teachingInFlight.current = false
+      }
+    }
+  }
+
+  const stopTeaching = () => {
+    teachingInFlight.current = false
+    const requestId = ++teachingRequestId.current
+    dispatchTeaching({ type: "reset", requestId })
+    setTeachingOpen(false)
+    void window.electronAPI.teachStop().catch(() => {
+      showToast("Teaching stopped", "The teaching overlay was cleared.", "neutral")
+    })
+  }
+
+  const toggleTeaching = () => {
+    if (teachingOpen) {
+      stopTeaching()
+    } else {
+      setTeachingOpen(true)
+      void refreshPrivacyStatus()
+    }
+  }
+
+  // Keep the latest-value refs current for the global-hotkey listener.
+  useEffect(() => {
+    runTeachingOperationRef.current = (op) => void runTeachingOperation(op)
+    stopTeachingRef.current = stopTeaching
+    teachingPhaseRef.current = teachingSession.phase
+    teachingOpenRef.current = teachingOpen
+  })
+
+  // Global execute/abort hotkeys (Cmd/Ctrl+Shift+Enter / +Backspace). The main
+  // process signals here so the panel and overlay update from one round-trip.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onTeachingHotkey((kind) => {
+      if (kind === "abort") {
+        if (teachingOpenRef.current) stopTeachingRef.current()
+        return
+      }
+      if (teachingPhaseRef.current === "step") {
+        runTeachingOperationRef.current("execute")
+      }
+    })
+    return () => {
+      unsubscribe && unsubscribe()
+    }
+  }, [])
+
+  // Esc aborts while the teaching panel is focused (the global Backspace combo
+  // covers the case where focus has moved to the app being controlled).
+  useEffect(() => {
+    if (!teachingOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        stopTeaching()
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [teachingOpen])
 
   const handleRecordClick = async () => {
     if (!isRecording) {
@@ -209,7 +381,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     const updateDimensions = () => {
       if (contentRef.current) {
         let contentHeight = contentRef.current.scrollHeight
-        const contentWidth = Math.max(contentRef.current.scrollWidth, 720)
+        const contentWidth = contentRef.current.scrollWidth
         if (isTooltipVisible) contentHeight += tooltipHeight
         window.electronAPI.updateContentDimensions({
           width: contentWidth,
@@ -304,7 +476,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   return (
     <div
       ref={contentRef}
-      className="select-none relative w-full pointer-events-auto"
+      className="select-none relative w-full"
     >
       <div className="px-2 py-1 space-y-3">
         <Toast
@@ -326,7 +498,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             panelsOpen={panelsOpen}
             modelsOpen={isSettingsOpen}
             quickOpen={quickOpen}
+            teachingOpen={teachingOpen}
             onAskAi={handleAskAi}
+            onTeachMe={toggleTeaching}
             onTogglePanels={handleTogglePanels}
             onToggleModels={() => setIsSettingsOpen((v) => !v)}
             onToggleQuick={() => setQuickOpen((v) => !v)}
@@ -347,6 +521,27 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             />
           )}
         </div>
+
+        {teachingOpen && (
+          <TeachingPanel
+            session={teachingSession}
+            privacy={{
+              status: privacyStatus,
+              checking: privacyChecking,
+              error: privacyError
+            }}
+            onGoalChange={(goal) =>
+              dispatchTeaching({ type: "set-goal", goal })
+            }
+            onStart={() => void runTeachingOperation("start")}
+            onNext={() => void runTeachingOperation("next")}
+            onRetry={(operation) => void runTeachingOperation(operation)}
+            onStop={stopTeaching}
+            onClose={stopTeaching}
+            onAcknowledgePrivacy={() => void acknowledgePrivacy()}
+            onRunPrivacyCheck={() => void runPrivacyPreflightCheck()}
+          />
+        )}
 
         {panelsOpen && (
           <div className="grid grid-cols-1 gap-3 w-[min(560px,100%)]">

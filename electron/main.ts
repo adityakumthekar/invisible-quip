@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage } from "electron"
+import type { WebContents } from "electron"
 import dotenv from "dotenv"
 import path from "node:path"
 import { initializeIpcHandlers } from "./ipcHandlers"
@@ -6,6 +7,9 @@ import { WindowHelper } from "./WindowHelper"
 import { ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
 import { ProcessingHelper } from "./ProcessingHelper"
+import { TeachingOverlayHelper } from "./TeachingOverlayHelper"
+import { watchDisplayTopology } from "./displayTopologyRuntime"
+import type { TeachingResult } from "./teaching"
 
 // In a packaged app the cwd isn't the project root, so load the bundled .env
 // from Contents/Resources (see build.extraResources). In dev, use the default.
@@ -25,6 +29,7 @@ export class AppState {
   private screenshotHelper: ScreenshotHelper
   public shortcutsHelper: ShortcutsHelper
   public processingHelper: ProcessingHelper
+  private teachingOverlayHelper: TeachingOverlayHelper
   private tray: Tray | null = null
 
   // View management
@@ -70,6 +75,8 @@ export class AppState {
 
     // Initialize ShortcutsHelper
     this.shortcutsHelper = new ShortcutsHelper(this)
+
+    this.teachingOverlayHelper = new TeachingOverlayHelper()
   }
 
   public static getInstance(): AppState {
@@ -144,6 +151,18 @@ export class AppState {
     this.windowHelper.setWindowDimensions(width, height)
   }
 
+  public setIgnoreMouseEvents(ignore: boolean): void {
+    this.windowHelper.setIgnoreMouseEvents(ignore)
+  }
+
+  public startWindowDrag(): void {
+    this.windowHelper.startWindowDrag()
+  }
+
+  public stopWindowDrag(): void {
+    this.windowHelper.stopWindowDrag()
+  }
+
   public clearQueues(): void {
     this.screenshotHelper.clearQueues()
 
@@ -152,6 +171,10 @@ export class AppState {
 
     // Reset view to initial state
     this.setView("queue")
+  }
+
+  public async deleteAllScreenshotFiles(): Promise<void> {
+    return this.screenshotHelper.deleteAllScreenshotFiles()
   }
 
   // Screenshot management methods
@@ -197,6 +220,26 @@ export class AppState {
 
   public setWindowOpacity(value: number): void {
     this.windowHelper.setOpacity(value)
+  }
+
+  public applyTeachingResult(result: TeachingResult): void {
+    if (result.state === "step") {
+      this.teachingOverlayHelper.showTarget(result)
+      return
+    }
+    this.teachingOverlayHelper.clear()
+  }
+
+  public clearTeachingOverlay(): void {
+    this.teachingOverlayHelper.clear()
+  }
+
+  public closeTeachingOverlay(): void {
+    this.teachingOverlayHelper.close()
+  }
+
+  public teachingOverlayReady(renderer: WebContents): boolean {
+    return this.teachingOverlayHelper.rendererReady(renderer)
   }
 
   public createTray(): void {
@@ -293,6 +336,9 @@ async function initializeApp() {
 
   app.whenReady().then(() => {
     console.log("App is ready")
+    // Log the monitor layout up front and keep it current — teaching capture
+    // targeting depends on it.
+    watchDisplayTopology()
     appState.createWindow()
     appState.createTray()
     // Register global shortcuts using ShortcutsHelper
@@ -311,6 +357,22 @@ async function initializeApp() {
     if (process.platform !== "darwin") {
       app.quit()
     }
+  })
+
+  // Wipe screenshot files before actually quitting. before-quit fires
+  // synchronously and won't wait for promises, so we preventDefault, run the
+  // async cleanup, then re-invoke app.quit() — the isQuitting guard lets that
+  // second call fall through to the real quit instead of looping.
+  let isQuitting = false
+  app.on("before-quit", (event) => {
+    if (isQuitting) return
+    event.preventDefault()
+    isQuitting = true
+    ;(async () => {
+      appState.closeTeachingOverlay()
+      await appState.deleteAllScreenshotFiles()
+      app.quit()
+    })()
   })
 
   if (isInvisibleMode()) {

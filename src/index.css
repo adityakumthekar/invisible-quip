@@ -80,6 +80,32 @@ body,
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
     system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* Click-through: only glass / .hit-region surfaces receive hits */
+  pointer-events: none;
+}
+
+/* Non-interactive layout wrappers must not steal clicks.
+   Use #root … selectors so these beat the blanket rule below. */
+#root * {
+  pointer-events: none;
+}
+
+/* Must out-specify `#root *` (ID) so the bar/panels are actually clickable */
+#root .glass-bar,
+#root .glass-panel-dark,
+#root .glass-panel-light,
+#root .glass-panel-secondary,
+#root .hit-region,
+#root .glass-bar *,
+#root .glass-panel-dark *,
+#root .glass-panel-light *,
+#root .glass-panel-secondary *,
+#root .hit-region * {
+  pointer-events: auto;
+}
+
+#root .icon-btn:disabled {
+  pointer-events: none;
 }
 
 /* Markdown — light panel context */
@@ -311,10 +337,68 @@ textarea:focus-visible {
   }
 }
 
+/* Teach Me pointer. The tip sits at 15.6%/9.4% of glow-cursor.svg, so the
+   translate lands it exactly on the click point — keep these fractions in sync
+   with GLOW_CURSOR_TIP_RATIO. The pulse scales about the tip so the target
+   never drifts. */
+.teach-glow-cursor {
+  transform: translate(-15.6%, -9.4%);
+  transform-origin: 15.6% 9.4%;
+  filter: drop-shadow(0 0 5px rgba(232, 121, 249, 0.85))
+    drop-shadow(0 0 14px rgba(192, 38, 211, 0.55));
+  animation: teach-cursor-pulse 1.8s ease-in-out infinite;
+  user-select: none;
+}
+
+@keyframes teach-cursor-pulse {
+  0%,
+  100% {
+    opacity: 0.92;
+    transform: translate(-15.6%, -9.4%) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-15.6%, -9.4%) scale(1.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teach-glow-cursor {
+    animation: none;
+  }
+}
+
 /* Drag regions */
 .draggable-area {
   -webkit-app-region: drag;
   cursor: move;
+}
+
+/* No -webkit-app-region here on purpose: the grip drives a manual drag from the
+   main process (see lib/windowDrag.ts). Chromium's own drag region cancels
+   itself on this transparent, click-through window. */
+.drag-grip {
+  -webkit-app-region: no-drag;
+  cursor: grab;
+  min-width: 14px;
+  touch-action: none;
+}
+
+.drag-grip:active {
+  cursor: grabbing;
+}
+
+.drag-grip-dots {
+  display: block;
+  width: 4px;
+  height: 14px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--glass-dark-muted) 0 2px,
+    transparent 2px 4px
+  );
+  opacity: 0.7;
 }
 
 button,
