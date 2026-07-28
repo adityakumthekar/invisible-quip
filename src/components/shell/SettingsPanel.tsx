@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react"
 import {
   Cloud,
   Cpu,
+  Download,
   Home,
   Info,
   Keyboard,
@@ -29,6 +30,17 @@ interface SettingsPanelProps {
 
 type Tab = "modes" | "provider" | "appearance" | "keybinds" | "about"
 
+/**
+ * Offered when no installed local model can read screenshots. Qwen3-VL is
+ * GUI-tuned — it grounds interface elements to absolute coordinates, which is
+ * the whole job here, and matches the pixel-space prompt the Ollama path uses.
+ *
+ * The 4B build (~3.3GB) rather than 8B (~6.1GB): a run is up to 25 sequential
+ * vision calls, and on fanless Apple Silicon the larger model roughly doubles
+ * per-step latency for a modest grounding gain.
+ */
+const RECOMMENDED_VISION_MODEL = "qwen3-vl:4b"
+
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "modes", label: "Modes", icon: Wand2 },
   { id: "provider", label: "Provider", icon: Cpu },
@@ -52,6 +64,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     []
   )
   const [selectedOllamaModel, setSelectedOllamaModel] = useState("")
+  const [visionByModel, setVisionByModel] = useState<Record<string, boolean>>({})
+  const [pullProgress, setPullProgress] = useState<{
+    status: string
+    percent?: number
+  } | null>(null)
+  const [pullError, setPullError] = useState("")
   const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434")
   const [geminiApiKey, setGeminiApiKey] = useState("")
   const [currentLabel, setCurrentLabel] = useState("")
@@ -68,6 +86,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   // Modes
   const [modeId, setModeId] = useState<string>(() => getModeId())
+
+  const hasVisionModel = Object.values(visionByModel).some(Boolean)
 
   useEffect(() => {
     void loadConfig()
@@ -94,8 +114,53 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       if (models.length > 0 && !selectedOllamaModel) {
         setSelectedOllamaModel(models[0])
       }
+
+      // Teach Me and autopilot both need a model that can read screenshots, so
+      // surface that per model rather than letting a run fail later.
+      const entries = await Promise.all(
+        models.map(async (model) => {
+          try {
+            const { vision } =
+              await window.electronAPI.getOllamaModelCapabilities(model)
+            return [model, vision] as const
+          } catch {
+            return [model, false] as const
+          }
+        })
+      )
+      setVisionByModel(Object.fromEntries(entries))
     } catch {
       setAvailableOllamaModels([])
+      setVisionByModel({})
+    }
+  }
+
+  const installVisionModel = async () => {
+    setPullError("")
+    setPullProgress({ status: "starting", percent: 0 })
+    const unsubscribe = window.electronAPI.onOllamaPullProgress((progress) => {
+      const percent =
+        progress.total && progress.completed
+          ? Math.round((progress.completed / progress.total) * 100)
+          : undefined
+      setPullProgress({ status: progress.status, percent })
+    })
+
+    try {
+      const result = await window.electronAPI.pullOllamaModel(
+        RECOMMENDED_VISION_MODEL
+      )
+      if (!result.success) {
+        setPullError(result.error ?? "The download failed.")
+        return
+      }
+      await loadOllamaModels()
+      setSelectedOllamaModel(RECOMMENDED_VISION_MODEL)
+    } catch (error) {
+      setPullError(String((error as Error)?.message ?? error))
+    } finally {
+      unsubscribe && unsubscribe()
+      setPullProgress(null)
     }
   }
 
@@ -308,12 +373,57 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       {availableOllamaModels.map((m) => (
                         <option key={m} value={m} className="bg-neutral-900">
                           {m}
+                          {visionByModel[m] ? " · sees screen" : ""}
                         </option>
                       ))}
                     </select>
                   ) : (
                     <p className="text-[11px] glass-muted">
                       No local models found. Start Ollama and pull a model.
+                    </p>
+                  )}
+
+                  {selectedOllamaModel &&
+                    visionByModel[selectedOllamaModel] === false && (
+                      <p className="text-[11px] glass-muted">
+                        This model can’t read screenshots, so Teach Me and
+                        autopilot won’t work with it.
+                      </p>
+                    )}
+
+                  {!hasVisionModel && !pullProgress && (
+                    <button
+                      type="button"
+                      onClick={() => void installVisionModel()}
+                      className="glass-action flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[11px]"
+                    >
+                      <Download className="w-3 h-3" strokeWidth={1.75} />
+                      Install {RECOMMENDED_VISION_MODEL}
+                    </button>
+                  )}
+
+                  {pullProgress && (
+                    <div className="space-y-1" role="status">
+                      <div className="flex items-center justify-between text-[11px] glass-muted">
+                        <span>{pullProgress.status}</span>
+                        {pullProgress.percent !== undefined && (
+                          <span className="tabular-nums">
+                            {pullProgress.percent}%
+                          </span>
+                        )}
+                      </div>
+                      <div className="h-1 w-full overflow-hidden rounded-full bg-glass-soft">
+                        <div
+                          className="h-full rounded-full bg-white/60 transition-[width]"
+                          style={{ width: `${pullProgress.percent ?? 0}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {pullError && (
+                    <p className="text-[11px] glass-text" role="alert">
+                      {pullError}
                     </p>
                   )}
                 </div>

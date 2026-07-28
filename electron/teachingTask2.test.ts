@@ -1,7 +1,14 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import fs from "fs"
 import * as llmModule from "./LLMHelper"
 import { LLMHelper } from "./LLMHelper"
 import * as teachingModule from "./teaching"
+
+// Several cases spy on module-level singletons (fs, LLMHelper internals);
+// restore between tests so they can't leak across the file.
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 const display = {
   displayId: 7,
@@ -73,16 +80,56 @@ describe("teaching prompt and model response", () => {
     })
   })
 
-  it("rejects Ollama teaching with a user-safe message", async () => {
+  it("points at a vision model when the local model cannot see", async () => {
     const helper = new LLMHelper("test-api-key")
     ;(helper as any).useOllama = true
+    ;(helper as any).ollamaModel = "llama3.2"
+    vi.spyOn(helper as any, "getOllamaModelCapabilities").mockResolvedValue({
+      vision: false
+    })
 
     await expect(
       (helper as any).generateTeachingStep("Do a task", [], "/missing.png", {
         width: 100,
         height: 100
       })
-    ).rejects.toThrow(/teaching.*gemini/i)
+    ).rejects.toThrow(/vision model/i)
+  })
+
+  it("sends the screenshot to a vision-capable local model and normalizes pixels", async () => {
+    const helper = new LLMHelper("test-api-key")
+    ;(helper as any).useOllama = true
+    ;(helper as any).ollamaModel = "qwen2.5vl:7b"
+    vi.spyOn(helper as any, "getOllamaModelCapabilities").mockResolvedValue({
+      vision: true
+    })
+    vi.spyOn(fs.promises, "readFile").mockResolvedValue(
+      Buffer.from("png") as any
+    )
+    const callOllama = vi
+      .spyOn(helper as any, "callOllama")
+      .mockResolvedValue(
+        JSON.stringify({
+          state: "step",
+          instruction: "Click Share.",
+          action: "click",
+          // Absolute pixels in a 1000x500 image — half width, half height.
+          target: { x: 500, y: 250, width: 100, height: 50 }
+        })
+      )
+
+    const result = await (helper as any).generateTeachingStep(
+      "Do a task",
+      [],
+      "/shot.png",
+      { width: 1000, height: 500 }
+    )
+
+    const [prompt, options] = callOllama.mock.calls[0]
+    expect(prompt).toContain("absolute pixels")
+    expect(options).toMatchObject({ images: ["cG5n"], json: true })
+    // Pixels folded back into the canonical 0–1000 space.
+    expect(result.target).toEqual({ x: 500, y: 500, width: 100, height: 100 })
   })
 
   it("rejects malformed or contract-invalid Gemini output", async () => {

@@ -1,6 +1,20 @@
 import type { TeachingResult } from "../lib/teaching"
 import type { TeachingOverlayTargetEvent } from "../lib/teachingOverlayContract"
 import type { PrivacyGateStatus, PrivacyPreflightResult } from "../lib/privacyContract"
+import type { AutopilotUpdate } from "../lib/autopilot"
+
+export interface AutopilotConsent {
+  consented: boolean
+  text: string
+  version: number
+}
+
+export interface OllamaPullProgress {
+  model: string
+  status: string
+  completed?: number
+  total?: number
+}
 
 export interface ElectronAPI {
   updateContentDimensions: (dimensions: {
@@ -21,6 +35,10 @@ export interface ElectronAPI {
   onSolutionError: (callback: (error: string) => void) => () => void
   onProcessingNoScreenshots: (callback: () => void) => () => void
   onAskAiHotkey: (callback: () => void) => () => void
+  onRecordHotkey: (callback: () => void) => () => void
+  onContentLimits: (
+    callback: (limits: { maxHeight: number }) => void
+  ) => () => void
   onProblemExtracted: (callback: (data: any) => void) => () => void
   onSolutionSuccess: (callback: (data: any) => void) => () => void
   onUnauthorized: (callback: () => void) => () => void
@@ -30,7 +48,7 @@ export interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
-  analyzeAudioFromBase64: (data: string, mimeType: string) => Promise<{ text: string; timestamp: number }>
+  analyzeAudioFromBase64: (data: string, mimeType: string) => Promise<{ transcript: string; text: string; timestamp: number }>
   analyzeAudioFile: (path: string) => Promise<{ text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
@@ -48,6 +66,19 @@ export interface ElectronAPI {
   privacyGetStatus: () => Promise<PrivacyGateStatus>
   privacyAcknowledge: () => Promise<PrivacyGateStatus>
   privacyRunPreflight: () => Promise<PrivacyPreflightResult>
+
+  // Autopilot (unattended runs)
+  autopilotGetConsent: () => Promise<AutopilotConsent>
+  autopilotAcknowledgeConsent: () => Promise<AutopilotConsent>
+  autopilotStart: (
+    goal: string,
+    options?: { maxSteps?: number }
+  ) => Promise<{ started: boolean; maxSteps: number }>
+  autopilotConfirm: () => Promise<{ success: true }>
+  autopilotReject: () => Promise<{ success: true }>
+  autopilotStop: () => Promise<{ success: true }>
+  onAutopilotUpdate: (callback: (update: AutopilotUpdate) => void) => () => void
+
   quitApp: () => Promise<void>
   getCurrentLlmConfig: () => Promise<{
     provider: "ollama" | "gemini"
@@ -55,6 +86,13 @@ export interface ElectronAPI {
     isOllama: boolean
   }>
   getAvailableOllamaModels: () => Promise<string[]>
+  getOllamaModelCapabilities: (model: string) => Promise<{ vision: boolean }>
+  pullOllamaModel: (
+    model: string
+  ) => Promise<{ success: boolean; error?: string }>
+  onOllamaPullProgress: (
+    callback: (progress: OllamaPullProgress) => void
+  ) => () => void
   switchToOllama: (
     model?: string,
     url?: string
@@ -63,6 +101,15 @@ export interface ElectronAPI {
     apiKey?: string
   ) => Promise<{ success: boolean; error?: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
+  onChatStreamChunk: (
+    callback: (data: { requestId: string; delta: string }) => void
+  ) => () => void
+  onChatStreamDone: (
+    callback: (data: { requestId: string; text: string }) => void
+  ) => () => void
+  onChatStreamError: (
+    callback: (data: { requestId: string; message: string }) => void
+  ) => () => void
   invoke: (channel: string, ...args: any[]) => Promise<any>
 }
 

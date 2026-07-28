@@ -152,6 +152,9 @@ const ControlBar: React.FC<ControlBarProps> = ({
         >
           <Mic className="w-3.5 h-3.5" strokeWidth={1.75} />
           <span>{isRecording ? "Stop" : "Record"}</span>
+          <span className="kbd">⌘</span>
+          <span className="kbd">⇧</span>
+          <span className="kbd">M</span>
         </button>
 
         {screenshots.length > 0 && (

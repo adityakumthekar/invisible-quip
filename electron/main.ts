@@ -11,6 +11,14 @@ import { TeachingOverlayHelper } from "./TeachingOverlayHelper"
 import { watchDisplayTopology } from "./displayTopologyRuntime"
 import type { TeachingResult } from "./teaching"
 
+/** The slice of AutopilotCoordinator that main needs for global shortcuts. */
+export interface AutopilotControls {
+  stop: () => void
+  confirm: () => void
+  isAwaitingConfirmation: () => boolean
+  isRunning: () => boolean
+}
+
 // In a packaged app the cwd isn't the project root, so load the bundled .env
 // from Contents/Resources (see build.extraResources). In dev, use the default.
 dotenv.config(
@@ -30,6 +38,7 @@ export class AppState {
   public shortcutsHelper: ShortcutsHelper
   public processingHelper: ProcessingHelper
   private teachingOverlayHelper: TeachingOverlayHelper
+  private autopilot: AutopilotControls | null = null
   private tray: Tray | null = null
 
   // View management
@@ -220,6 +229,32 @@ export class AppState {
 
   public setWindowOpacity(value: number): void {
     this.windowHelper.setOpacity(value)
+  }
+
+  /**
+   * Registered by ipcHandlers once the coordinator exists. Kept here so the
+   * global kill-switch shortcut can abort a run directly in main, instead of
+   * asking a renderer that may be hidden or wedged.
+   */
+  public registerAutopilot(controls: AutopilotControls): void {
+    this.autopilot = controls
+  }
+
+  public abortAutopilot(): void {
+    this.autopilot?.stop()
+  }
+
+  public isAutopilotRunning(): boolean {
+    return this.autopilot?.isRunning() ?? false
+  }
+
+  /** Approve the step autopilot is currently paused on, if any. */
+  public confirmAutopilotStep(): boolean {
+    if (!this.autopilot?.isAwaitingConfirmation()) {
+      return false
+    }
+    this.autopilot.confirm()
+    return true
   }
 
   public applyTeachingResult(result: TeachingResult): void {

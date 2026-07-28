@@ -8,7 +8,6 @@ export type TeachingPhase =
   | "complete"
   | "blocked"
   | "error"
-  | "provider-blocked"
 
 export interface TeachingError {
   kind: "permission" | "provider" | "api" | "cancellation"
@@ -41,7 +40,6 @@ export type TeachingSessionEvent =
     }
   | { type: "resolved"; requestId: number; result: TeachingResult }
   | { type: "rejected"; requestId: number; error: unknown }
-  | { type: "provider-blocked"; requestId: number }
   | { type: "reset"; requestId: number }
 
 export function classifyTeachingError(error: unknown): TeachingError {
@@ -134,17 +132,6 @@ export function teachingSessionReducer(
         pendingOperation: undefined,
         retryOperation: state.pendingOperation
       }
-    case "provider-blocked":
-      if (event.requestId !== state.requestId || state.phase !== "loading") {
-        return state
-      }
-      return {
-        ...state,
-        phase: "provider-blocked",
-        error: undefined,
-        pendingOperation: undefined,
-        retryOperation: undefined
-      }
     case "reset":
       return { ...initialTeachingSessionState, requestId: event.requestId }
   }
@@ -157,20 +144,21 @@ export interface TeachingOperationApi {
 }
 
 export type TeachingOperationOutcome =
-  | { kind: "provider-blocked" }
   | { kind: "stale" }
   | { kind: "result"; result: TeachingResult }
 
+/**
+ * Both providers can drive teaching now — Ollama needs a vision-capable model,
+ * and LLMHelper raises a specific, actionable error naming one when the
+ * selected model can't read screenshots. So there is no pre-emptive provider
+ * gate here; a real failure carries better information than a blanket block.
+ */
 export async function executeTeachingOperation(
   operation: TeachingOperation,
   goal: string,
-  provider: "ollama" | "gemini",
   api: TeachingOperationApi,
   isCurrent: () => boolean = () => true
 ): Promise<TeachingOperationOutcome> {
-  if (operation === "start" && provider === "ollama") {
-    return { kind: "provider-blocked" }
-  }
   if (!isCurrent()) {
     return { kind: "stale" }
   }

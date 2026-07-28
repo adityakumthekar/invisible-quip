@@ -4,17 +4,30 @@ import { ipcMain, app } from "electron"
 import fs from "node:fs"
 import path from "node:path"
 import { AppState } from "./main"
+import { claimChatCapture } from "./chatCapturePrewarm"
+import { activeChatStreams } from "./chatStreams"
 import {
   TeachingOperationInProgressError,
   TeachingSessionCoordinator
 } from "./teaching"
-import { InputAutomationHelper } from "./InputAutomationHelper"
+import {
+  DEFAULT_FOCUS_SETTLE_MS,
+  InputAutomationHelper
+} from "./InputAutomationHelper"
 import { ensureAccessibilityPermission } from "./accessibility"
 import {
+  AUTOPILOT_CONSENT_TEXT,
+  AUTOPILOT_CONSENT_VERSION,
   PRIVACY_ACKNOWLEDGEMENT_TEXT,
   PRIVACY_ACKNOWLEDGEMENT_VERSION,
   type PrivacyGateStatus
 } from "./privacyContract"
+import { AutopilotCoordinator, type AutopilotUpdate } from "./autopilot"
+import {
+  getFrontmostApp,
+  isFrontmostAppProbeSupported
+} from "./frontmostApp"
+import type { AutopilotProvider } from "./autopilotPolicy"
 import { PrivacyAcknowledgementStore } from "./privacyAcknowledgement"
 import { evaluatePrivacyGate } from "./privacyGate"
 import { PrivacyPreflightChecker } from "./privacyPreflight"
@@ -23,6 +36,27 @@ import { PrivacyPreflightSessionState } from "./privacyPreflightSession"
 
 export function initializeIpcHandlers(appState: AppState): void {
   const inputAutomation = new InputAutomationHelper()
+
+  /**
+   * Hand keyboard focus back to the app being driven.
+   *
+   * Approving a step means clicking Quip's panel, and Quip's window is
+   * focusable — so at actuation time Quip itself holds keyboard focus and any
+   * keystrokes we send land there instead of the target app. Quip has no
+   * focused input during a run, so they vanish with no error at all. Blurring
+   * returns focus to the previously active application, which is the one the
+   * user was driving.
+   */
+  async function releaseKeyboardFocus(): Promise<void> {
+    const mainWindow = appState.getMainWindow()
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isFocused()) {
+      return
+    }
+    mainWindow.blur()
+    await new Promise((resolve) =>
+      setTimeout(resolve, DEFAULT_FOCUS_SETTLE_MS)
+    )
+  }
   const teachingSession = new TeachingSessionCoordinator({
     capture: () => appState.getScreenshotHelper().captureForTeaching(),
     generate: (goal, history, screenshotPath, imageSize) =>
@@ -33,14 +67,105 @@ export function initializeIpcHandlers(appState: AppState): void {
     actuate: async (actuation) => {
       // Input control needs macOS Accessibility permission (≠ Screen Recording).
       ensureAccessibilityPermission()
-      // Click the target first; for "type" that also focuses the field.
-      await inputAutomation.clickAt(actuation.point)
-      if (actuation.action === "type" && actuation.text) {
-        await inputAutomation.typeText(actuation.text)
+      await releaseKeyboardFocus()
+
+      switch (actuation.action) {
+        case "click":
+          await inputAutomation.clickAt(actuation.point)
+          return
+        case "double-click":
+          await inputAutomation.doubleClickAt(actuation.point)
+          return
+        case "right-click":
+          await inputAutomation.rightClickAt(actuation.point)
+          return
+        case "type":
+          // Click the target, then wait for focus to actually land there
+          // before typing — see InputAutomationHelper.clickThenType.
+          await inputAutomation.clickThenType(
+            actuation.point,
+            actuation.text ?? ""
+          )
+          return
+        case "scroll":
+          if (actuation.scroll) {
+            await inputAutomation.scrollAt(
+              actuation.point,
+              actuation.scroll.direction,
+              actuation.scroll.amount
+            )
+          }
+          return
+        case "key":
+          if (actuation.key) {
+            await inputAutomation.pressKey(actuation.key)
+          }
+          return
+        case "drag":
+          if (actuation.to) {
+            await inputAutomation.dragTo(actuation.point, actuation.to)
+          }
+          return
+        case "wait":
+          // Nothing to actuate; the coordinator supplies the pause.
+          return
       }
     }
   })
   let teachingLifecycle = 0
+
+  const autopilot = new AutopilotCoordinator({
+    session: {
+      start: (goal) => teachingSession.start(goal),
+      next: () => teachingSession.next(),
+      actuatePending: () => teachingSession.actuatePending(),
+      noteHistory: (entry) => teachingSession.noteHistory(entry),
+      stop: () => teachingSession.stop()
+    },
+    getProvider: (): AutopilotProvider =>
+      appState.processingHelper.getLLMHelper().isUsingOllama()
+        ? "ollama"
+        : "gemini",
+    showTarget: (step) => appState.applyTeachingResult(step),
+    clearTarget: () => appState.clearTeachingOverlay(),
+    emit: (update: AutopilotUpdate) => {
+      const mainWindow = appState.getMainWindow()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("autopilot-update", update)
+      }
+    },
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    getFrontmostApp: (fresh) => getFrontmostApp(fresh),
+    appProbeSupported: isFrontmostAppProbeSupported()
+  })
+
+  // Lets the global kill-switch shortcut abort without routing through the
+  // renderer, which may be hidden or busy.
+  appState.registerAutopilot({
+    stop: () => autopilot.stop(),
+    confirm: () => autopilot.confirm(),
+    isAwaitingConfirmation: () => autopilot.isAwaitingConfirmation(),
+    isRunning: () => autopilot.isRunning()
+  })
+
+  const autopilotConsentStore = new PrivacyAcknowledgementStore(
+    path.join(app.getPath("userData"), "autopilot-consent.json"),
+    {
+      readFile: (filePath) => fs.promises.readFile(filePath, "utf8"),
+      writeFile: (filePath, contents) =>
+        fs.promises.writeFile(filePath, contents, "utf8"),
+      now: () => new Date()
+    },
+    AUTOPILOT_CONSENT_VERSION
+  )
+
+  async function getAutopilotConsent() {
+    return {
+      consented: await autopilotConsentStore.isAcknowledged(),
+      text: AUTOPILOT_CONSENT_TEXT,
+      version: AUTOPILOT_CONSENT_VERSION
+    }
+  }
 
   const privacyAcknowledgementStore = new PrivacyAcknowledgementStore(
     path.join(app.getPath("userData"), "privacy-acknowledgement.json"),
@@ -211,6 +336,87 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
+  // Streaming chat. The non-streaming handlers above stay for the solve/debug
+  // path; these exist so the user sees words appear instead of a spinner that
+  // holds for the whole round trip.
+  const runChatStream = async (
+    event: Electron.IpcMainInvokeEvent,
+    requestId: string,
+    run: (onChunk: (delta: string) => void, signal: AbortSignal) => Promise<string>
+  ) => {
+    const controller = new AbortController()
+    activeChatStreams.set(requestId, controller)
+    const send = (channel: string, payload: unknown) => {
+      if (!event.sender.isDestroyed()) event.sender.send(channel, payload)
+    }
+    // Time-to-first-token is the number that decides whether this feels fast,
+    // so log it rather than guessing.
+    const startedAt = Date.now()
+    let sawFirstChunk = false
+    try {
+      const text = await run((delta) => {
+        if (controller.signal.aborted) return
+        if (!sawFirstChunk) {
+          sawFirstChunk = true
+          console.log(`[chat] first chunk in ${Date.now() - startedAt}ms`)
+        }
+        send("chat-stream-chunk", { requestId, delta })
+      }, controller.signal)
+      if (!controller.signal.aborted) {
+        send("chat-stream-done", { requestId, text })
+      }
+      return text
+    } catch (error: any) {
+      if (!controller.signal.aborted) {
+        send("chat-stream-error", { requestId, message: String(error?.message ?? error) })
+      }
+      throw error
+    } finally {
+      activeChatStreams.delete(requestId)
+    }
+  }
+
+  ipcMain.handle(
+    "gemini-chat-stream",
+    async (event, requestId: string, message: string) =>
+      runChatStream(event, requestId, (onChunk, signal) =>
+        appState.processingHelper
+          .getLLMHelper()
+          .chatWithGeminiStream(message, onChunk, signal)
+      )
+  )
+
+  ipcMain.handle(
+    "chat-with-screen-stream",
+    async (event, requestId: string, message: string) =>
+      runChatStream(event, requestId, async (onChunk, signal) => {
+        // Cmd+Enter parks a capture before signalling the renderer; claim it if
+        // it is still fresh rather than paying for a second one.
+        const prewarmed = claimChatCapture()
+        const shot = prewarmed
+          ? await prewarmed
+          : await appState.getScreenshotHelper().captureForChatBuffer()
+        return appState.processingHelper
+          .getLLMHelper()
+          .chatWithImageStream(message, [shot], onChunk, signal)
+      })
+  )
+
+  ipcMain.handle(
+    "analyze-image-file-stream",
+    async (event, requestId: string, imagePath: string) =>
+      runChatStream(event, requestId, (onChunk, signal) =>
+        appState.processingHelper
+          .getLLMHelper()
+          .analyzeImageFileStream(imagePath, onChunk, signal)
+      )
+  )
+
+  ipcMain.handle("cancel-chat-stream", async (_event, requestId: string) => {
+    activeChatStreams.get(requestId)?.abort()
+    activeChatStreams.delete(requestId)
+  })
+
   ipcMain.handle("privacy-get-status", async () => getPrivacyGateStatus())
 
   ipcMain.handle("privacy-acknowledge", async () => {
@@ -283,9 +489,94 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("teach-stop", () => {
     teachingLifecycle += 1
+    autopilot.stop()
     teachingSession.stop()
     appState.closeTeachingOverlay()
     return { success: true }
+  })
+
+  ipcMain.handle("autopilot-get-consent", async () => getAutopilotConsent())
+
+  ipcMain.handle("autopilot-acknowledge-consent", async () => {
+    await autopilotConsentStore.acknowledge()
+    return getAutopilotConsent()
+  })
+
+  // Kicks off the unattended loop. Resolves as soon as the run is under way —
+  // progress arrives on the "autopilot-update" channel, because a run can last
+  // minutes and must stay interruptible.
+  ipcMain.handle(
+    "autopilot-start",
+    async (_, goal: string, options?: { maxSteps?: number }) => {
+      const gate = evaluatePrivacyGate(await getPrivacyGateStatus())
+      if (!gate.canStart) {
+        throw new Error(
+          gate.blockingReason === "acknowledgement"
+            ? "Privacy acknowledgement required before autopilot. Acknowledge the privacy notice, then try again."
+            : "Privacy preflight check required before autopilot. Run the privacy check, then try again."
+        )
+      }
+
+      const consent = await getAutopilotConsent()
+      if (!consent.consented) {
+        throw new Error(
+          "Autopilot consent required. Review and accept the autopilot notice, then try again."
+        )
+      }
+
+      // Autopilot and manual teaching share one session; starting either ends
+      // the other so two loops can never drive the cursor at once.
+      teachingLifecycle += 1
+      appState.closeTeachingOverlay()
+
+      const provider: AutopilotProvider = appState.processingHelper
+        .getLLMHelper()
+        .isUsingOllama()
+        ? "ollama"
+        : "gemini"
+
+      void autopilot.start(goal, provider, options ?? {}).catch((error) => {
+        console.error("Autopilot run failed to start:", error)
+      })
+
+      return { started: true, maxSteps: autopilot.getMaxSteps() }
+    }
+  )
+
+  ipcMain.handle("autopilot-confirm", () => {
+    autopilot.confirm()
+    return { success: true }
+  })
+
+  ipcMain.handle("autopilot-reject", () => {
+    autopilot.reject()
+    return { success: true }
+  })
+
+  ipcMain.handle("autopilot-stop", () => {
+    autopilot.stop()
+    return { success: true }
+  })
+
+  ipcMain.handle("ollama-model-capabilities", async (_, model: string) => {
+    return appState.processingHelper
+      .getLLMHelper()
+      .getOllamaModelCapabilities(model)
+  })
+
+  ipcMain.handle("ollama-pull-model", async (event, model: string) => {
+    try {
+      await appState.processingHelper
+        .getLLMHelper()
+        .pullOllamaModel(model, (progress) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send("ollama-pull-progress", { model, ...progress })
+          }
+        })
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error?.message ?? String(error) }
+    }
   })
 
   ipcMain.handle("teaching-overlay-ready", (event) => {

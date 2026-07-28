@@ -16,6 +16,8 @@ export class ScreenshotHelper {
   private static readonly SCREEN_PERMISSION_ERROR =
     "Screen capture blocked by macOS. Grant Screen Recording permission to this app in System Settings → Privacy & Security → Screen Recording, then restart the app."
 
+  private static readonly HIDE_SETTLE_MS = 40
+
   private screenshotQueue: string[] = []
   private extraScreenshotQueue: string[] = []
   private readonly MAX_SCREENSHOTS = 5
@@ -131,6 +133,23 @@ export class ScreenshotHelper {
   }
 
   /**
+   * Same capture as `captureForChat`, but hands back the PNG bytes instead of a
+   * path. The chat path immediately re-encodes the image for upload, so writing
+   * it to disk only to read it straight back was pure latency.
+   */
+  public async captureForChatBuffer(): Promise<Buffer> {
+    const { source } = await this.pickActiveScreenSource()
+    if (source.thumbnail.isEmpty()) {
+      throw new Error(ScreenshotHelper.SCREEN_PERMISSION_ERROR)
+    }
+    const png = source.thumbnail.toPNG()
+    if (!png || png.length === 0) {
+      throw new Error(ScreenshotHelper.SCREEN_PERMISSION_ERROR)
+    }
+    return png
+  }
+
+  /**
    * Capture only the display under the cursor. The returned file is temporary;
    * the caller owns unlinking it after the model request finishes.
    */
@@ -225,8 +244,11 @@ export class ScreenshotHelper {
     try {
       if (!keepVisible) {
         hideMainWindow()
-        // Add a small delay to ensure window is hidden
-        await new Promise(resolve => setTimeout(resolve, 100))
+        // Long enough for the compositor to drop the overlay, short enough not
+        // to be felt. This sits on the critical path of every Cmd+H.
+        await new Promise(resolve =>
+          setTimeout(resolve, ScreenshotHelper.HIDE_SETTLE_MS)
+        )
       }
       
       let screenshotPath = ""

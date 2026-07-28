@@ -11,15 +11,29 @@ import ControlBar from "../components/shell/ControlBar"
 import AIResponse from "../components/shell/AIResponse"
 import SettingsPanel from "../components/shell/SettingsPanel"
 import QuickActions from "../components/shell/QuickActions"
-import TeachingPanel from "../components/teaching/TeachingPanel"
+import TeachingPanel, {
+  type TeachingMode
+} from "../components/teaching/TeachingPanel"
 import { applySavedMode } from "../lib/modes"
+import { streamChat } from "../lib/chatStream"
+import {
+  createMessage,
+  type ChatMessage,
+  type ChatSource
+} from "../lib/chatMessages"
 import {
   executeTeachingOperation,
   initialTeachingSessionState,
   teachingSessionReducer,
   type TeachingOperation
 } from "../lib/teachingSession"
+import {
+  autopilotSessionReducer,
+  initialAutopilotSessionState,
+  isAutopilotBusy
+} from "../lib/autopilotSession"
 import type { PrivacyGateStatus } from "../lib/privacyContract"
+import type { AutopilotConsent } from "../types/electron"
 import { evaluatePrivacyGate } from "../lib/privacyGate"
 
 interface QueueProps {
@@ -28,9 +42,15 @@ interface QueueProps {
 
 // What Cmd+Enter asks when the input is empty. Phrased to get oriented context
 // plus one concrete next step, rather than a bare description of the screen.
+// Empty-box Cmd+Enter. It used to always narrate ("what's going on… best next
+// action"), which on a coding problem produced coaching instead of the answer —
+// so a question on screen is now answered outright, and only a screen with no
+// question falls back to the narration.
 const SCREEN_GLANCE_PROMPT =
-  "Look at my screen and tell me what's going on. Lead with the context that's " +
-  "actually useful right now, then the single best next action I could take."
+  "Look at my screen. If there is a question, problem, or exercise on screen, " +
+  "answer it directly — for a coding problem, give the working solution as code. " +
+  "Only if there is no question, say what's going on in a line and the single " +
+  "best next action I could take."
 
 const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [toastOpen, setToastOpen] = useState(false)
@@ -45,9 +65,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const contentRef = useRef<HTMLDivElement>(null)
 
   const [chatInput, setChatInput] = useState("")
-  const [chatMessages, setChatMessages] = useState<
-    { role: "user" | "gemini"; text: string }[]
-  >([])
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatLoading, setChatLoading] = useState(false)
   const [panelsOpen, setPanelsOpen] = useState(false)
   const [includeScreen, setIncludeScreen] = useState(false)
@@ -68,9 +86,24 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const teachingPhaseRef = useRef(teachingSession.phase)
   const teachingOpenRef = useRef(teachingOpen)
   const handleAskAiRef = useRef<() => void>(() => {})
+  const handleRecordClickRef = useRef<() => void>(() => {})
   const [privacyStatus, setPrivacyStatus] = useState<PrivacyGateStatus | null>(null)
   const [privacyChecking, setPrivacyChecking] = useState(false)
   const [privacyError, setPrivacyError] = useState<string | null>(null)
+
+  const [teachingMode, setTeachingMode] = useState<TeachingMode>("guide")
+  const [autopilot, dispatchAutopilot] = useReducer(
+    autopilotSessionReducer,
+    initialAutopilotSessionState
+  )
+  const [autopilotConsent, setAutopilotConsent] =
+    useState<AutopilotConsent | null>(null)
+  const [autopilotConsentError, setAutopilotConsentError] = useState<
+    string | null
+  >(null)
+  // Read by the once-subscribed hotkey listener, which must not close over
+  // stale autopilot state.
+  const autopilotRef = useRef(autopilot)
 
   const [isRecording, setIsRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
@@ -117,26 +150,53 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const openPanels = () => setPanelsOpen(true)
 
+  // Replace the text of the assistant message we appended for this response.
+  // Spread the existing message rather than rebuilding it — the id and source
+  // are what keep React's identity and the turn's provenance stable while the
+  // stream rewrites the body.
+  const replaceLastMessage = (text: string) =>
+    setChatMessages((msgs) => {
+      const next = msgs.slice()
+      const last = next[next.length - 1]
+      if (!last) return msgs
+      next[next.length - 1] = { ...last, text }
+      return next
+    })
+
   const sendPrompt = async (
     prompt: string,
     opts?: { silentUser?: boolean; useScreen?: boolean }
   ) => {
     if (!prompt.trim()) return
-    if (!opts?.silentUser) {
-      setChatMessages((msgs) => [...msgs, { role: "user", text: prompt }])
-    }
+    const withScreen = opts?.useScreen ?? includeScreen
+    const channel = withScreen ? "chat-with-screen-stream" : "gemini-chat-stream"
+
+    // A silent prompt (the ⌘↵ screen glance) still gets a user turn, just with
+    // no body — the header alone says "Screen", which beats an orphan answer.
+    const source: ChatSource = withScreen ? "screen" : "typed"
+    setChatMessages((msgs) => [
+      ...msgs,
+      createMessage({
+        role: "user",
+        text: opts?.silentUser ? "" : prompt,
+        source
+      }),
+      // The empty placeholder the stream fills in.
+      createMessage({ role: "gemini", text: "", source })
+    ])
     setChatLoading(true)
     openPanels()
     try {
-      const withScreen = opts?.useScreen ?? includeScreen
-      const channel = withScreen ? "chat-with-screen" : "gemini-chat"
-      const response = await window.electronAPI.invoke(channel, prompt)
-      setChatMessages((msgs) => [...msgs, { role: "gemini", text: response }])
+      await streamChat(window.electronAPI, channel, [prompt], {
+        onText: (text) => {
+          // Drop the spinner the moment there is something to read — this is
+          // what makes the answer feel fast.
+          setChatLoading(false)
+          replaceLastMessage(text)
+        }
+      })
     } catch (err) {
-      setChatMessages((msgs) => [
-        ...msgs,
-        { role: "gemini", text: "Error: " + String(err) }
-      ])
+      replaceLastMessage("Error: " + String(err))
     } finally {
       setChatLoading(false)
     }
@@ -235,14 +295,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     dispatchTeaching({ type: "request", operation, requestId })
 
     try {
-      const provider =
-        operation === "start"
-          ? (await window.electronAPI.getCurrentLlmConfig()).provider
-          : currentModel.provider
       const outcome = await executeTeachingOperation(
         operation,
         goal,
-        provider,
         {
           start: window.electronAPI.teachStart,
           next: window.electronAPI.teachNext,
@@ -250,9 +305,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         },
         () => requestId === teachingRequestId.current
       )
-      if (outcome.kind === "provider-blocked") {
-        dispatchTeaching({ type: "provider-blocked", requestId })
-      } else if (outcome.kind === "result") {
+      if (outcome.kind === "result") {
         dispatchTeaching({
           type: "resolved",
           requestId,
@@ -272,10 +325,53 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     teachingInFlight.current = false
     const requestId = ++teachingRequestId.current
     dispatchTeaching({ type: "reset", requestId })
+    dispatchAutopilot({ type: "reset" })
     setTeachingOpen(false)
+    // teach-stop halts an autopilot run too — both modes share one session.
     void window.electronAPI.teachStop().catch(() => {
       showToast("Teaching stopped", "The teaching overlay was cleared.", "neutral")
     })
+  }
+
+  const refreshAutopilotConsent = async () => {
+    try {
+      setAutopilotConsent(await window.electronAPI.autopilotGetConsent())
+      setAutopilotConsentError(null)
+    } catch (error) {
+      setAutopilotConsentError(
+        "Could not read autopilot status. " +
+          String((error as Error)?.message ?? error)
+      )
+    }
+  }
+
+  const acceptAutopilotConsent = async () => {
+    try {
+      setAutopilotConsent(await window.electronAPI.autopilotAcknowledgeConsent())
+      setAutopilotConsentError(null)
+    } catch (error) {
+      setAutopilotConsentError(
+        "Could not save your choice. " +
+          String((error as Error)?.message ?? error)
+      )
+    }
+  }
+
+  const startAutopilot = async () => {
+    const goal = autopilot.goal.trim()
+    if (!goal || isAutopilotBusy(autopilot)) return
+
+    dispatchAutopilot({ type: "start-requested" })
+    try {
+      await window.electronAPI.autopilotStart(goal)
+    } catch (error) {
+      dispatchAutopilot({ type: "start-failed", error })
+    }
+  }
+
+  const stopAutopilot = () => {
+    void window.electronAPI.autopilotStop().catch(() => {})
+    dispatchAutopilot({ type: "reset" })
   }
 
   const toggleTeaching = () => {
@@ -284,6 +380,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     } else {
       setTeachingOpen(true)
       void refreshPrivacyStatus()
+      void refreshAutopilotConsent()
     }
   }
 
@@ -293,8 +390,20 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     stopTeachingRef.current = stopTeaching
     teachingPhaseRef.current = teachingSession.phase
     teachingOpenRef.current = teachingOpen
+    autopilotRef.current = autopilot
     handleAskAiRef.current = handleAskAi
+    handleRecordClickRef.current = () => void handleRecordClick()
   })
+
+  // Progress for an autopilot run is pushed from main, which owns the loop.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onAutopilotUpdate((update) => {
+      dispatchAutopilot({ type: "update", update })
+    })
+    return () => {
+      unsubscribe && unsubscribe()
+    }
+  }, [])
 
   // Cmd/Ctrl+Enter. Subscribed once, so it reads through a ref — closing over
   // chatInput directly would pin it to its value at mount.
@@ -307,14 +416,32 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }, [])
 
+  // Cmd/Ctrl+/. Same ref indirection — the toggle branches on isRecording and
+  // mediaRecorder, which a closure captured at mount would freeze at "not
+  // recording", so the stop half would never fire.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onRecordHotkey(() => {
+      handleRecordClickRef.current()
+    })
+    return () => {
+      unsubscribe && unsubscribe()
+    }
+  }, [])
+
   // Global execute/abort hotkeys (Cmd/Ctrl+Shift+Enter / +Backspace). The main
   // process signals here so the panel and overlay update from one round-trip.
   useEffect(() => {
     const unsubscribe = window.electronAPI.onTeachingHotkey((kind) => {
       if (kind === "abort") {
+        // Main already aborted an autopilot run before signalling us, and will
+        // push a "stopped" update — keep the panel open so the user sees why it
+        // ended, rather than having it vanish.
+        if (isAutopilotBusy(autopilotRef.current)) return
         if (teachingOpenRef.current) stopTeachingRef.current()
         return
       }
+      // Main consumes this itself when autopilot is awaiting confirmation, so
+      // reaching here means the manual path owns the keypress.
       if (teachingPhaseRef.current === "step") {
         runTeachingOperationRef.current("execute")
       }
@@ -349,6 +476,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         chunks.current = []
         recorder.ondataavailable = (e) => chunks.current.push(e.data)
         recorder.onstop = async () => {
+          // Read the length now — the next recording resets the counter long
+          // before this async chain finishes.
+          const clipSeconds = recordingSecondsRef.current
           stream.getTracks().forEach((t) => t.stop())
           setMicStream(null)
           const blob = new Blob(chunks.current, {
@@ -367,12 +497,34 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
               )
               setChatMessages((msgs) => [
                 ...msgs,
-                { role: "gemini", text: result.text }
+                createMessage({
+                  role: "user",
+                  text: result.transcript,
+                  source: "voice",
+                  durationSec: clipSeconds
+                }),
+                createMessage({
+                  role: "gemini",
+                  text: result.text,
+                  source: "voice"
+                })
               ])
             } catch {
+              // Still emit the user turn: a header-only "You · voice · 0:12"
+              // beats a failure message with nothing explaining what failed.
               setChatMessages((msgs) => [
                 ...msgs,
-                { role: "gemini", text: "Audio analysis failed." }
+                createMessage({
+                  role: "user",
+                  text: "",
+                  source: "voice",
+                  durationSec: clipSeconds
+                }),
+                createMessage({
+                  role: "gemini",
+                  text: "Audio analysis failed.",
+                  source: "voice"
+                })
               ])
             } finally {
               setChatLoading(false)
@@ -393,6 +545,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       setMediaRecorder(null)
     }
   }
+
+  // Mirrored into a ref because recorder.onstop closes over the value from the
+  // moment the recorder was built, which is always 0.
+  const recordingSecondsRef = useRef(0)
+  recordingSecondsRef.current = recordingSeconds
 
   useEffect(() => {
     if (!isRecording) return
@@ -415,23 +572,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     applySavedMode()
   }, [])
 
+  // Size reporting lives in App.tsx alone. This effect used to run a second
+  // ResizeObserver on a descendant of App's container, so every stream chunk
+  // produced two setSize calls that fought each other. The tooltip's height now
+  // reaches that observer as a real spacer element instead of a number.
   useEffect(() => {
-    const updateDimensions = () => {
-      if (contentRef.current) {
-        let contentHeight = contentRef.current.scrollHeight
-        const contentWidth = contentRef.current.scrollWidth
-        if (isTooltipVisible) contentHeight += tooltipHeight
-        window.electronAPI.updateContentDimensions({
-          width: contentWidth,
-          height: contentHeight
-        })
-      }
-    }
-
-    const resizeObserver = new ResizeObserver(updateDimensions)
-    if (contentRef.current) resizeObserver.observe(contentRef.current)
-    updateDimensions()
-
     // Note: onScreenshotTaken is subscribed in its own effect below, which also
     // runs the refetch — registering it here too made every Cmd+H refetch twice.
     const cleanupFunctions = [
@@ -458,35 +603,46 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     ]
 
     return () => {
-      resizeObserver.disconnect()
       cleanupFunctions.forEach((cleanup) => cleanup())
     }
-  }, [isTooltipVisible, tooltipHeight, refetch, setView])
+  }, [refetch, setView])
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.onScreenshotTaken(async (data) => {
-      await refetch()
+      const latest =
+        data?.path ||
+        (Array.isArray(data) && data.length > 0 && data[data.length - 1]?.path)
+      if (!latest) {
+        void refetch()
+        return
+      }
+
       openPanels()
       setChatLoading(true)
+      // Bodyless user turn first, or the analysis reads as an answer to a
+      // question nobody asked.
+      setChatMessages((msgs) => [
+        ...msgs,
+        createMessage({ role: "user", text: "", source: "screen" }),
+        createMessage({ role: "gemini", text: "", source: "screen" })
+      ])
+      // Refresh the thumbnail strip alongside the model call rather than in
+      // front of it — it fetches multi-megabyte previews over IPC.
+      void refetch()
       try {
-        const latest =
-          data?.path ||
-          (Array.isArray(data) &&
-            data.length > 0 &&
-            data[data.length - 1]?.path)
-        if (latest) {
-          const response = await window.electronAPI.invoke(
-            "analyze-image-file",
-            latest
-          )
-          const text = response.text || String(response)
-          setChatMessages((msgs) => [...msgs, { role: "gemini", text }])
-        }
+        await streamChat(
+          window.electronAPI,
+          "analyze-image-file-stream",
+          [latest],
+          {
+            onText: (text) => {
+              setChatLoading(false)
+              replaceLastMessage(text)
+            }
+          }
+        )
       } catch (err) {
-        setChatMessages((msgs) => [
-          ...msgs,
-          { role: "gemini", text: "Error: " + String(err) }
-        ])
+        replaceLastMessage("Error: " + String(err))
       } finally {
         setChatLoading(false)
       }
@@ -498,12 +654,15 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const handleModelChange = (provider: "ollama" | "gemini", model: string) => {
     setCurrentModel({ provider, model })
+    // A notice from the app, not an answer — "system" renders it as a centred
+    // caption instead of an assistant turn.
     setChatMessages((msgs) => [
       ...msgs,
-      {
+      createMessage({
         role: "gemini",
-        text: `Switched to ${model}. Ready for your questions.`
-      }
+        text: `Switched to ${model}.`,
+        source: "system"
+      })
     ])
   }
 
@@ -584,6 +743,25 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             onClose={stopTeaching}
             onAcknowledgePrivacy={() => void acknowledgePrivacy()}
             onRunPrivacyCheck={() => void runPrivacyPreflightCheck()}
+            mode={teachingMode}
+            onModeChange={setTeachingMode}
+            autopilot={autopilot}
+            autopilotConsent={{
+              status: autopilotConsent,
+              error: autopilotConsentError
+            }}
+            onAutopilotGoalChange={(goal) =>
+              dispatchAutopilot({ type: "set-goal", goal })
+            }
+            onAutopilotStart={() => void startAutopilot()}
+            onAutopilotConfirm={() => {
+              void window.electronAPI.autopilotConfirm().catch(() => {})
+            }}
+            onAutopilotReject={() => {
+              void window.electronAPI.autopilotReject().catch(() => {})
+            }}
+            onAutopilotStop={stopAutopilot}
+            onAcceptAutopilotConsent={() => void acceptAutopilotConsent()}
           />
         )}
 
@@ -601,6 +779,13 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
               onClose={() => setPanelsOpen(false)}
             />
           </div>
+        )}
+
+        {/* The shortcuts tooltip is positioned out of flow, so it contributes
+            nothing to scrollHeight and the window would clip it. A spacer puts
+            its height back into the layout the size observer measures. */}
+        {isTooltipVisible && (
+          <div style={{ height: tooltipHeight }} aria-hidden />
         )}
       </div>
     </div>

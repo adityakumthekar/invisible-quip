@@ -97,23 +97,17 @@ describe("teachingSessionReducer", () => {
 })
 
 describe("executeTeachingOperation", () => {
-  it("gates start for Ollama without invoking teaching IPC", async () => {
+  it("starts on either provider, since Ollama vision models are supported", async () => {
     const api = {
-      start: vi.fn(),
+      start: vi.fn().mockResolvedValue(step),
       next: vi.fn(),
       execute: vi.fn()
     }
 
-    const outcome = await executeTeachingOperation(
-      "start",
-      "Learn settings",
-      "ollama",
-      api
-    )
+    const outcome = await executeTeachingOperation("start", "Learn settings", api)
 
-    expect(outcome).toEqual({ kind: "provider-blocked" })
-    expect(api.start).not.toHaveBeenCalled()
-    expect(api.next).not.toHaveBeenCalled()
+    expect(outcome).toEqual({ kind: "result", result: step })
+    expect(api.start).toHaveBeenCalledWith("Learn settings")
   })
 
   it("does not invoke teaching IPC after the request becomes stale", async () => {
@@ -126,7 +120,6 @@ describe("executeTeachingOperation", () => {
     const outcome = await executeTeachingOperation(
       "start",
       "Learn settings",
-      "gemini",
       api,
       () => false
     )
@@ -143,12 +136,7 @@ describe("executeTeachingOperation", () => {
       execute: vi.fn().mockResolvedValue(step)
     }
 
-    const outcome = await executeTeachingOperation(
-      "next",
-      "Learn settings",
-      "gemini",
-      api
-    )
+    const outcome = await executeTeachingOperation("next", "Learn settings", api)
 
     expect(outcome).toEqual({ kind: "result", result: step })
     expect(api.next).toHaveBeenCalledOnce()
@@ -166,7 +154,6 @@ describe("executeTeachingOperation", () => {
     const outcome = await executeTeachingOperation(
       "execute",
       "Learn settings",
-      "gemini",
       api
     )
 

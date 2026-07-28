@@ -2,6 +2,7 @@
 
 import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
+import { abortAllChatStreams } from "./chatStreams"
 import dotenv from "dotenv"
 
 dotenv.config()
@@ -150,6 +151,9 @@ export class ProcessingHelper {
       this.currentExtraProcessingAbortController.abort()
       this.currentExtraProcessingAbortController = null
     }
+
+    // Streaming chat requests live outside this class, in their own registry.
+    abortAllChatStreams()
 
     this.appState.setHasDebugged(false)
   }

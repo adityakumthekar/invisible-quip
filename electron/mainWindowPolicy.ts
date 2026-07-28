@@ -5,9 +5,10 @@ export interface MainWindowPolicy extends BrowserWindowConstructorOptions {
 }
 
 /**
- * Main window construction options. Capture protection, frame, transparency,
- * and shadow all flip together with `invisible` so debug mode (INVISIBLE=false)
- * consistently renders a normal, capturable window instead of a stealth one.
+ * Main window construction options. The chrome is the same in both modes: a
+ * frameless, transparent, shadowless window so the pill floats free on the
+ * desktop. `invisible` only controls capture protection — debug mode
+ * (INVISIBLE=false) shows up in screen captures but looks identical.
  */
 export function createMainWindowOptions(
   invisible: boolean,
@@ -25,11 +26,13 @@ export function createMainWindowOptions(
     },
     show: false,
     alwaysOnTop: true,
-    frame: !invisible,
-    transparent: invisible,
+    frame: false,
+    transparent: true,
     fullscreenable: false,
-    hasShadow: !invisible,
-    backgroundColor: invisible ? "#00000000" : "#1a1a1a",
+    // On a transparent window macOS draws the shadow around the full window
+    // bounds, not the visible pill, so it reads as a rectangular halo.
+    hasShadow: false,
+    backgroundColor: "#00000000",
     focusable: true,
     resizable: true,
     movable: true,

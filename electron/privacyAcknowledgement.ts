@@ -29,9 +29,10 @@ export function parsePrivacyAcknowledgementRecord(
 }
 
 export function isAcknowledgementCurrent(
-  record: PrivacyAcknowledgementRecord | null
+  record: PrivacyAcknowledgementRecord | null,
+  expectedVersion: number = PRIVACY_ACKNOWLEDGEMENT_VERSION
 ): boolean {
-  return record !== null && record.version === PRIVACY_ACKNOWLEDGEMENT_VERSION
+  return record !== null && record.version === expectedVersion
 }
 
 export interface PrivacyAcknowledgementStoreDependencies {
@@ -41,21 +42,28 @@ export interface PrivacyAcknowledgementStoreDependencies {
 }
 
 /**
- * Persists the one-time Teach Me disclosure acknowledgement locally, keyed
- * by version so a future copy change invalidates prior acknowledgements.
- * This alone does not satisfy the gate: a fresh per-process preflight is
- * also required (see privacyPreflightSession.ts).
+ * Persists a one-time disclosure acknowledgement locally, keyed by version so
+ * a future copy change invalidates prior acknowledgements. Used twice, against
+ * separate files: the Teach Me capture disclosure, and the stricter autopilot
+ * consent for unattended input control.
+ *
+ * For Teach Me this alone does not satisfy the gate: a fresh per-process
+ * preflight is also required (see privacyPreflightSession.ts).
  */
 export class PrivacyAcknowledgementStore {
   constructor(
     private readonly filePath: string,
-    private readonly dependencies: PrivacyAcknowledgementStoreDependencies
+    private readonly dependencies: PrivacyAcknowledgementStoreDependencies,
+    private readonly version: number = PRIVACY_ACKNOWLEDGEMENT_VERSION
   ) {}
 
   public async isAcknowledged(): Promise<boolean> {
     try {
       const raw = await this.dependencies.readFile(this.filePath)
-      return isAcknowledgementCurrent(parsePrivacyAcknowledgementRecord(raw))
+      return isAcknowledgementCurrent(
+        parsePrivacyAcknowledgementRecord(raw),
+        this.version
+      )
     } catch {
       return false
     }
@@ -63,7 +71,7 @@ export class PrivacyAcknowledgementStore {
 
   public async acknowledge(): Promise<PrivacyAcknowledgementRecord> {
     const record: PrivacyAcknowledgementRecord = {
-      version: PRIVACY_ACKNOWLEDGEMENT_VERSION,
+      version: this.version,
       acknowledgedAt: this.dependencies.now().toISOString()
     }
     await this.dependencies.writeFile(this.filePath, JSON.stringify(record))
