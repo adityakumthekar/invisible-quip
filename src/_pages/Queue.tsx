@@ -18,6 +18,7 @@ import { applySavedMode } from "../lib/modes"
 import { streamChat } from "../lib/chatStream"
 import {
   createMessage,
+  toHistory,
   type ChatMessage,
   type ChatSource
 } from "../lib/chatMessages"
@@ -66,6 +67,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const [chatInput, setChatInput] = useState("")
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  // recorder.onstop and the stream callbacks are created once per request and
+  // would otherwise close over the transcript as it looked back then.
+  const chatMessagesRef = useRef<ChatMessage[]>([])
+  chatMessagesRef.current = chatMessages
   const [chatLoading, setChatLoading] = useState(false)
   const [panelsOpen, setPanelsOpen] = useState(false)
   const [includeScreen, setIncludeScreen] = useState(false)
@@ -171,6 +176,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     const withScreen = opts?.useScreen ?? includeScreen
     const channel = withScreen ? "chat-with-screen-stream" : "gemini-chat-stream"
 
+    // Snapshot before the append below — the turn being sent and its empty
+    // placeholder must not appear in the history that accompanies it.
+    const history = toHistory(chatMessagesRef.current)
+
     // A silent prompt (the ⌘↵ screen glance) still gets a user turn, just with
     // no body — the header alone says "Screen", which beats an orphan answer.
     const source: ChatSource = withScreen ? "screen" : "typed"
@@ -187,7 +196,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setChatLoading(true)
     openPanels()
     try {
-      await streamChat(window.electronAPI, channel, [prompt], {
+      await streamChat(window.electronAPI, channel, [prompt, history], {
         onText: (text) => {
           // Drop the spinner the moment there is something to read — this is
           // what makes the answer feel fast.
@@ -479,6 +488,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
           // Read the length now — the next recording resets the counter long
           // before this async chain finishes.
           const clipSeconds = recordingSecondsRef.current
+          const history = toHistory(chatMessagesRef.current)
           stream.getTracks().forEach((t) => t.stop())
           setMicStream(null)
           const blob = new Blob(chunks.current, {
@@ -493,7 +503,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             try {
               const result = await window.electronAPI.analyzeAudioFromBase64(
                 base64Data,
-                blob.type
+                blob.type,
+                history
               )
               setChatMessages((msgs) => [
                 ...msgs,

@@ -81,6 +81,34 @@ describe("LLMHelper streaming", () => {
     expect(text).toBe("a")
   })
 
+  it("sends prior turns before the new message", async () => {
+    generateContentStream.mockReturnValueOnce(fakeStream(["ok"]))
+    await helper().chatWithGeminiStream(
+      "now in TypeScript",
+      () => {},
+      undefined,
+      [
+        { role: "user", text: "write an LRU cache in python" },
+        { role: "gemini", text: "class LRUCache: ..." }
+      ]
+    )
+
+    const { contents } = generateContentStream.mock.calls[0][0]
+    expect(contents).toHaveLength(3)
+    expect(contents[0]).toEqual({
+      role: "user",
+      parts: [{ text: "write an LRU cache in python" }]
+    })
+    expect(contents[1].role).toBe("model")
+    expect(contents[2].parts[0].text).toContain("now in TypeScript")
+  })
+
+  it("sends only the new message when there is no history", async () => {
+    generateContentStream.mockReturnValueOnce(fakeStream(["ok"]))
+    await helper().chatWithGeminiStream("hi", () => {})
+    expect(generateContentStream.mock.calls[0][0].contents).toHaveLength(1)
+  })
+
   it("caps chat output rather than leaving it at the model default", async () => {
     generateContentStream.mockReturnValueOnce(fakeStream(["ok"]))
     await helper().chatWithGeminiStream("hi", () => {})

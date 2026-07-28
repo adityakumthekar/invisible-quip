@@ -3,7 +3,8 @@ import {
   createMessage,
   formatClock,
   formatDuration,
-  startsExchange
+  startsExchange,
+  toHistory
 } from "./chatMessages"
 
 describe("createMessage", () => {
@@ -58,6 +59,40 @@ describe("formatDuration", () => {
     [600, "10:00"]
   ])("formats %i seconds as %s", (secs, expected) => {
     expect(formatDuration(secs)).toBe(expected)
+  })
+})
+
+describe("toHistory", () => {
+  it("keeps user and assistant turns in order", () => {
+    const msgs = [
+      createMessage({ role: "user", text: "two sum", source: "typed" }),
+      createMessage({ role: "gemini", text: "use a map", source: "typed" })
+    ]
+    expect(toHistory(msgs)).toEqual([
+      { role: "user", text: "two sum" },
+      { role: "gemini", text: "use a map" }
+    ])
+  })
+
+  it("drops system notices, which are app chrome not conversation", () => {
+    const msgs = [
+      createMessage({
+        role: "gemini",
+        text: "Switched to x.",
+        source: "system"
+      }),
+      createMessage({ role: "user", text: "hi", source: "typed" })
+    ]
+    expect(toHistory(msgs)).toEqual([{ role: "user", text: "hi" }])
+  })
+
+  it("drops empty turns — placeholders and header-only turns", () => {
+    const msgs = [
+      createMessage({ role: "user", text: "", source: "screen" }),
+      createMessage({ role: "gemini", text: "   ", source: "typed" }),
+      createMessage({ role: "user", text: "real", source: "typed" })
+    ]
+    expect(toHistory(msgs)).toEqual([{ role: "user", text: "real" }])
   })
 })
 

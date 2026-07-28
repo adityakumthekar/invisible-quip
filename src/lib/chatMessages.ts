@@ -49,6 +49,24 @@ export function startsExchange(
   return prev.role === "gemini"
 }
 
+/** A turn as it goes over the wire — the model has no use for ids or clocks. */
+export interface ChatTurn {
+  role: "user" | "gemini"
+  text: string
+}
+
+/**
+ * The part of the transcript that counts as conversation. System notices are
+ * app chrome, and empty turns are streaming placeholders or the header-only
+ * turns a screen glance / silent clip leaves behind — sending either would put
+ * an empty part in the request, which the model rejects.
+ */
+export function toHistory(messages: ChatMessage[]): ChatTurn[] {
+  return messages
+    .filter((m) => m.source !== "system" && m.text.trim().length > 0)
+    .map((m) => ({ role: m.role, text: m.text }))
+}
+
 export function formatDuration(totalSeconds: number): string {
   const mins = Math.floor(totalSeconds / 60)
   const secs = Math.floor(totalSeconds % 60)

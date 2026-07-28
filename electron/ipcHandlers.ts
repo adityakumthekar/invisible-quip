@@ -6,6 +6,7 @@ import path from "node:path"
 import { AppState } from "./main"
 import { claimChatCapture } from "./chatCapturePrewarm"
 import { activeChatStreams } from "./chatStreams"
+import { ChatTurn } from "./chatHistory"
 import {
   TeachingOperationInProgressError,
   TeachingSessionCoordinator
@@ -280,9 +281,9 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   // IPC handler for analyzing audio from base64 data
-  ipcMain.handle("analyze-audio-base64", async (event, data: string, mimeType: string) => {
+  ipcMain.handle("analyze-audio-base64", async (event, data: string, mimeType: string, history: ChatTurn[] = []) => {
     try {
-      const result = await appState.processingHelper.processAudioBase64(data, mimeType)
+      const result = await appState.processingHelper.processAudioBase64(data, mimeType, history)
       return result
     } catch (error: any) {
       console.error("Error in analyze-audio-base64 handler:", error)
@@ -378,17 +379,27 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle(
     "gemini-chat-stream",
-    async (event, requestId: string, message: string) =>
+    async (
+      event,
+      requestId: string,
+      message: string,
+      history: ChatTurn[] = []
+    ) =>
       runChatStream(event, requestId, (onChunk, signal) =>
         appState.processingHelper
           .getLLMHelper()
-          .chatWithGeminiStream(message, onChunk, signal)
+          .chatWithGeminiStream(message, onChunk, signal, history)
       )
   )
 
   ipcMain.handle(
     "chat-with-screen-stream",
-    async (event, requestId: string, message: string) =>
+    async (
+      event,
+      requestId: string,
+      message: string,
+      history: ChatTurn[] = []
+    ) =>
       runChatStream(event, requestId, async (onChunk, signal) => {
         // Cmd+Enter parks a capture before signalling the renderer; claim it if
         // it is still fresh rather than paying for a second one.
@@ -398,7 +409,7 @@ export function initializeIpcHandlers(appState: AppState): void {
           : await appState.getScreenshotHelper().captureForChatBuffer()
         return appState.processingHelper
           .getLLMHelper()
-          .chatWithImageStream(message, [shot], onChunk, signal)
+          .chatWithImageStream(message, [shot], onChunk, signal, history)
       })
   )
 

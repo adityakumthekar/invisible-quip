@@ -7,6 +7,7 @@ import {
   TeachingStepResponse
 } from "./teaching"
 import { parseAudioAnswer } from "./audioAnswer"
+import { ChatTurn, flattenHistory, toGeminiHistory } from "./chatHistory"
 
 /**
  * How a model expresses target coordinates. Gemini is trained on a normalized
@@ -619,7 +620,11 @@ export class LLMHelper {
    * asked, and returns the spoken words separately so the renderer can show
    * them as the user's own turn instead of an unattributed answer.
    */
-  public async analyzeAudioFromBase64(data: string, mimeType: string) {
+  public async analyzeAudioFromBase64(
+    data: string,
+    mimeType: string,
+    history: ChatTurn[] = []
+  ) {
     try {
       const audioPart = {
         inlineData: {
@@ -628,7 +633,14 @@ export class LLMHelper {
         }
       };
       const prompt = `${this.systemPrompt}\n\nThe user spoke the attached audio clip. Answer what they asked.\n\nReply in exactly two sections and nothing else:\nTRANSCRIPT: the words that were spoken, verbatim, on one line — or "(no speech)" if the clip has none\nANSWER: your answer${RESPONSE_FORMAT}`;
-      const result = await this.model.generateContent([prompt, audioPart]);
+      // A spoken follow-up belongs to the same conversation as the typed turns
+      // around it, so it carries the same history.
+      const result = await this.model.generateContent({
+        contents: [
+          ...toGeminiHistory(history),
+          { role: "user", parts: [{ text: prompt }, audioPart] }
+        ]
+      });
       const response = await result.response;
       const { transcript, answer } = parseAudioAnswer(response.text());
       return { transcript, text: answer, timestamp: Date.now() };
@@ -747,18 +759,32 @@ export class LLMHelper {
     }
   }
 
+  /**
+   * `history` is last and optional so existing positional call sites keep
+   * working. Without it every request was standalone, and a follow-up like
+   * "now do the same in TypeScript" had no referent to resolve.
+   */
   public async chatWithGeminiStream(
     message: string,
     onChunk: (delta: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    history: ChatTurn[] = []
   ): Promise<string> {
     const prompt = this.plainChatPrompt(message)
     if (this.useOllama) {
-      return this.callOllamaStream(prompt, onChunk, { signal })
+      const prior = flattenHistory(history)
+      return this.callOllamaStream(
+        prior ? `${prior}\n\n${prompt}` : prompt,
+        onChunk,
+        { signal }
+      )
     }
     return this.consumeGeminiStream(
       {
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        contents: [
+          ...toGeminiHistory(history),
+          { role: "user", parts: [{ text: prompt }] }
+        ],
         generationConfig: LLMHelper.CHAT_GENERATION_CONFIG
       },
       onChunk,
@@ -804,17 +830,26 @@ export class LLMHelper {
     message: string,
     images: (string | Buffer)[],
     onChunk: (delta: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    history: ChatTurn[] = []
   ): Promise<string> {
     if (this.useOllama) {
-      return this.callOllamaStream(message, onChunk, { signal })
+      const prior = flattenHistory(history)
+      return this.callOllamaStream(
+        prior ? `${prior}\n\n${message}` : message,
+        onChunk,
+        { signal }
+      )
     }
     const imageParts = await Promise.all(
       images.map((i) => this.toChatImagePart(i))
     )
+    // History is text-only: past screenshots are not re-uploaded, so a
+    // follow-up reasons over what was said about a screen, not the screen.
     return this.consumeGeminiStream(
       {
         contents: [
+          ...toGeminiHistory(history),
           {
             role: "user",
             parts: [{ text: this.screenChatPrompt(message) }, ...imageParts]
