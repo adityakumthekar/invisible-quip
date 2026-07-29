@@ -9,7 +9,11 @@ export const SHORTCUTS: Shortcut[] = [
   { action: "Show / hide window", keys: ["⌘", "B"] },
   { action: "Screenshot", keys: ["⌘", "H"] },
   { action: "Ask about my screen", keys: ["⌘", "↵"] },
+  { action: "Record voice", keys: ["⌥", "M"] },
+  { action: "Approve autopilot step", keys: ["⌘", "⇧", "↵"] },
+  { action: "Stop autopilot", keys: ["⌘", "⇧", "⌫"] },
   { action: "Move window", keys: ["⌘", "↑↓←→"] },
+  { action: "New chat", keys: ["⌘", "N"] },
   { action: "Reset", keys: ["⌘", "R"] },
   { action: "Quit", keys: ["⌘", "Q"] }
 ]

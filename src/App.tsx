@@ -39,6 +39,37 @@ const MainApp: React.FC = () => {
     }
   }, [])
 
+  // Main owns the height cap because it owns the display's work area. The chat
+  // scroller reads it as a CSS variable — it can't use vh, since the viewport
+  // is the window and the window is sized from this very content.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onContentLimits(
+      ({ maxHeight, maxWidth }) => {
+        // Control bar + panel header + input row + the pb-8 shadow guard, none
+        // of which live inside the scroller.
+        const CHROME_PX = 150
+        const budget = Math.max(200, maxHeight - CHROME_PX)
+        document.documentElement.style.setProperty("--chat-max-h", `${budget}px`)
+
+        // Same reasoning on the other axis: a panel sized in % or vw resolves
+        // against the window, and the window is sized from this content — so a
+        // narrow window would latch itself narrow forever. The cap has to come
+        // from the display, which only main knows.
+        // The window width main grants includes the px-3 wrapper (24) and the
+        // WIDTH_PAD chrome allowance (32) that the panel itself can't use.
+        const SIDE_CHROME_PX = 56
+        const widthBudget = Math.max(560, maxWidth - SIDE_CHROME_PX)
+        document.documentElement.style.setProperty(
+          "--panel-max-w",
+          `${widthBudget}px`
+        )
+      }
+    )
+    return () => {
+      unsubscribe && unsubscribe()
+    }
+  }, [])
+
   useEffect(() => {
     if (!containerRef.current) return
 

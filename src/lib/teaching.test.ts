@@ -34,6 +34,7 @@ describe("parseTeachingResponse", () => {
       state: "step",
       instruction: "Click the Share button in the toolbar.",
       action: "click",
+      risk: "safe",
       target: { x: 400, y: 200, width: 80, height: 32 },
       label: "Share"
     })
@@ -219,6 +220,125 @@ describe("parseTeachingResponse", () => {
         target: { x: 400, y: 200, height: -5 }
       })
     ).toThrow(/height/i)
+  })
+})
+
+describe("parseTeachingResponse action vocabulary", () => {
+  const step = (extra: Record<string, unknown>) =>
+    parseTeachingResponse({
+      state: "step",
+      instruction: "Do the thing.",
+      target: { x: 400, y: 200, width: 80, height: 32 },
+      ...extra
+    })
+
+  it("accepts every supported action with its own payload", () => {
+    expect(step({ action: "click" })).toMatchObject({ action: "click" })
+    expect(step({ action: "double-click" })).toMatchObject({
+      action: "double-click"
+    })
+    expect(step({ action: "right-click" })).toMatchObject({
+      action: "right-click"
+    })
+    expect(step({ action: "wait" })).toMatchObject({ action: "wait" })
+    expect(step({ action: "type", text: "hello" })).toMatchObject({
+      action: "type",
+      text: "hello"
+    })
+    expect(step({ action: "key", key: "Enter" })).toMatchObject({
+      action: "key",
+      key: "enter"
+    })
+    expect(
+      step({ action: "scroll", scroll: { direction: "down", amount: 3 } })
+    ).toMatchObject({ action: "scroll", scroll: { direction: "down", amount: 3 } })
+    expect(
+      step({ action: "drag", to: { x: 600, y: 400, width: 20, height: 20 } })
+    ).toMatchObject({ action: "drag", to: { x: 600, y: 400 } })
+  })
+
+  it("rejects an unsupported action", () => {
+    expect(() => step({ action: "hover" })).toThrow(/action/i)
+  })
+
+  it("requires each action's own payload", () => {
+    expect(() => step({ action: "type" })).toThrow(/text/i)
+    expect(() => step({ action: "key" })).toThrow(/key/i)
+    expect(() => step({ action: "scroll" })).toThrow(/scroll/i)
+    expect(() => step({ action: "drag" })).toThrow(/to/i)
+  })
+
+  it("rejects payload fields that belong to a different action", () => {
+    expect(() => step({ action: "click", text: "hello" })).toThrow(
+      /text is not allowed/i
+    )
+    expect(() => step({ action: "type", text: "hi", key: "Enter" })).toThrow(
+      /key is not allowed/i
+    )
+    expect(() =>
+      step({ action: "click", to: { x: 1, y: 2 } })
+    ).toThrow(/to is not allowed/i)
+    expect(() =>
+      step({ action: "key", key: "Enter", scroll: { direction: "up", amount: 1 } })
+    ).toThrow(/scroll is not allowed/i)
+  })
+
+  it("defaults risk to safe and accepts an explicit confirm", () => {
+    expect(step({ action: "click" })).toMatchObject({ risk: "safe" })
+    expect(step({ action: "click", risk: "confirm" })).toMatchObject({
+      risk: "confirm"
+    })
+    expect(() => step({ action: "click", risk: "maybe" })).toThrow(/risk/i)
+  })
+
+  it("normalizes key combos and rejects anything off the allowlist", () => {
+    expect(step({ action: "key", key: "  CMD+A  " })).toMatchObject({
+      key: "cmd+a"
+    })
+    expect(step({ action: "key", key: "ctrl+shift+n" })).toMatchObject({
+      key: "ctrl+shift+n"
+    })
+    expect(step({ action: "key", key: "F5" })).toMatchObject({ key: "f5" })
+
+    expect(() => step({ action: "key", key: "hyper+a" })).toThrow(/modifier/i)
+    expect(() => step({ action: "key", key: "launchMissiles" })).toThrow(
+      /unsupported key/i
+    )
+    expect(() => step({ action: "key", key: "cmd+" })).toThrow(/malformed/i)
+  })
+
+  it("validates and caps scroll amounts", () => {
+    expect(() =>
+      step({ action: "scroll", scroll: { direction: "sideways", amount: 1 } })
+    ).toThrow(/direction/i)
+    expect(() =>
+      step({ action: "scroll", scroll: { direction: "down", amount: 0 } })
+    ).toThrow(/amount/i)
+    expect(() =>
+      step({ action: "scroll", scroll: { direction: "down", amount: 1.5 } })
+    ).toThrow(/amount/i)
+    expect(
+      step({ action: "scroll", scroll: { direction: "down", amount: 999 } })
+    ).toMatchObject({ scroll: { amount: 25 } })
+  })
+
+  it("rejects step-only fields on complete and blocked", () => {
+    for (const field of [
+      { action: "click" },
+      { risk: "confirm" },
+      { text: "hello" },
+      { key: "Enter" },
+      { scroll: { direction: "down", amount: 1 } },
+      { to: { x: 1, y: 2 } }
+    ]) {
+      expect(() =>
+        parseTeachingResponse({
+          state: "complete",
+          instruction: "Done.",
+          ...field
+        })
+      ).toThrow(/only allowed when state is step/i)
+    }
   })
 })
 

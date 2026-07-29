@@ -3,6 +3,7 @@ import { BrowserWindow, screen } from "electron"
 import { AppState } from "./main"
 import path from "node:path"
 import { createMainWindowOptions } from "./mainWindowPolicy"
+import { computeWindowBounds } from "./windowSizing"
 
 const isDev = process.env.NODE_ENV === "development"
 
@@ -37,6 +38,9 @@ export class WindowHelper {
   private currentY: number = 0
   /** When true, clicks pass through; mousemove still reaches the renderer via `forward`. */
   private ignoringMouseEvents: boolean = true
+  /** Last height cap pushed to the renderer; only re-sent when the display changes. */
+  private lastMaxHeight: number | null = null
+  private lastMaxWidth: number | null = null
   /** Active manual grip drag (see startWindowDrag). */
   private dragSession: {
     timer: NodeJS.Timeout
@@ -127,43 +131,52 @@ export class WindowHelper {
     // Work area of the display the window currently sits on (multi-monitor aware)
     const bounds = this.mainWindow.getBounds()
     const workArea = screen.getDisplayMatching(bounds).workArea
+    const [currentX, currentY] = this.mainWindow.getPosition()
 
-    // Allow wider overlay for two-panel glass layout
-    const maxAllowedWidth = Math.floor(
-      workArea.width * (this.appState.getHasDebugged() ? 0.8 : 0.7)
-    )
-
-    const newWidth = Math.min(width + 32, maxAllowedWidth)
-    const newHeight = Math.ceil(height)
+    const next = computeWindowBounds({
+      content: { width, height },
+      current: { x: currentX, y: currentY },
+      workArea,
+      // Allow wider overlay for two-panel glass layout
+      widthFraction: this.appState.getHasDebugged() ? 0.8 : 0.7
+    })
 
     // Skip no-op updates — setBounds mid-drag cancels native window dragging.
     if (
-      this.windowSize?.width === newWidth &&
-      this.windowSize?.height === newHeight
+      this.windowSize?.width === next.width &&
+      this.windowSize?.height === next.height &&
+      currentX === next.x &&
+      currentY === next.y
     ) {
       return
     }
 
     // Resize in place. Prefer setSize so we don't rewrite x/y (which aborts drag).
-    this.mainWindow.setSize(newWidth, newHeight)
-
-    // If the window now hangs past the right edge after shrinking/growing, nudge X only.
-    const [currentX, currentY] = this.mainWindow.getPosition()
-    const maxX = workArea.x + workArea.width - newWidth
-    const minX = workArea.x
-    if (currentX > maxX || currentX < minX) {
-      const newX = Math.min(Math.max(currentX, minX), maxX)
-      this.mainWindow.setPosition(newX, currentY)
-      this.windowPosition = { x: newX, y: currentY }
-      this.currentX = newX
-      this.currentY = currentY
-    } else {
-      this.windowPosition = { x: currentX, y: currentY }
-      this.currentX = currentX
-      this.currentY = currentY
+    this.mainWindow.setSize(next.width, next.height)
+    if (currentX !== next.x || currentY !== next.y) {
+      this.mainWindow.setPosition(next.x, next.y)
     }
+    this.windowPosition = { x: next.x, y: next.y }
+    this.currentX = next.x
+    this.currentY = next.y
+    this.windowSize = { width: next.width, height: next.height }
 
-    this.windowSize = { width: newWidth, height: newHeight }
+    // The renderer caps its own scroller and panel width from this, so neither
+    // can be a vh/vw value: the viewport is the window and the window is sized
+    // from content, which would make a viewport-relative cap chase itself.
+    // Republish when either axis moves, so dragging to a differently-sized
+    // display re-clamps the panel.
+    if (
+      this.lastMaxHeight !== next.maxHeight ||
+      this.lastMaxWidth !== next.maxWidth
+    ) {
+      this.lastMaxHeight = next.maxHeight
+      this.lastMaxWidth = next.maxWidth
+      this.mainWindow.webContents.send("content-limits", {
+        maxHeight: next.maxHeight,
+        maxWidth: next.maxWidth
+      })
+    }
   }
 
   public createWindow(): void {
@@ -200,8 +213,10 @@ export class WindowHelper {
     }
     if (process.platform === "linux") {
       // Linux-specific optimizations for better compatibility
+      // No shadow in either mode — on a transparent window it frames the full
+      // bounds rather than the pill (see mainWindowPolicy).
       if (this.mainWindow.setHasShadow) {
-        this.mainWindow.setHasShadow(!invisible)
+        this.mainWindow.setHasShadow(false)
       }
       // Keep window focusable on Linux for proper interaction
       this.mainWindow.setFocusable(true)

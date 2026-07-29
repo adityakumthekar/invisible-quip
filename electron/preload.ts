@@ -2,6 +2,20 @@ import { contextBridge, ipcRenderer } from "electron"
 import { TeachingResult } from "./teaching"
 import type { TeachingOverlayTargetEvent } from "./teachingOverlayContract"
 import type { PrivacyGateStatus, PrivacyPreflightResult } from "./privacyContract"
+import type { AutopilotUpdate } from "./autopilot"
+
+export interface AutopilotConsent {
+  consented: boolean
+  text: string
+  version: number
+}
+
+export interface OllamaPullProgress {
+  model: string
+  status: string
+  completed?: number
+  total?: number
+}
 
 // Types for the exposed Electron API
 interface ElectronAPI {
@@ -27,6 +41,11 @@ interface ElectronAPI {
   onSolutionError: (callback: (error: string) => void) => () => void
   onProcessingNoScreenshots: (callback: () => void) => () => void
   onAskAiHotkey: (callback: () => void) => () => void
+  onRecordHotkey: (callback: () => void) => () => void
+  onNewChatHotkey: (callback: () => void) => () => void
+  onContentLimits: (
+    callback: (limits: { maxHeight: number; maxWidth: number }) => void
+  ) => () => void
   onProblemExtracted: (callback: (data: any) => void) => () => void
   onSolutionSuccess: (callback: (data: any) => void) => () => void
 
@@ -37,7 +56,7 @@ interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
-  analyzeAudioFromBase64: (data: string, mimeType: string) => Promise<{ text: string; timestamp: number }>
+  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[]) => Promise<{ transcript: string; text: string; timestamp: number }>
   analyzeAudioFile: (path: string) => Promise<{ text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
@@ -55,6 +74,28 @@ interface ElectronAPI {
   privacyGetStatus: () => Promise<PrivacyGateStatus>
   privacyAcknowledge: () => Promise<PrivacyGateStatus>
   privacyRunPreflight: () => Promise<PrivacyPreflightResult>
+
+  // Autopilot (unattended runs)
+  autopilotGetConsent: () => Promise<AutopilotConsent>
+  autopilotAcknowledgeConsent: () => Promise<AutopilotConsent>
+  autopilotStart: (
+    goal: string,
+    options?: { maxSteps?: number }
+  ) => Promise<{ started: boolean; maxSteps: number }>
+  autopilotConfirm: () => Promise<{ success: true }>
+  autopilotReject: () => Promise<{ success: true }>
+  autopilotStop: () => Promise<{ success: true }>
+  onAutopilotUpdate: (callback: (update: AutopilotUpdate) => void) => () => void
+
+  // Local model management
+  getOllamaModelCapabilities: (model: string) => Promise<{ vision: boolean }>
+  pullOllamaModel: (
+    model: string
+  ) => Promise<{ success: boolean; error?: string }>
+  onOllamaPullProgress: (
+    callback: (progress: OllamaPullProgress) => void
+  ) => () => void
+
   quitApp: () => Promise<void>
   
   // LLM Model Management
@@ -64,6 +105,16 @@ interface ElectronAPI {
   switchToGemini: (apiKey?: string) => Promise<{ success: boolean; error?: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   
+  onChatStreamChunk: (
+    callback: (data: { requestId: string; delta: string }) => void
+  ) => () => void
+  onChatStreamDone: (
+    callback: (data: { requestId: string; text: string }) => void
+  ) => () => void
+  onChatStreamError: (
+    callback: (data: { requestId: string; message: string }) => void
+  ) => () => void
+
   invoke: (channel: string, ...args: any[]) => Promise<any>
 }
 
@@ -177,6 +228,35 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
 
+  onRecordHotkey: (callback: () => void) => {
+    const subscription = () => callback()
+    ipcRenderer.on("record-hotkey", subscription)
+    return () => {
+      ipcRenderer.removeListener("record-hotkey", subscription)
+    }
+  },
+
+  onNewChatHotkey: (callback: () => void) => {
+    const subscription = () => callback()
+    ipcRenderer.on("new-chat-hotkey", subscription)
+    return () => {
+      ipcRenderer.removeListener("new-chat-hotkey", subscription)
+    }
+  },
+
+  onContentLimits: (
+    callback: (limits: { maxHeight: number; maxWidth: number }) => void
+  ) => {
+    const subscription = (
+      _: any,
+      limits: { maxHeight: number; maxWidth: number }
+    ) => callback(limits)
+    ipcRenderer.on("content-limits", subscription)
+    return () => {
+      ipcRenderer.removeListener("content-limits", subscription)
+    }
+  },
+
   onProblemExtracted: (callback: (data: any) => void) => {
     const subscription = (_: any, data: any) => callback(data)
     ipcRenderer.on(PROCESSING_EVENTS.PROBLEM_EXTRACTED, subscription)
@@ -208,7 +288,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   moveWindowRight: () => ipcRenderer.invoke("move-window-right"),
   moveWindowUp: () => ipcRenderer.invoke("move-window-up"),
   moveWindowDown: () => ipcRenderer.invoke("move-window-down"),
-  analyzeAudioFromBase64: (data: string, mimeType: string) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType),
+  analyzeAudioFromBase64: (data: string, mimeType: string, history: { role: "user" | "gemini"; text: string }[] = []) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType, history),
   analyzeAudioFile: (path: string) => ipcRenderer.invoke("analyze-audio-file", path),
   analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
   teachStart: (goal: string) => ipcRenderer.invoke("teach-start", goal),
@@ -244,14 +324,77 @@ contextBridge.exposeInMainWorld("electronAPI", {
   privacyGetStatus: () => ipcRenderer.invoke("privacy-get-status"),
   privacyAcknowledge: () => ipcRenderer.invoke("privacy-acknowledge"),
   privacyRunPreflight: () => ipcRenderer.invoke("privacy-run-preflight"),
+
+  // Autopilot
+  autopilotGetConsent: () => ipcRenderer.invoke("autopilot-get-consent"),
+  autopilotAcknowledgeConsent: () =>
+    ipcRenderer.invoke("autopilot-acknowledge-consent"),
+  autopilotStart: (goal: string, options?: { maxSteps?: number }) =>
+    ipcRenderer.invoke("autopilot-start", goal, options),
+  autopilotConfirm: () => ipcRenderer.invoke("autopilot-confirm"),
+  autopilotReject: () => ipcRenderer.invoke("autopilot-reject"),
+  autopilotStop: () => ipcRenderer.invoke("autopilot-stop"),
+  onAutopilotUpdate: (callback: (update: AutopilotUpdate) => void) => {
+    const subscription = (_: unknown, update: AutopilotUpdate) =>
+      callback(update)
+    ipcRenderer.on("autopilot-update", subscription)
+    return () => {
+      ipcRenderer.removeListener("autopilot-update", subscription)
+    }
+  },
+
   quitApp: () => ipcRenderer.invoke("quit-app"),
-  
+
   // LLM Model Management
   getCurrentLlmConfig: () => ipcRenderer.invoke("get-current-llm-config"),
   getAvailableOllamaModels: () => ipcRenderer.invoke("get-available-ollama-models"),
+  getOllamaModelCapabilities: (model: string) =>
+    ipcRenderer.invoke("ollama-model-capabilities", model),
+  pullOllamaModel: (model: string) =>
+    ipcRenderer.invoke("ollama-pull-model", model),
+  onOllamaPullProgress: (callback: (progress: OllamaPullProgress) => void) => {
+    const subscription = (_: unknown, progress: OllamaPullProgress) =>
+      callback(progress)
+    ipcRenderer.on("ollama-pull-progress", subscription)
+    return () => {
+      ipcRenderer.removeListener("ollama-pull-progress", subscription)
+    }
+  },
   switchToOllama: (model?: string, url?: string) => ipcRenderer.invoke("switch-to-ollama", model, url),
   switchToGemini: (apiKey?: string) => ipcRenderer.invoke("switch-to-gemini", apiKey),
   testLlmConnection: () => ipcRenderer.invoke("test-llm-connection"),
   
+  onChatStreamChunk: (
+    callback: (data: { requestId: string; delta: string }) => void
+  ) => {
+    const subscription = (_: any, data: { requestId: string; delta: string }) =>
+      callback(data)
+    ipcRenderer.on("chat-stream-chunk", subscription)
+    return () => {
+      ipcRenderer.removeListener("chat-stream-chunk", subscription)
+    }
+  },
+  onChatStreamDone: (
+    callback: (data: { requestId: string; text: string }) => void
+  ) => {
+    const subscription = (_: any, data: { requestId: string; text: string }) =>
+      callback(data)
+    ipcRenderer.on("chat-stream-done", subscription)
+    return () => {
+      ipcRenderer.removeListener("chat-stream-done", subscription)
+    }
+  },
+  onChatStreamError: (
+    callback: (data: { requestId: string; message: string }) => void
+  ) => {
+    const subscription = (
+      _: any,
+      data: { requestId: string; message: string }
+    ) => callback(data)
+    ipcRenderer.on("chat-stream-error", subscription)
+    return () => {
+      ipcRenderer.removeListener("chat-stream-error", subscription)
+    }
+  },
   invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args)
 } as ElectronAPI)

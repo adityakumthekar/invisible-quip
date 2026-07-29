@@ -1,12 +1,161 @@
-import React, { useEffect, useRef } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { Copy, Monitor, Send, X } from "lucide-react"
+import remarkMath from "remark-math"
+import rehypeKatex from "rehype-katex"
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
+import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
+import {
+  Check,
+  Copy,
+  MessageSquare,
+  Mic,
+  Monitor,
+  MonitorDot,
+  Send,
+  Settings2,
+  X
+} from "lucide-react"
 import { cn } from "../../lib/utils"
+import { languageFromClassName } from "../../lib/codeLanguage"
+import { copyableText, extractCodeBlocks } from "../../lib/markdownCode"
+import {
+  formatClock,
+  formatDuration,
+  startsExchange,
+  type ChatMessage
+} from "../../lib/chatMessages"
 
-export interface ChatMessage {
-  role: "user" | "gemini"
+export type { ChatMessage }
+
+const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkMath]
+const MARKDOWN_REHYPE_PLUGINS = [rehypeKatex]
+
+/** Shared by the header and per-block copy buttons: writes, then confirms. */
+function useCopy(): [boolean, (text: string) => void] {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => () => clearTimeout(timer.current), [])
+
+  const copy = (text: string) => {
+    if (!text) return
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => setCopied(false), 1200)
+      })
+      .catch(() => {
+        /* ignore */
+      })
+  }
+
+  return [copied, copy]
+}
+
+const CopyButton: React.FC<{
   text: string
+  label: string
+  className?: string
+  disabled?: boolean
+}> = ({ text, label, className, disabled }) => {
+  const [copied, copy] = useCopy()
+  const Icon = copied ? Check : Copy
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        "no-drag p-1.5 rounded-md glass-icon hover:text-white hover:bg-glass-hover",
+        className
+      )}
+      onClick={() => copy(text)}
+      title={copied ? "Copied" : label}
+      aria-label={label}
+      disabled={disabled}
+    >
+      <Icon className="w-3.5 h-3.5" strokeWidth={1.75} />
+    </button>
+  )
+}
+
+/**
+ * Fenced blocks get Prism highlighting; inline code keeps the plain <code> so
+ * the chip styling in index.css still applies. react-markdown v9 dropped the
+ * `inline` prop, so a block is anything with a language tag or a newline —
+ * that second test is what catches an untagged fence.
+ */
+const CodeBlock: React.FC<{ className?: string; children?: React.ReactNode }> = ({
+  className,
+  children
+}) => {
+  const text = String(children ?? "").replace(/\n$/, "")
+  const language = languageFromClassName(className)
+  const isBlock = language !== null || text.includes("\n")
+
+  if (!isBlock) {
+    return <code className={className}>{children}</code>
+  }
+
+  return (
+    <div className="chat-code">
+      {/* Outside the scroller, or it would slide away with a wide line. */}
+      <CopyButton text={text} label="Copy code" className="chat-code-copy" />
+      <div className="chat-code-scroll">
+        <SyntaxHighlighter
+          language={language ?? undefined}
+          style={dracula}
+          PreTag="div"
+          customStyle={{
+            margin: 0,
+            padding: "0.7em",
+            background: "transparent",
+            fontSize: "0.9em"
+          }}
+          codeTagProps={{ style: { fontFamily: "inherit" } }}
+        >
+          {text}
+        </SyntaxHighlighter>
+      </div>
+    </div>
+  )
+}
+
+// One 11px line per turn. On a 560px translucent panel over an arbitrary
+// desktop, avatars and chat bubbles cost width and contrast without adding
+// information — the source icon and the clock are what make a long mixed
+// session scannable.
+const SOURCE_META: Record<
+  ChatMessage["source"],
+  { icon: typeof Mic; label: string }
+> = {
+  typed: { icon: MessageSquare, label: "You" },
+  voice: { icon: Mic, label: "You · voice" },
+  screen: { icon: MonitorDot, label: "Screen" },
+  system: { icon: Settings2, label: "Quip" }
+}
+
+const TurnHeader: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
+  const { icon: Icon, label } = SOURCE_META[msg.source]
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] glass-subtle mb-1">
+      <Icon className="w-3 h-3 shrink-0" strokeWidth={1.75} />
+      <span className="truncate">{label}</span>
+      {msg.durationSec !== undefined && (
+        <span className="tabular-nums">· {formatDuration(msg.durationSec)}</span>
+      )}
+      <span className="ml-auto tabular-nums">{formatClock(msg.at)}</span>
+    </div>
+  )
+}
+
+// A fenced block renders its own surface, so the default <pre> wrapper would
+// just stack a second background behind it.
+const MARKDOWN_COMPONENTS = {
+  pre: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+  code: CodeBlock
 }
 
 interface AIResponseProps {
@@ -48,22 +197,22 @@ const AIResponse: React.FC<AIResponseProps> = ({
   const lastAssistant = [...messages].reverse().find((m) => m.role === "gemini")
   const hasContent = messages.length > 0 || loading
 
-  const handleCopy = async () => {
-    if (!lastAssistant?.text) return
-    try {
-      await navigator.clipboard.writeText(lastAssistant.text)
-    } catch {
-      /* ignore */
-    }
-  }
+  // Copying an answer is nearly always about the code; the raw markdown would
+  // paste fence tags and LaTeX into an editor. Prose-only replies still copy
+  // whole, and each block carries its own button for picking just one.
+  const answer = lastAssistant?.text ?? ""
+  const hasCode = extractCodeBlocks(answer).length > 0
 
   return (
     <div
       className={cn(
         "glass-panel-dark panel-enter flex flex-col w-full overflow-hidden transition-[min-height] duration-200",
-        hasContent ? "min-h-[240px] max-h-[460px]" : "min-h-0",
+        "min-h-0",
         className
       )}
+      // Display-aware cap, published by main (see App.tsx). The 460px fallback
+      // is what applies before the first resize round-trip lands.
+      style={{ maxHeight: "var(--chat-max-h, 460px)" }}
     >
       <div
         className={cn(
@@ -82,15 +231,11 @@ const AIResponse: React.FC<AIResponseProps> = ({
           )}
         </div>
         <div className="flex items-center gap-0.5">
-          <button
-            type="button"
-            className="no-drag p-1.5 rounded-md glass-icon hover:text-white hover:bg-glass-hover"
-            onClick={handleCopy}
-            title="Copy last response"
+          <CopyButton
+            text={copyableText(answer)}
+            label={hasCode ? "Copy code" : "Copy last response"}
             disabled={!lastAssistant}
-          >
-            <Copy className="w-3.5 h-3.5" strokeWidth={1.75} />
-          </button>
+          />
           {onClose && (
             <button
               type="button"
@@ -109,28 +254,57 @@ const AIResponse: React.FC<AIResponseProps> = ({
           ref={scrollRef}
           className="glass-reading flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[120px]"
         >
-          {messages.length > 0 &&
-          messages.map((msg, idx) => (
-            <div
-              key={idx}
-              className={cn(
-                "text-[13px] leading-[1.6]",
-                msg.role === "user"
-                  ? "glass-muted pl-3 border-l-2 border-glass"
-                  : "glass-text"
-              )}
-            >
-              {msg.role === "user" ? (
-                <p>{msg.text}</p>
-              ) : (
-                <div className="chat-md chat-md-dark">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {msg.text}
-                  </ReactMarkdown>
+          {messages.map((msg, idx) => {
+            // One hairline per exchange, so consecutive turns of the same
+            // exchange stay visually joined.
+            const rule = startsExchange(messages[idx - 1], msg)
+
+            if (msg.source === "system") {
+              return (
+                <div
+                  key={msg.id}
+                  className={cn(
+                    "text-[11px] glass-subtle text-center",
+                    rule && "border-t border-glass pt-3"
+                  )}
+                >
+                  {msg.text}
                 </div>
-              )}
-            </div>
-          ))}
+              )
+            }
+
+            return (
+              <div
+                key={msg.id}
+                className={cn(
+                  "text-[13px] leading-[1.6]",
+                  rule && "border-t border-glass pt-3",
+                  msg.role === "user" ? "glass-muted" : "glass-text"
+                )}
+              >
+                {msg.role === "user" ? (
+                  <>
+                    <TurnHeader msg={msg} />
+                    {/* A header-only turn is how a screen glance or a silent
+                        clip shows its provenance without a body. */}
+                    {msg.text && (
+                      <p className="pl-3 border-l-2 border-glass">{msg.text}</p>
+                    )}
+                  </>
+                ) : (
+                  <div className="chat-md chat-md-dark">
+                    <ReactMarkdown
+                      remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+                      rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
+                      components={MARKDOWN_COMPONENTS}
+                    >
+                      {msg.text}
+                    </ReactMarkdown>
+                  </div>
+                )}
+              </div>
+            )
+          })}
           {loading && (
             <p className="text-xs glass-muted animate-pulse">Thinking…</p>
           )}

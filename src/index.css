@@ -205,6 +205,50 @@ body,
   margin: 0.5em 0;
 }
 .chat-md pre code { background: none; padding: 0; }
+/* Syntax-highlighted fences (AIResponse's CodeBlock). The surface lives here so
+   the highlighter itself can stay transparent and only colour the tokens. */
+.chat-md .chat-code {
+  position: relative;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  max-width: 100%;
+  margin: 0.5em 0;
+}
+/* The scroll lives on the inner element so the copy button can sit pinned to
+   the block's corner instead of scrolling off with a long line. */
+.chat-md .chat-code-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  border-radius: 8px;
+}
+.chat-md .chat-code-copy {
+  position: absolute;
+  top: 0.25em;
+  right: 0.25em;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.chat-md .chat-code:hover .chat-code-copy,
+.chat-md .chat-code-copy:focus-visible {
+  opacity: 1;
+}
+.chat-md .chat-code code,
+.chat-md .chat-code pre {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+/* The panel is width-capped and the window auto-sizes to content, so a wide
+   formula would otherwise stretch the whole overlay. */
+.chat-md .katex { font-size: 1em; }
+.chat-md .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  margin: 0.5em 0;
+}
 .chat-md blockquote {
   border-left: 2px solid rgba(0, 0, 0, 0.15);
   padding-left: 0.7em;
@@ -277,6 +321,15 @@ body,
   text-shadow: none;
 }
 .chat-md-dark pre code { border: 0; }
+.chat-md-dark .chat-code {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  text-shadow: none;
+}
+/* Its own scrim, or the icon disappears into whatever token sits behind it. */
+.chat-md-dark .chat-code-copy {
+  background: rgba(0, 0, 0, 0.55);
+}
 .chat-md-dark blockquote {
   border-left-color: rgba(255, 255, 255, 0.2);
   color: var(--glass-dark-muted);
@@ -302,6 +355,30 @@ body,
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
     0 2px 5px rgba(0, 0, 0, 0.24),
     0 8px 24px rgba(0, 0, 0, 0.46);
+}
+
+/* Retracted control bar. Everything visual — surface, rings, shadow, and the
+   pill radius that rounds a square box into a circle — comes from .glass-bar,
+   which the blob also carries so it stays hit-tested and clickable without a
+   second entry in the click-through selector lists.
+   No width/height transition on purpose: animating a layout property re-fires
+   the ResizeObserver that sizes the window (see the .panel-enter note below). */
+.collapsed-blob {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--glass-dark-text);
+  cursor: grab;
+  touch-action: none;
+}
+.collapsed-blob:active {
+  cursor: grabbing;
+}
+.collapsed-blob:hover {
+  background: var(--glass-accent-soft);
 }
 
 .glass-panel-secondary,

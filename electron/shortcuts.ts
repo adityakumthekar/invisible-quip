@@ -1,5 +1,7 @@
 import { globalShortcut, app } from "electron"
 import { AppState } from "./main"
+import { prewarmChatCapture } from "./chatCapturePrewarm"
+import { GLOBAL_ACCELERATORS } from "./shortcutTable"
 
 export class ShortcutsHelper {
   private appState: AppState
@@ -42,8 +44,32 @@ export class ShortcutsHelper {
       if (!this.appState.isVisible()) {
         this.appState.showMainWindow()
       }
+      // Start capturing before the renderer has even heard about the keypress,
+      // so the capture overlaps the IPC round trip instead of following it.
+      prewarmChatCapture(() =>
+        this.appState.getScreenshotHelper().captureForChatBuffer()
+      )
       mainWindow.webContents.send("ask-ai-hotkey")
     })
+
+    // Toggling the mic must work with the overlay hidden, so reveal it first —
+    // otherwise a recording starts with no visible indicator that it is running.
+    // Registration is checked below: if another app already owns the chord the
+    // binding silently does nothing.
+    globalShortcut.register(GLOBAL_ACCELERATORS.RECORD, () => {
+      console.log("Record shortcut pressed. Toggling the mic.")
+      const mainWindow = this.appState.getMainWindow()
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      if (!this.appState.isVisible()) {
+        this.appState.showMainWindow()
+      }
+      mainWindow.webContents.send("record-hotkey")
+    })
+    if (!globalShortcut.isRegistered(GLOBAL_ACCELERATORS.RECORD)) {
+      console.warn(
+        `[Shortcuts] Could not register ${GLOBAL_ACCELERATORS.RECORD} for recording — another app owns it.`
+      )
+    }
 
     globalShortcut.register("CommandOrControl+R", () => {
       console.log(
@@ -67,6 +93,24 @@ export class ShortcutsHelper {
         mainWindow.webContents.send("reset-view")
       }
     })
+
+    // Chat-only reset. Unlike ⌘R above, this leaves the screenshot queue, the
+    // view, and the mode alone — it exists so the model's context can be dropped
+    // mid-session without tearing down everything else. The renderer owns the
+    // transcript, so we only signal it.
+    globalShortcut.register(GLOBAL_ACCELERATORS.NEW_CHAT, () => {
+      const mainWindow = this.appState.getMainWindow()
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      if (!this.appState.isVisible()) {
+        this.appState.showMainWindow()
+      }
+      mainWindow.webContents.send("new-chat-hotkey")
+    })
+    if (!globalShortcut.isRegistered(GLOBAL_ACCELERATORS.NEW_CHAT)) {
+      console.warn(
+        `[Shortcuts] Could not register ${GLOBAL_ACCELERATORS.NEW_CHAT} for new chat — another app owns it.`
+      )
+    }
 
     // New shortcuts for moving the window
     globalShortcut.register("CommandOrControl+Left", () => {
@@ -105,18 +149,25 @@ export class ShortcutsHelper {
       }
     })
 
-    // Teaching: perform the highlighted action. Signals the renderer (which
-    // owns teaching session state) so the panel and overlay stay in sync; it's
-    // a no-op unless a teaching step is currently showing.
+    // Perform the highlighted action. During an autopilot run this approves the
+    // step it paused on, which main owns directly; otherwise it signals the
+    // renderer, which owns manual teaching state. A no-op when nothing is
+    // showing.
     globalShortcut.register("CommandOrControl+Shift+Return", () => {
+      if (this.appState.confirmAutopilotStep()) {
+        return
+      }
       const mainWindow = this.appState.getMainWindow()
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("teaching-hotkey", "execute")
       }
     })
 
-    // Teaching: hard kill switch. Works even when focus is in another app.
+    // Hard kill switch. Works even when focus is in another app. Aborts in main
+    // FIRST so a hidden or wedged renderer can never delay stopping a run that
+    // is actively driving the mouse.
     globalShortcut.register("CommandOrControl+Shift+Backspace", () => {
+      this.appState.abortAutopilot()
       const mainWindow = this.appState.getMainWindow()
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("teaching-hotkey", "abort")

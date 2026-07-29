@@ -2,6 +2,8 @@
 
 import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
+import { abortAllChatStreams } from "./chatStreams"
+import { ChatTurn } from "./chatHistory"
 import dotenv from "dotenv"
 
 dotenv.config()
@@ -151,12 +153,19 @@ export class ProcessingHelper {
       this.currentExtraProcessingAbortController = null
     }
 
+    // Streaming chat requests live outside this class, in their own registry.
+    abortAllChatStreams()
+
     this.appState.setHasDebugged(false)
   }
 
-  public async processAudioBase64(data: string, mimeType: string) {
+  public async processAudioBase64(
+    data: string,
+    mimeType: string,
+    history: ChatTurn[] = []
+  ) {
     // Directly use LLMHelper to analyze inline base64 audio
-    return this.llmHelper.analyzeAudioFromBase64(data, mimeType);
+    return this.llmHelper.analyzeAudioFromBase64(data, mimeType, history);
   }
 
   // Add audio file processing method

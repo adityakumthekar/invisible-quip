@@ -12,6 +12,16 @@ export const PRIVACY_ACKNOWLEDGEMENT_VERSION = 1
 export const PRIVACY_ACKNOWLEDGEMENT_TEXT =
   "Quip uses capture protection and is normally hidden from Zoom/Meet/Teams-style sharing, but exclusion is best-effort and the user must verify the share preview."
 
+export const AUTOPILOT_CONSENT_VERSION = 1
+
+/**
+ * Separate, one-time consent for unattended control. Screenshotting the screen
+ * and driving the mouse and keyboard on it are materially different asks, so
+ * acknowledging the first does not imply the second.
+ */
+export const AUTOPILOT_CONSENT_TEXT =
+  "In autopilot, Quip clicks, types, and scrolls on your real screen by itself. It pauses for your approval before actions that are hard to undo, but its view of the screen can be wrong. Stay at the machine and press Cmd/Ctrl+Shift+Backspace to stop it at any time."
+
 export interface PrivacyAcknowledgementRecord {
   version: number
   acknowledgedAt: string
