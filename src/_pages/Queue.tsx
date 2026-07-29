@@ -15,6 +15,7 @@ import TeachingPanel, {
   type TeachingMode
 } from "../components/teaching/TeachingPanel"
 import { DEFAULT_PANEL_WIDTH, applySavedMode, getMode } from "../lib/modes"
+import { getBarCollapsed, setBarCollapsed } from "../lib/collapsedBar"
 import { streamChat } from "../lib/chatStream"
 import {
   createMessage,
@@ -90,6 +91,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [includeScreen, setIncludeScreen] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
   const [teachingOpen, setTeachingOpen] = useState(false)
+  // Retracted to the blob. Read from storage once so the overlay comes back the
+  // way it was left.
+  const [collapsed, setCollapsed] = useState(getBarCollapsed)
   const [teachingSession, dispatchTeaching] = useReducer(
     teachingSessionReducer,
     initialTeachingSessionState
@@ -433,6 +437,34 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       void refreshAutopilotConsent()
     }
   }
+
+  // Retracting closes everything: the blob is the whole overlay, so a panel
+  // left open would render underneath it and keep the window full-size.
+  const toggleCollapsed = () => {
+    const next = !collapsed
+    setCollapsed(next)
+    setBarCollapsed(next)
+    if (!next) return
+
+    setPanelsOpen(false)
+    setQuickOpen(false)
+    setIsSettingsOpen(false)
+    // stopTeaching is the panel's only close path — the Teach Me button calls
+    // the same thing.
+    if (teachingOpen) stopTeaching()
+    // The shortcuts tooltip is positioned out of flow and its height is added
+    // back as a spacer, which would otherwise leave the collapsed window taller
+    // than the blob.
+    setIsTooltipVisible(false)
+    setTooltipHeight(0)
+  }
+
+  // stopTeaching halts an in-flight autopilot run too, so collapsing mid-run
+  // would silently throw the session away.
+  const collapseDisabledReason =
+    isAutopilotBusy(autopilot) || teachingSession.phase === "loading"
+      ? "Finish or stop the current run before collapsing"
+      : null
 
   // Keep the latest-value refs current for the global-hotkey listener.
   useEffect(() => {
@@ -782,6 +814,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             modelsOpen={isSettingsOpen}
             quickOpen={quickOpen}
             teachingOpen={teachingOpen}
+            collapsed={collapsed}
+            collapseDisabledReason={collapseDisabledReason}
+            onToggleCollapsed={toggleCollapsed}
             onAskAi={handleAskAi}
             onNewChat={handleNewChat}
             onTeachMe={toggleTeaching}
@@ -794,8 +829,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
               setTooltipHeight(height)
             }}
           />
-          {quickOpen && <QuickActions onRun={runQuickAction} />}
-          {isSettingsOpen && (
+          {!collapsed && quickOpen && <QuickActions onRun={runQuickAction} />}
+          {!collapsed && isSettingsOpen && (
             <SettingsPanel
               onModelChange={handleModelChange}
               onOpenChat={openPanels}
@@ -811,7 +846,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
           )}
         </div>
 
-        {teachingOpen && (
+        {!collapsed && teachingOpen && (
           <TeachingPanel
             session={teachingSession}
             privacy={{
@@ -851,7 +886,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
           />
         )}
 
-        {panelsOpen && (
+        {!collapsed && panelsOpen && (
           // Width is per-mode (System Design needs the room), clamped by the
           // display-aware cap main publishes. Deliberately not `100%`: that
           // resolves against the window, which is itself sized from this
@@ -880,7 +915,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         {/* The shortcuts tooltip is positioned out of flow, so it contributes
             nothing to scrollHeight and the window would clip it. A spacer puts
             its height back into the layout the size observer measures. */}
-        {isTooltipVisible && (
+        {!collapsed && isTooltipVisible && (
           <div style={{ height: tooltipHeight }} aria-hidden />
         )}
       </div>

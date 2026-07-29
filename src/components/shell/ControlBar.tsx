@@ -1,5 +1,6 @@
-import React, { useEffect } from "react"
+import React, { useEffect, useRef } from "react"
 import {
+  ChevronsRight,
   GraduationCap,
   Eye,
   LayoutGrid,
@@ -11,7 +12,12 @@ import {
 } from "lucide-react"
 import { cn } from "../../lib/utils"
 import { SHORTCUTS } from "../../lib/shortcuts"
-import { beginWindowDrag, endWindowDrag } from "../../lib/windowDrag"
+import {
+  beginWindowDrag,
+  endWindowDrag,
+  isClickNotDrag,
+  type ScreenPoint
+} from "../../lib/windowDrag"
 import MicWaveform from "./MicWaveform"
 import ShortcutsTooltip from "./ShortcutsTooltip"
 
@@ -24,6 +30,10 @@ interface ControlBarProps {
   modelsOpen: boolean
   quickOpen: boolean
   teachingOpen: boolean
+  collapsed: boolean
+  /** Non-null disables the collapse control and explains why in its tooltip. */
+  collapseDisabledReason?: string | null
+  onToggleCollapsed: () => void
   onAskAi: () => void
   onNewChat: () => void
   onTeachMe: () => void
@@ -43,6 +53,9 @@ const ControlBar: React.FC<ControlBarProps> = ({
   modelsOpen,
   quickOpen,
   teachingOpen,
+  collapsed,
+  collapseDisabledReason,
+  onToggleCollapsed,
   onAskAi,
   onNewChat,
   onTeachMe,
@@ -67,13 +80,62 @@ const ControlBar: React.FC<ControlBarProps> = ({
     }
   }, [])
 
-  const onGripPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+  // Where the current press started, so the blob can tell a click (expand) from
+  // the tail of a drag (don't). See isClickNotDrag for why these are screen and
+  // not client coordinates.
+  const pressPointRef = useRef<ScreenPoint | null>(null)
+
+  const onGripPointerDown = (event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return
     event.preventDefault()
+    pressPointRef.current = { x: event.screenX, y: event.screenY }
     // Pointer capture keeps the release on this element even once the window
     // has slid out from under the cursor.
     event.currentTarget.setPointerCapture(event.pointerId)
     beginWindowDrag()
+  }
+
+  const onCollapseFromGrip = () => {
+    // Drop the drag flag before the bar re-renders as a blob — the grip element
+    // that would normally clear it is about to be unmounted.
+    endWindowDrag()
+    // Same guard the chevron gets from `disabled`; the grip has no such state.
+    if (collapseDisabledReason) return
+    onToggleCollapsed()
+  }
+
+  // The blob is both the drag handle and the expand button, so every drag ends
+  // with a click that would otherwise re-expand the bar the moment you finish
+  // moving it. Only a press that stayed put counts as a click.
+  const onBlobClick = (event: React.MouseEvent) => {
+    const start = pressPointRef.current
+    pressPointRef.current = null
+    if (!isClickNotDrag(start, { x: event.screenX, y: event.screenY })) return
+    onToggleCollapsed()
+  }
+
+  if (collapsed) {
+    return (
+      <div className="w-fit relative">
+        {/* `glass-bar` is deliberately reused rather than given its own class:
+            it is what useClickThrough hit-tests and what index.css grants
+            pointer-events to, and those two lists are asserted in sync by
+            clickThroughSelectors.test.ts. */}
+        <button
+          type="button"
+          className="glass-bar collapsed-blob no-drag"
+          title="Expand Quip"
+          aria-label="Expand Quip"
+          aria-expanded={false}
+          onPointerDown={onGripPointerDown}
+          onPointerUp={() => endWindowDrag()}
+          onPointerCancel={() => endWindowDrag()}
+          onClick={onBlobClick}
+        >
+          <Sparkles className="w-3.5 h-3.5" strokeWidth={1.75} />
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -84,11 +146,12 @@ const ControlBar: React.FC<ControlBarProps> = ({
             driven manually from the main process instead. */}
         <div
           className="drag-grip no-drag flex items-center justify-center self-stretch px-1 -ml-0.5 mr-0.5 shrink-0"
-          title="Drag to move"
+          title="Drag to move — double-click to collapse"
           aria-hidden
           onPointerDown={onGripPointerDown}
           onPointerUp={() => endWindowDrag()}
           onPointerCancel={() => endWindowDrag()}
+          onDoubleClick={onCollapseFromGrip}
         >
           <span className="drag-grip-dots" />
         </div>
@@ -195,6 +258,20 @@ const ControlBar: React.FC<ControlBarProps> = ({
           shortcuts={SHORTCUTS}
           onTooltipVisibilityChange={onTooltipVisibilityChange}
         />
+
+        {/* Icon only, like New chat above: the window is sized to this bar, so a
+            text label here would widen the overlay permanently. */}
+        <button
+          type="button"
+          className="icon-btn no-drag"
+          onClick={onToggleCollapsed}
+          disabled={Boolean(collapseDisabledReason)}
+          title={collapseDisabledReason ?? "Collapse to a dot"}
+          aria-label="Collapse to a dot"
+          aria-expanded={true}
+        >
+          <ChevronsRight className="w-3.5 h-3.5" strokeWidth={1.75} />
+        </button>
 
         <button
           type="button"

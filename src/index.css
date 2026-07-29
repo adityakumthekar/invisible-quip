@@ -357,6 +357,30 @@ body,
     0 8px 24px rgba(0, 0, 0, 0.46);
 }
 
+/* Retracted control bar. Everything visual — surface, rings, shadow, and the
+   pill radius that rounds a square box into a circle — comes from .glass-bar,
+   which the blob also carries so it stays hit-tested and clickable without a
+   second entry in the click-through selector lists.
+   No width/height transition on purpose: animating a layout property re-fires
+   the ResizeObserver that sizes the window (see the .panel-enter note below). */
+.collapsed-blob {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--glass-dark-text);
+  cursor: grab;
+  touch-action: none;
+}
+.collapsed-blob:active {
+  cursor: grabbing;
+}
+.collapsed-blob:hover {
+  background: var(--glass-accent-soft);
+}
+
 .glass-panel-secondary,
 .glass-panel-light {
   background: rgb(var(--glass-secondary-rgb) / var(--glass-secondary-alpha));
