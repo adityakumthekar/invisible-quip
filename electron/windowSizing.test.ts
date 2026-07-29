@@ -46,6 +46,28 @@ describe("computeWindowBounds", () => {
     ).toBe(1007)
   })
 
+  it("reports the width cap so the renderer can size panels to the display", () => {
+    // The renderer can't derive this itself: % and vw resolve against the
+    // window, and the window is sized from the renderer's own content.
+    expect(
+      computeWindowBounds({
+        content: { width: 400, height: 100 },
+        current: { x: 0, y: 100 },
+        workArea,
+        widthFraction: 0.7
+      }).maxWidth
+    ).toBe(1007)
+
+    expect(
+      computeWindowBounds({
+        content: { width: 400, height: 100 },
+        current: { x: 0, y: 100 },
+        workArea,
+        widthFraction: 0.8
+      }).maxWidth
+    ).toBe(1152)
+  })
+
   it("pulls a window that would grow past the bottom back into the work area", () => {
     const { y, height } = computeWindowBounds({
       content: { width: 400, height: 500 },

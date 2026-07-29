@@ -19,13 +19,15 @@ import {
   setGlassStrength,
   setGlassTheme
 } from "../../lib/glassTheme"
-import { MODES, getModeId, setMode } from "../../lib/modes"
+import { MODES, getModeId, setMode, type Mode } from "../../lib/modes"
 import { SHORTCUTS } from "../../lib/shortcuts"
 
 interface SettingsPanelProps {
   onModelChange?: (provider: "ollama" | "gemini", model: string) => void
   onOpenChat?: () => void
-  onModeChange?: (label: string) => void
+  // The whole mode, not just its label: the shell sizes the answer panel from
+  // it (see Mode.panelWidth).
+  onModeChange?: (mode: Mode) => void
 }
 
 type Tab = "modes" | "provider" | "appearance" | "keybinds" | "about"
@@ -212,7 +214,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const chooseMode = (id: string) => {
     const mode = setMode(id)
     setModeId(mode.id)
-    onModeChange?.(mode.label)
+    onModeChange?.(mode)
   }
 
   const ungrouped = MODES.filter((m) => !m.group)

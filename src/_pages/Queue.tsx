@@ -14,7 +14,7 @@ import QuickActions from "../components/shell/QuickActions"
 import TeachingPanel, {
   type TeachingMode
 } from "../components/teaching/TeachingPanel"
-import { applySavedMode } from "../lib/modes"
+import { DEFAULT_PANEL_WIDTH, applySavedMode, getMode } from "../lib/modes"
 import { streamChat } from "../lib/chatStream"
 import {
   createMessage,
@@ -53,6 +53,10 @@ const SCREEN_GLANCE_PROMPT =
   "Only if there is no question, say what's going on in a line and the single " +
   "best next action I could take."
 
+// streamChat rejects with a DOMException named AbortError when the caller
+// cancels. That is our own doing, not an error worth showing the user.
+const isAbortError = (err: unknown) => (err as Error)?.name === "AbortError"
+
 const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [toastOpen, setToastOpen] = useState(false)
   const [toastMessage, setToastMessage] = useState<ToastMessage>({
@@ -71,8 +75,18 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   // would otherwise close over the transcript as it looked back then.
   const chatMessagesRef = useRef<ChatMessage[]>([])
   chatMessagesRef.current = chatMessages
+  // Bumped by every "new chat". Async work captures the epoch it started under
+  // and drops its writes if it no longer matches — otherwise an answer to the
+  // old conversation lands in the fresh one, and replaceLastMessage below would
+  // overwrite whatever turn happened to be last.
+  const chatEpochRef = useRef(0)
+  // The in-flight streaming request, so a new chat can cancel it in main rather
+  // than paying for tokens nobody will read.
+  const chatAbortRef = useRef<AbortController | null>(null)
   const [chatLoading, setChatLoading] = useState(false)
   const [panelsOpen, setPanelsOpen] = useState(false)
+  // Tracked here only for the panel width — the prompt itself lives in main.
+  const [mode, setActiveMode] = useState(getMode)
   const [includeScreen, setIncludeScreen] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
   const [teachingOpen, setTeachingOpen] = useState(false)
@@ -92,6 +106,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const teachingOpenRef = useRef(teachingOpen)
   const handleAskAiRef = useRef<() => void>(() => {})
   const handleRecordClickRef = useRef<() => void>(() => {})
+  const handleNewChatRef = useRef<() => void>(() => {})
   const [privacyStatus, setPrivacyStatus] = useState<PrivacyGateStatus | null>(null)
   const [privacyChecking, setPrivacyChecking] = useState(false)
   const [privacyError, setPrivacyError] = useState<string | null>(null)
@@ -195,9 +210,14 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     ])
     setChatLoading(true)
     openPanels()
+    const epoch = chatEpochRef.current
+    const controller = new AbortController()
+    chatAbortRef.current = controller
     try {
       await streamChat(window.electronAPI, channel, [prompt, history], {
+        signal: controller.signal,
         onText: (text) => {
+          if (epoch !== chatEpochRef.current) return
           // Drop the spinner the moment there is something to read — this is
           // what makes the answer feel fast.
           setChatLoading(false)
@@ -205,10 +225,31 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         }
       })
     } catch (err) {
+      // A cancelled request is not a failure to report: the turn it was writing
+      // into is already gone.
+      if (epoch !== chatEpochRef.current || isAbortError(err)) return
       replaceLastMessage("Error: " + String(err))
     } finally {
-      setChatLoading(false)
+      if (chatAbortRef.current === controller) chatAbortRef.current = null
+      if (epoch === chatEpochRef.current) setChatLoading(false)
     }
+  }
+
+  // Chat-only reset, from the bar button and ⌘N. Deliberately narrower than
+  // ⌘R's reset-view: the screenshot queue, mode, teaching panel, and any running
+  // recording all survive. Dropping the transcript is the whole point — it is
+  // the only thing the model remembers.
+  const handleNewChat = () => {
+    chatEpochRef.current += 1
+    chatAbortRef.current?.abort()
+    chatAbortRef.current = null
+    setChatMessages([])
+    setChatInput("")
+    setChatLoading(false)
+    setQuickOpen(false)
+    // Fired from the hotkey the window may be hidden or the panel closed, and
+    // an invisible reset is indistinguishable from a dead keybinding.
+    openPanels()
   }
 
   const handleChatSend = async () => {
@@ -402,6 +443,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     autopilotRef.current = autopilot
     handleAskAiRef.current = handleAskAi
     handleRecordClickRef.current = () => void handleRecordClick()
+    handleNewChatRef.current = handleNewChat
   })
 
   // Progress for an autopilot run is pushed from main, which owns the loop.
@@ -419,6 +461,18 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   useEffect(() => {
     const unsubscribe = window.electronAPI.onAskAiHotkey(() => {
       handleAskAiRef.current()
+    })
+    return () => {
+      unsubscribe && unsubscribe()
+    }
+  }, [])
+
+  // Cmd/Ctrl+N. Same once-subscribed ref indirection — handleNewChat is rebuilt
+  // every render and a closure captured here would keep aborting a controller
+  // from mount.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onNewChatHotkey(() => {
+      handleNewChatRef.current()
     })
     return () => {
       unsubscribe && unsubscribe()
@@ -489,6 +543,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
           // before this async chain finishes.
           const clipSeconds = recordingSecondsRef.current
           const history = toHistory(chatMessagesRef.current)
+          // Snapshotted at stop, not at record start: a ⌘N pressed mid-clip
+          // should still deliver this transcript, just into the empty chat.
+          // There is no abort for this path — it is a plain invoke — so the
+          // epoch check is the only thing keeping a stale answer out.
+          const epoch = chatEpochRef.current
           stream.getTracks().forEach((t) => t.stop())
           setMicStream(null)
           const blob = new Blob(chunks.current, {
@@ -506,6 +565,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                 blob.type,
                 history
               )
+              if (epoch !== chatEpochRef.current) return
               setChatMessages((msgs) => [
                 ...msgs,
                 createMessage({
@@ -521,6 +581,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                 })
               ])
             } catch {
+              if (epoch !== chatEpochRef.current) return
               // Still emit the user turn: a header-only "You · voice · 0:12"
               // beats a failure message with nothing explaining what failed.
               setChatMessages((msgs) => [
@@ -538,7 +599,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                 })
               ])
             } finally {
-              setChatLoading(false)
+              // Only ours to clear: a newer request may already own the spinner.
+              if (epoch === chatEpochRef.current) setChatLoading(false)
             }
           }
           reader.readAsDataURL(blob)
@@ -640,22 +702,29 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       // Refresh the thumbnail strip alongside the model call rather than in
       // front of it — it fetches multi-megabyte previews over IPC.
       void refetch()
+      const epoch = chatEpochRef.current
+      const controller = new AbortController()
+      chatAbortRef.current = controller
       try {
         await streamChat(
           window.electronAPI,
           "analyze-image-file-stream",
           [latest],
           {
+            signal: controller.signal,
             onText: (text) => {
+              if (epoch !== chatEpochRef.current) return
               setChatLoading(false)
               replaceLastMessage(text)
             }
           }
         )
       } catch (err) {
+        if (epoch !== chatEpochRef.current || isAbortError(err)) return
         replaceLastMessage("Error: " + String(err))
       } finally {
-        setChatLoading(false)
+        if (chatAbortRef.current === controller) chatAbortRef.current = null
+        if (epoch === chatEpochRef.current) setChatLoading(false)
       }
     })
     return () => {
@@ -714,6 +783,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             quickOpen={quickOpen}
             teachingOpen={teachingOpen}
             onAskAi={handleAskAi}
+            onNewChat={handleNewChat}
             onTeachMe={toggleTeaching}
             onSolve={handleSolve}
             onToggleModels={() => setIsSettingsOpen((v) => !v)}
@@ -729,9 +799,14 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             <SettingsPanel
               onModelChange={handleModelChange}
               onOpenChat={openPanels}
-              onModeChange={(label) =>
-                showToast("Mode changed", `Now using ${label} mode`, "neutral")
-              }
+              onModeChange={(nextMode) => {
+                setActiveMode(nextMode)
+                showToast(
+                  "Mode changed",
+                  `Now using ${nextMode.label} mode`,
+                  "neutral"
+                )
+              }}
             />
           )}
         </div>
@@ -777,7 +852,17 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         )}
 
         {panelsOpen && (
-          <div className="grid grid-cols-1 gap-3 w-[min(560px,100%)]">
+          // Width is per-mode (System Design needs the room), clamped by the
+          // display-aware cap main publishes. Deliberately not `100%`: that
+          // resolves against the window, which is itself sized from this
+          // element, so a narrow window would latch narrow. Inline style
+          // because Tailwind can't emit an arbitrary class from a runtime value.
+          <div
+            className="grid grid-cols-1 gap-3"
+            style={{
+              width: `min(${mode.panelWidth ?? DEFAULT_PANEL_WIDTH}px, var(--panel-max-w, ${DEFAULT_PANEL_WIDTH}px))`
+            }}
+          >
             <AIResponse
               messages={chatMessages}
               loading={chatLoading}

@@ -54,8 +54,8 @@ export class ShortcutsHelper {
 
     // Toggling the mic must work with the overlay hidden, so reveal it first —
     // otherwise a recording starts with no visible indicator that it is running.
-    // Registration is checked here because ⌘/ is comment-toggle in most editors:
-    // if one of them already owns it the binding silently does nothing.
+    // Registration is checked below: if another app already owns the chord the
+    // binding silently does nothing.
     globalShortcut.register(GLOBAL_ACCELERATORS.RECORD, () => {
       console.log("Record shortcut pressed. Toggling the mic.")
       const mainWindow = this.appState.getMainWindow()
@@ -93,6 +93,24 @@ export class ShortcutsHelper {
         mainWindow.webContents.send("reset-view")
       }
     })
+
+    // Chat-only reset. Unlike ⌘R above, this leaves the screenshot queue, the
+    // view, and the mode alone — it exists so the model's context can be dropped
+    // mid-session without tearing down everything else. The renderer owns the
+    // transcript, so we only signal it.
+    globalShortcut.register(GLOBAL_ACCELERATORS.NEW_CHAT, () => {
+      const mainWindow = this.appState.getMainWindow()
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      if (!this.appState.isVisible()) {
+        this.appState.showMainWindow()
+      }
+      mainWindow.webContents.send("new-chat-hotkey")
+    })
+    if (!globalShortcut.isRegistered(GLOBAL_ACCELERATORS.NEW_CHAT)) {
+      console.warn(
+        `[Shortcuts] Could not register ${GLOBAL_ACCELERATORS.NEW_CHAT} for new chat — another app owns it.`
+      )
+    }
 
     // New shortcuts for moving the window
     globalShortcut.register("CommandOrControl+Left", () => {

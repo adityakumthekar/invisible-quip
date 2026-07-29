@@ -1,15 +1,17 @@
 // The accelerators were 11 literal strings inside registerGlobalShortcuts, which
 // made collisions invisible. Naming them here lets a test assert uniqueness and
-// gives the record binding one place to change if ⌘/ conflicts with an editor.
+// gives the record binding one place to change.
 export const GLOBAL_ACCELERATORS = {
   SHOW: "CommandOrControl+Shift+Space",
   SCREENSHOT: "CommandOrControl+H",
   ASK_AI: "CommandOrControl+Enter",
-  // ⌘/ was the first choice, but macOS accepts the registration (isRegistered
-  // reports true) and then never delivers the key — punctuation accelerators
-  // don't reach Electron's Carbon hotkey here. ⌘⇧M is verified to fire.
-  RECORD: "CommandOrControl+Shift+M",
+  // ⌥M: a two-key chord that macOS actually delivers. Punctuation accelerators
+  // (⌘/, ⌥.) register without error here and then silently never fire, so the
+  // record key has to be a letter.
+  RECORD: "Alt+M",
   RESET: "CommandOrControl+R",
+  // Chat-only reset, as opposed to RESET which tears down the whole workspace.
+  NEW_CHAT: "CommandOrControl+N",
   MOVE_LEFT: "CommandOrControl+Left",
   MOVE_RIGHT: "CommandOrControl+Right",
   MOVE_DOWN: "CommandOrControl+Down",

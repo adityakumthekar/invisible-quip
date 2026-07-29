@@ -4,6 +4,7 @@ import {
   Eye,
   LayoutGrid,
   LogOut,
+  MessageSquarePlus,
   Mic,
   Settings2,
   Sparkles
@@ -24,6 +25,7 @@ interface ControlBarProps {
   quickOpen: boolean
   teachingOpen: boolean
   onAskAi: () => void
+  onNewChat: () => void
   onTeachMe: () => void
   onSolve: () => void
   onToggleModels: () => void
@@ -42,6 +44,7 @@ const ControlBar: React.FC<ControlBarProps> = ({
   quickOpen,
   teachingOpen,
   onAskAi,
+  onNewChat,
   onTeachMe,
   onSolve,
   onToggleModels,
@@ -106,6 +109,18 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <span className="kbd">↵</span>
         </button>
 
+        {/* Icon only: the window is sized to this bar's content, so every text
+            label widens the overlay. ⌘N is documented in the shortcuts tooltip. */}
+        <button
+          type="button"
+          className="icon-btn no-drag"
+          onClick={onNewChat}
+          title="New chat — clears the conversation (⌘N)"
+          aria-label="New chat"
+        >
+          <MessageSquarePlus className="w-3.5 h-3.5" strokeWidth={1.75} />
+        </button>
+
         <button
           type="button"
           className={cn("icon-btn no-drag", teachingOpen && "active")}
@@ -152,8 +167,7 @@ const ControlBar: React.FC<ControlBarProps> = ({
         >
           <Mic className="w-3.5 h-3.5" strokeWidth={1.75} />
           <span>{isRecording ? "Stop" : "Record"}</span>
-          <span className="kbd">⌘</span>
-          <span className="kbd">⇧</span>
+          <span className="kbd">⌥</span>
           <span className="kbd">M</span>
         </button>
 

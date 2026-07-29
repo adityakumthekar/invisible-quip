@@ -20,7 +20,14 @@ export function computeWindowBounds(input: {
   current: { x: number; y: number }
   workArea: Rect
   widthFraction: number
-}): { width: number; height: number; x: number; y: number; maxHeight: number } {
+}): {
+  width: number
+  height: number
+  x: number
+  y: number
+  maxHeight: number
+  maxWidth: number
+} {
   const { content, current, workArea, widthFraction } = input
 
   const maxWidth = Math.floor(workArea.width * widthFraction)
@@ -35,7 +42,7 @@ export function computeWindowBounds(input: {
   const x = clamp(current.x, workArea.x, workArea.x + workArea.width - width)
   const y = clamp(current.y, workArea.y, workArea.y + workArea.height - height)
 
-  return { width, height, x, y, maxHeight }
+  return { width, height, x, y, maxHeight, maxWidth }
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -42,8 +42,9 @@ interface ElectronAPI {
   onProcessingNoScreenshots: (callback: () => void) => () => void
   onAskAiHotkey: (callback: () => void) => () => void
   onRecordHotkey: (callback: () => void) => () => void
+  onNewChatHotkey: (callback: () => void) => () => void
   onContentLimits: (
-    callback: (limits: { maxHeight: number }) => void
+    callback: (limits: { maxHeight: number; maxWidth: number }) => void
   ) => () => void
   onProblemExtracted: (callback: (data: any) => void) => () => void
   onSolutionSuccess: (callback: (data: any) => void) => () => void
@@ -235,9 +236,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
 
-  onContentLimits: (callback: (limits: { maxHeight: number }) => void) => {
-    const subscription = (_: any, limits: { maxHeight: number }) =>
-      callback(limits)
+  onNewChatHotkey: (callback: () => void) => {
+    const subscription = () => callback()
+    ipcRenderer.on("new-chat-hotkey", subscription)
+    return () => {
+      ipcRenderer.removeListener("new-chat-hotkey", subscription)
+    }
+  },
+
+  onContentLimits: (
+    callback: (limits: { maxHeight: number; maxWidth: number }) => void
+  ) => {
+    const subscription = (
+      _: any,
+      limits: { maxHeight: number; maxWidth: number }
+    ) => callback(limits)
     ipcRenderer.on("content-limits", subscription)
     return () => {
       ipcRenderer.removeListener("content-limits", subscription)

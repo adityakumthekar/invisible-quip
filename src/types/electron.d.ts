@@ -36,8 +36,9 @@ export interface ElectronAPI {
   onProcessingNoScreenshots: (callback: () => void) => () => void
   onAskAiHotkey: (callback: () => void) => () => void
   onRecordHotkey: (callback: () => void) => () => void
+  onNewChatHotkey: (callback: () => void) => () => void
   onContentLimits: (
-    callback: (limits: { maxHeight: number }) => void
+    callback: (limits: { maxHeight: number; maxWidth: number }) => void
   ) => () => void
   onProblemExtracted: (callback: (data: any) => void) => () => void
   onSolutionSuccess: (callback: (data: any) => void) => () => void

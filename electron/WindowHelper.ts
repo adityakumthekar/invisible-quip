@@ -40,6 +40,7 @@ export class WindowHelper {
   private ignoringMouseEvents: boolean = true
   /** Last height cap pushed to the renderer; only re-sent when the display changes. */
   private lastMaxHeight: number | null = null
+  private lastMaxWidth: number | null = null
   /** Active manual grip drag (see startWindowDrag). */
   private dragSession: {
     timer: NodeJS.Timeout
@@ -160,13 +161,20 @@ export class WindowHelper {
     this.currentY = next.y
     this.windowSize = { width: next.width, height: next.height }
 
-    // The renderer caps its own scroller from this, so it can't be a vh value:
-    // the viewport is the window and the window is sized from content, which
-    // would make a vh cap chase itself.
-    if (this.lastMaxHeight !== next.maxHeight) {
+    // The renderer caps its own scroller and panel width from this, so neither
+    // can be a vh/vw value: the viewport is the window and the window is sized
+    // from content, which would make a viewport-relative cap chase itself.
+    // Republish when either axis moves, so dragging to a differently-sized
+    // display re-clamps the panel.
+    if (
+      this.lastMaxHeight !== next.maxHeight ||
+      this.lastMaxWidth !== next.maxWidth
+    ) {
       this.lastMaxHeight = next.maxHeight
+      this.lastMaxWidth = next.maxWidth
       this.mainWindow.webContents.send("content-limits", {
-        maxHeight: next.maxHeight
+        maxHeight: next.maxHeight,
+        maxWidth: next.maxWidth
       })
     }
   }

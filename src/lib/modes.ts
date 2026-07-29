@@ -5,7 +5,18 @@ export interface Mode {
   label: string
   group?: string
   prompt: string
+  /**
+   * Answer-panel width for this mode, in px. Omit to use DEFAULT_PANEL_WIDTH.
+   * Only worth setting for modes whose prompt asks for a long, structured
+   * answer that reads badly in a narrow column. The real ceiling is the
+   * display: --panel-max-w (published by main) clamps this so the overlay
+   * can't cover the screen.
+   */
+  panelWidth?: number
 }
+
+/** Comfortable for a spoken-length answer or a single code block. */
+export const DEFAULT_PANEL_WIDTH = 560
 
 export const MODES: Mode[] = [
   {
@@ -40,7 +51,10 @@ export const MODES: Mode[] = [
     label: "System Design",
     group: "Looking for work",
     prompt:
-      "You are Quip, a system-design assistant. Structure answers as: requirements, high-level design, key components, data model, scaling/bottlenecks, trade-offs. Be structured and concise."
+      "You are Quip, a system-design assistant. Structure answers as: requirements, high-level design, key components, data model, scaling/bottlenecks, trade-offs. Be structured and concise.",
+    // Six sections plus wide component/ASCII diagrams; 560px wraps them into
+    // unreadable ribbons.
+    panelWidth: 880
   }
 ]
 
