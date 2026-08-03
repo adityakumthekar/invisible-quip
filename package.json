@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "main": "./dist-electron/main.js",
   "scripts": {
-    "clean": "rimraf dist dist-electron",
+    "clean": "rimraf dist dist-electron dist-remote",
     "dev": "vite",
-    "build": "npm run clean && tsc && vite build --base ./",
+    "build": "npm run clean && tsc && vite build --base ./ && npm run build:remote",
+    "build:remote": "vite build -c vite.config.remote.ts",
+    "dev:remote": "vite -c vite.config.remote.ts",
+    "apk": "bash scripts/build-apk.sh",
     "preview": "vite preview",
     "postinstall": "cross-env SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm rebuild sharp",
     "electron:dev": "tsc -p electron/tsconfig.json && cross-env NODE_ENV=development electron .",
@@ -24,6 +27,7 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "dist-remote/**/*",
       "package.json",
       "node_modules/**/*"
     ],
@@ -109,6 +113,7 @@
   "license": "Apache-2.0",
   "description": "Quip — an invisible, always-on-top desktop AI assistant.",
   "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
     "@types/color": "^4.2.0",
     "@types/diff": "^6.0.0",
     "@types/electron": "^1.4.38",
@@ -134,14 +139,18 @@
     "wait-on": "^8.0.1"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "@google/generative-ai": "^0.2.1",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-toast": "^1.2.2",
+    "@types/qrcode": "^1.5.6",
     "diff": "^7.0.0",
     "dotenv": "^16.6.1",
     "katex": "^0.18.1",
     "lucide-react": "^0.460.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.1.0",

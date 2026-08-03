@@ -3,11 +3,50 @@ import { TeachingResult } from "./teaching"
 import type { TeachingOverlayTargetEvent } from "./teachingOverlayContract"
 import type { PrivacyGateStatus, PrivacyPreflightResult } from "./privacyContract"
 import type { AutopilotUpdate } from "./autopilot"
+import type { RemoteServerInfo } from "./remoteServer"
+import type { RemoteDeviceSummary } from "./remotePairing"
 
 export interface AutopilotConsent {
   consented: boolean
   text: string
   version: number
+}
+
+/**
+ * Consent to the phone driving the mouse and keyboard directly.
+ *
+ * `consented` and `allowed` are separate on purpose: the first is a durable
+ * "I understand what this does", the second a live "and I want it on right
+ * now". The desktop kill switch drops `allowed` without discarding `consented`,
+ * so taking control back is one keystroke and handing it over again does not
+ * mean re-reading the notice.
+ */
+export interface RemoteInputConsent extends AutopilotConsent {
+  allowed: boolean
+}
+
+/** Payload of the overlay's remote indicator event. */
+export interface RemoteConnectionState {
+  count: number
+  inputEnabled: boolean
+}
+
+/** Everything the Settings → Remote tab needs in one round trip. */
+export interface RemoteState {
+  server: RemoteServerInfo
+  consent: AutopilotConsent
+  inputConsent: RemoteInputConsent
+  devices: RemoteDeviceSummary[]
+  pairingCode: { code: string; expiresAt: number } | null
+  displays: RemoteDisplayInfo[]
+}
+
+export interface RemoteDisplayInfo {
+  id: number
+  label: string
+  width: number
+  height: number
+  primary: boolean
 }
 
 export interface OllamaPullProgress {
@@ -57,7 +96,6 @@ interface ElectronAPI {
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
   analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[]) => Promise<{ transcript: string; text: string; timestamp: number }>
-  analyzeAudioFile: (path: string) => Promise<{ text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>
@@ -78,6 +116,8 @@ interface ElectronAPI {
   // Autopilot (unattended runs)
   autopilotGetConsent: () => Promise<AutopilotConsent>
   autopilotAcknowledgeConsent: () => Promise<AutopilotConsent>
+  systemAudioGetConsent: () => Promise<AutopilotConsent>
+  systemAudioAcknowledgeConsent: () => Promise<AutopilotConsent>
   autopilotStart: (
     goal: string,
     options?: { maxSteps?: number }
@@ -86,6 +126,29 @@ interface ElectronAPI {
   autopilotReject: () => Promise<{ success: true }>
   autopilotStop: () => Promise<{ success: true }>
   onAutopilotUpdate: (callback: (update: AutopilotUpdate) => void) => () => void
+
+  // Remote access (phone on the same Wi-Fi)
+  remoteGetState: () => Promise<RemoteState>
+  remoteAcknowledgeConsent: () => Promise<AutopilotConsent>
+  remoteAcknowledgeInputConsent: () => Promise<RemoteInputConsent>
+  remoteSetInputAllowed: (allowed: boolean) => Promise<RemoteInputConsent>
+  remoteStartServer: () => Promise<{
+    success: boolean
+    server?: RemoteServerInfo
+    error?: string
+  }>
+  remoteStopServer: () => Promise<{ success: true }>
+  remoteIssuePairingCode: () => Promise<{
+    code: string
+    expiresAt: number
+    url: string | null
+  }>
+  remoteRevokeDevice: (
+    deviceId: string
+  ) => Promise<{ success: boolean; devices: RemoteDeviceSummary[] }>
+  onRemoteConnectionsChanged: (
+    callback: (state: RemoteConnectionState) => void
+  ) => () => void
 
   // Local model management
   getOllamaModelCapabilities: (model: string) => Promise<{ vision: boolean }>
@@ -288,8 +351,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   moveWindowRight: () => ipcRenderer.invoke("move-window-right"),
   moveWindowUp: () => ipcRenderer.invoke("move-window-up"),
   moveWindowDown: () => ipcRenderer.invoke("move-window-down"),
-  analyzeAudioFromBase64: (data: string, mimeType: string, history: { role: "user" | "gemini"; text: string }[] = []) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType, history),
-  analyzeAudioFile: (path: string) => ipcRenderer.invoke("analyze-audio-file", path),
+  analyzeAudioFromBase64: (data: string, mimeType: string, history: { role: "user" | "gemini"; text: string }[] = [], system?: { data: string; mimeType: string }) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType, history, system),
   analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
   teachStart: (goal: string) => ipcRenderer.invoke("teach-start", goal),
   teachNext: () => ipcRenderer.invoke("teach-next"),
@@ -329,11 +391,35 @@ contextBridge.exposeInMainWorld("electronAPI", {
   autopilotGetConsent: () => ipcRenderer.invoke("autopilot-get-consent"),
   autopilotAcknowledgeConsent: () =>
     ipcRenderer.invoke("autopilot-acknowledge-consent"),
+  systemAudioGetConsent: () => ipcRenderer.invoke("system-audio-get-consent"),
+  systemAudioAcknowledgeConsent: () =>
+    ipcRenderer.invoke("system-audio-acknowledge-consent"),
   autopilotStart: (goal: string, options?: { maxSteps?: number }) =>
     ipcRenderer.invoke("autopilot-start", goal, options),
   autopilotConfirm: () => ipcRenderer.invoke("autopilot-confirm"),
   autopilotReject: () => ipcRenderer.invoke("autopilot-reject"),
   autopilotStop: () => ipcRenderer.invoke("autopilot-stop"),
+  remoteGetState: () => ipcRenderer.invoke("remote-get-state"),
+  remoteAcknowledgeConsent: () =>
+    ipcRenderer.invoke("remote-acknowledge-consent"),
+  remoteAcknowledgeInputConsent: () =>
+    ipcRenderer.invoke("remote-acknowledge-input-consent"),
+  remoteSetInputAllowed: (allowed: boolean) =>
+    ipcRenderer.invoke("remote-set-input-allowed", allowed),
+  remoteStartServer: () => ipcRenderer.invoke("remote-start-server"),
+  remoteStopServer: () => ipcRenderer.invoke("remote-stop-server"),
+  remoteIssuePairingCode: () => ipcRenderer.invoke("remote-issue-pairing-code"),
+  remoteRevokeDevice: (deviceId: string) =>
+    ipcRenderer.invoke("remote-revoke-device", deviceId),
+  onRemoteConnectionsChanged: (
+    callback: (state: RemoteConnectionState) => void
+  ) => {
+    const subscription = (_: any, state: RemoteConnectionState) => callback(state)
+    ipcRenderer.on("remote-connections-changed", subscription)
+    return () => {
+      ipcRenderer.removeListener("remote-connections-changed", subscription)
+    }
+  },
   onAutopilotUpdate: (callback: (update: AutopilotUpdate) => void) => {
     const subscription = (_: unknown, update: AutopilotUpdate) =>
       callback(update)

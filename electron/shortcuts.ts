@@ -166,8 +166,13 @@ export class ShortcutsHelper {
     // Hard kill switch. Works even when focus is in another app. Aborts in main
     // FIRST so a hidden or wedged renderer can never delay stopping a run that
     // is actively driving the mouse.
+    //
+    // It also revokes a paired phone's permission to type here. Stopping the
+    // autopilot alone would leave a remote hand still on the keyboard, which is
+    // not what anyone reaching for this shortcut means by "stop".
     globalShortcut.register("CommandOrControl+Shift+Backspace", () => {
       this.appState.abortAutopilot()
+      this.appState.disableRemoteInput()
       const mainWindow = this.appState.getMainWindow()
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("teaching-hotkey", "abort")

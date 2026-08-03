@@ -8,6 +8,7 @@ Quip is an **invisible, always-on-top desktop AI assistant** — a translucent f
 - **Smart screenshot analysis** — capture any content with a hotkey; Quip explains images, documents, presentations, or problems.
 - **Audio intelligence** — record and transcribe audio for meeting notes and quick review.
 - **Contextual chat** — ask follow-ups about whatever is on your screen, with conversation context maintained.
+- **Phone remote** — pair your phone over Wi-Fi to start an autopilot run, watch the screen, and approve or stop each step from your pocket. Off by default.
 - **Privacy-first** — use Ollama for 100% local processing, or Gemini for maximum performance. Screenshots are deleted after processing.
 - **Cross-platform** — macOS, Windows 10/11, and most Linux distributions.
 
@@ -60,6 +61,34 @@ npm run dist
 | `Cmd + Enter` | Get solution |
 | `Cmd/Ctrl + Arrow Keys` | Move window |
 | `Cmd/Ctrl + Q` | Quit |
+
+## 📱 Controlling Quip from your phone
+
+Open **Settings → Remote** on the laptop, accept the remote-control notice, and
+switch remote access on. Generate a pairing code, then scan the QR from your
+phone (or type the code at `http://<laptop-ip>:41777`). Add it to your home
+screen and it behaves like an app.
+
+From the phone you can start an autopilot run by describing a goal, see the
+laptop screen at each confirmation prompt, approve or skip individual steps, ask
+Quip questions about what's on screen, and stop a run at any time.
+
+**What it deliberately cannot do:** move the mouse or send keystrokes directly.
+A paired phone can only ask autopilot to pursue a goal, and every step still
+goes through autopilot's own risk policy and confirmation gates.
+
+**Security notes — worth reading before you turn it on:**
+
+- Remote access is **off by default** and stops when Quip quits.
+- Pairing codes expire after two minutes and work once. Each phone gets its own
+  token, revocable individually from Settings → Remote.
+- Traffic stays on your local network but **is not encrypted**. Use it on
+  networks you trust, and revoke a device you no longer have.
+- The desktop `Cmd/Ctrl+Shift+Backspace` kill switch is out of reach when you're
+  not at the machine — **Stop on the phone is the kill switch**, and it stays on
+  screen for the whole run.
+- The overlay shows an amber indicator whenever a phone is connected, so a
+  remotely-drivable machine never looks like an idle one.
 
 ## 🤖 AI Providers
 

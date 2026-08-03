@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext HTTP, but only where the laptop can actually be.
+
+  The app talks to Quip over plain HTTP on the local network, so cleartext has
+  to be permitted somewhere. `android:usesCleartextTraffic="true"` would permit
+  it everywhere, including the open internet — which this app has no reason to
+  reach at all. Scoping it to the private IPv4 ranges and localhost means a
+  redirect, a typo, or a hostile pairing payload cannot talk the app into
+  sending anything unencrypted to a public host.
+
+  If cleartext to a public address ever appears necessary, that is a bug in the
+  caller, not a gap in this file.
+-->
+<network-security-config>
+    <!-- Everything else: encrypted only, system CAs only. -->
+    <base-config cleartextTrafficPermitted="false" />
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- The Capacitor bundle itself, served from inside the APK. -->
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+
+        <!-- RFC 1918 private ranges — where a home or office LAN lives.
+             Android matches these as literal prefixes for IP-literal hosts. -->
+        <domain includeSubdomains="true">10.0.0.0/8</domain>
+        <domain includeSubdomains="true">172.16.0.0/12</domain>
+        <domain includeSubdomains="true">192.168.0.0/16</domain>
+
+        <!-- Link-local, for a phone tethered directly with no DHCP server. -->
+        <domain includeSubdomains="true">169.254.0.0/16</domain>
+    </domain-config>
+</network-security-config>

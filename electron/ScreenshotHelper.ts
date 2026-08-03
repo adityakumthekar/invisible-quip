@@ -58,7 +58,7 @@ export class ScreenshotHelper {
    * belong to — which is not always the cursor's display when Electron reports
    * an empty `display_id`. See matchCaptureSource for the matching rules.
    */
-  private async pickActiveScreenSource() {
+  private async pickActiveScreenSource(displayId?: number | null) {
     // Fail fast with an actionable message when Screen Recording is off —
     // otherwise desktopCapturer silently returns a black frame.
     if (process.platform === "darwin") {
@@ -68,9 +68,18 @@ export class ScreenshotHelper {
       }
     }
 
-    const activeDisplay = screen.getDisplayNearestPoint(
-      screen.getCursorScreenPoint()
-    )
+    // A caller may pin the capture to one display. The remote stream does,
+    // because remote clicking moves the cursor and a cursor-following capture
+    // would hop monitors mid-gesture. An id that no longer matches an attached
+    // display falls back to the cursor's, so unplugging a monitor degrades to
+    // the old behaviour instead of throwing at every frame.
+    const pinned =
+      displayId == null
+        ? null
+        : screen.getAllDisplays().find((display) => display.id === displayId) ??
+          null
+    const activeDisplay =
+      pinned ?? screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
     const thumbnailSize = {
       width: Math.ceil(activeDisplay.bounds.width * activeDisplay.scaleFactor),
       height: Math.ceil(activeDisplay.bounds.height * activeDisplay.scaleFactor)
@@ -147,6 +156,28 @@ export class ScreenshotHelper {
       throw new Error(ScreenshotHelper.SCREEN_PERMISSION_ERROR)
     }
     return png
+  }
+
+  /**
+   * Capture one named display, reporting which display the pixels came from.
+   *
+   * The remote stream needs both halves: the pin, so the picture does not
+   * follow the cursor onto another monitor, and the id, so a tap on the
+   * returned frame is resolved against the geometry that actually produced it.
+   * Pass null to fall back to the display under the cursor.
+   */
+  public async captureDisplayBuffer(
+    displayId: number | null
+  ): Promise<{ png: Buffer; displayId: number }> {
+    const { source, display } = await this.pickActiveScreenSource(displayId)
+    if (source.thumbnail.isEmpty()) {
+      throw new Error(ScreenshotHelper.SCREEN_PERMISSION_ERROR)
+    }
+    const png = source.thumbnail.toPNG()
+    if (!png || png.length === 0) {
+      throw new Error(ScreenshotHelper.SCREEN_PERMISSION_ERROR)
+    }
+    return { png, displayId: display.id }
   }
 
   /**
