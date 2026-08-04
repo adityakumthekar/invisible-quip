@@ -4,14 +4,28 @@ import { computeWindowBounds } from "./windowSizing"
 const workArea = { x: 0, y: 25, width: 1440, height: 875 }
 
 describe("computeWindowBounds", () => {
-  it("grows with the content while it fits", () => {
+  it("grows with the content while it fits, plus the rounding pad", () => {
     const { height } = computeWindowBounds({
       content: { width: 400, height: 300 },
       current: { x: 100, y: 100 },
       workArea,
       widthFraction: 0.7
     })
-    expect(height).toBe(300)
+    // 302: scrollHeight is integer-rounded, so a fractional layout under-reports
+    // by up to a pixel and the window would scroll by that pixel forever.
+    expect(height).toBe(302)
+  })
+
+  it("does not let the height pad push past the cap", () => {
+    // Content one pixel under the cap must land on the cap, not two above it.
+    const { height, maxHeight } = computeWindowBounds({
+      content: { width: 400, height: 524 },
+      current: { x: 100, y: 100 },
+      workArea,
+      widthFraction: 0.7
+    })
+    expect(maxHeight).toBe(525)
+    expect(height).toBe(525)
   })
 
   it("caps height at 60% of the work area so it never owns the screen", () => {
