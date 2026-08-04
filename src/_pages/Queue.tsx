@@ -137,9 +137,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [currentModel, setCurrentModel] = useState<{
-    provider: "ollama" | "gemini"
+    provider: "gemini" | "qwen"
     model: string
-  }>({ provider: "gemini", model: "gemini-3.5-flash" })
+  }>({ provider: "gemini", model: "gemini-3.6-flash" })
 
   const { data: screenshots = [], refetch } = useQuery<
     Array<{ path: string; preview: string }>,
@@ -668,7 +668,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     const loadCurrentModel = async () => {
       try {
         const config = await window.electronAPI.getCurrentLlmConfig()
-        setCurrentModel({ provider: config.provider, model: config.model })
+        const provider = config.provider === "qwen" ? "qwen" : "gemini"
+        setCurrentModel({ provider, model: config.model })
       } catch (error) {
         console.error("Error loading current model config:", error)
       }
@@ -764,7 +765,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }, [refetch])
 
-  const handleModelChange = (provider: "ollama" | "gemini", model: string) => {
+  const handleModelChange = (provider: "gemini" | "qwen", model: string) => {
     setCurrentModel({ provider, model })
     // A notice from the app, not an answer — "system" renders it as a centred
     // caption instead of an assistant turn.
@@ -779,9 +780,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   }
 
   const modelLabel =
-    currentModel.provider === "ollama"
+    currentModel.provider === "qwen"
       ? currentModel.model
-      : "Gemini 3.5 Flash"
+      : "Gemini 3.6 Flash"
 
   return (
     <div

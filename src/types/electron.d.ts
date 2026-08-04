@@ -82,9 +82,11 @@ export interface ElectronAPI {
 
   quitApp: () => Promise<void>
   getCurrentLlmConfig: () => Promise<{
-    provider: "ollama" | "gemini"
+    provider: "ollama" | "gemini" | "qwen"
     model: string
     isOllama: boolean
+    isQwen: boolean
+    qwenBaseUrl: string
   }>
   getAvailableOllamaModels: () => Promise<string[]>
   getOllamaModelCapabilities: (model: string) => Promise<{ vision: boolean }>
@@ -97,6 +99,11 @@ export interface ElectronAPI {
   switchToOllama: (
     model?: string,
     url?: string
+  ) => Promise<{ success: boolean; error?: string }>
+  switchToQwen: (
+    baseUrl?: string,
+    model?: string,
+    apiKey?: string
   ) => Promise<{ success: boolean; error?: string }>
   switchToGemini: (
     apiKey?: string

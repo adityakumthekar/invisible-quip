@@ -21,18 +21,37 @@ export class ProcessingHelper {
   constructor(appState: AppState) {
     this.appState = appState
     
-    // Check if user wants to use Ollama
+    // Check if user wants to use Ollama or remote Qwen (vLLM)
     const useOllama = process.env.USE_OLLAMA === "true"
+    const useQwen = process.env.USE_QWEN === "true"
     const ollamaModel = process.env.OLLAMA_MODEL // Don't set default here, let LLMHelper auto-detect
     const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434"
-    
+    const qwenBaseUrl =
+      process.env.QWEN_BASE_URL || "http://100.123.38.63:8765/v1"
+    const qwenModel = process.env.QWEN_MODEL || "qwen3-vl"
+    const qwenApiKey = process.env.QWEN_API_KEY || "EMPTY"
+
     if (useOllama) {
       console.log("[ProcessingHelper] Initializing with Ollama")
       this.llmHelper = new LLMHelper(undefined, true, ollamaModel, ollamaUrl)
+    } else if (useQwen) {
+      console.log("[ProcessingHelper] Initializing with Qwen (vLLM)")
+      this.llmHelper = new LLMHelper(
+        undefined,
+        false,
+        undefined,
+        undefined,
+        true,
+        qwenBaseUrl,
+        qwenModel,
+        qwenApiKey
+      )
     } else {
       const apiKey = process.env.GEMINI_API_KEY
       if (!apiKey) {
-        throw new Error("GEMINI_API_KEY not found in environment variables. Set GEMINI_API_KEY or enable Ollama with USE_OLLAMA=true")
+        throw new Error(
+          "GEMINI_API_KEY not found in environment variables. Set GEMINI_API_KEY, enable Ollama with USE_OLLAMA=true, or enable Qwen with USE_QWEN=true"
+        )
       }
       console.log("[ProcessingHelper] Initializing with Gemini")
       this.llmHelper = new LLMHelper(apiKey, false)

@@ -2,12 +2,10 @@ import React, { useEffect, useState } from "react"
 import {
   Cloud,
   Cpu,
-  Download,
-  Home,
   Info,
   Keyboard,
   Palette,
-  RefreshCw,
+  Server,
   Wand2
 } from "lucide-react"
 import { cn } from "../../lib/utils"
@@ -22,8 +20,10 @@ import {
 import { MODES, getModeId, setMode, type Mode } from "../../lib/modes"
 import { SHORTCUTS } from "../../lib/shortcuts"
 
+type ProviderId = "gemini" | "qwen"
+
 interface SettingsPanelProps {
-  onModelChange?: (provider: "ollama" | "gemini", model: string) => void
+  onModelChange?: (provider: ProviderId, model: string) => void
   onOpenChat?: () => void
   // The whole mode, not just its label: the shell sizes the answer panel from
   // it (see Mode.panelWidth).
@@ -32,16 +32,8 @@ interface SettingsPanelProps {
 
 type Tab = "modes" | "provider" | "appearance" | "keybinds" | "about"
 
-/**
- * Offered when no installed local model can read screenshots. Qwen3-VL is
- * GUI-tuned — it grounds interface elements to absolute coordinates, which is
- * the whole job here, and matches the pixel-space prompt the Ollama path uses.
- *
- * The 4B build (~3.3GB) rather than 8B (~6.1GB): a run is up to 25 sequential
- * vision calls, and on fanless Apple Silicon the larger model roughly doubles
- * per-step latency for a modest grounding gain.
- */
-const RECOMMENDED_VISION_MODEL = "qwen3-vl:4b"
+const DEFAULT_QWEN_BASE_URL = "http://100.123.38.63:8765/v1"
+const DEFAULT_QWEN_MODEL = "qwen3-vl"
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "modes", label: "Modes", icon: Wand2 },
@@ -58,21 +50,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 }) => {
   const [tab, setTab] = useState<Tab>("modes")
 
-  // Provider state (ported from ModelsPopover)
-  const [selectedProvider, setSelectedProvider] = useState<"ollama" | "gemini">(
-    "gemini"
-  )
-  const [availableOllamaModels, setAvailableOllamaModels] = useState<string[]>(
-    []
-  )
-  const [selectedOllamaModel, setSelectedOllamaModel] = useState("")
-  const [visionByModel, setVisionByModel] = useState<Record<string, boolean>>({})
-  const [pullProgress, setPullProgress] = useState<{
-    status: string
-    percent?: number
-  } | null>(null)
-  const [pullError, setPullError] = useState("")
-  const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434")
+  const [selectedProvider, setSelectedProvider] = useState<ProviderId>("gemini")
+  const [qwenBaseUrl, setQwenBaseUrl] = useState(DEFAULT_QWEN_BASE_URL)
+  const [qwenModel, setQwenModel] = useState(DEFAULT_QWEN_MODEL)
+  const [qwenApiKey, setQwenApiKey] = useState("EMPTY")
   const [geminiApiKey, setGeminiApiKey] = useState("")
   const [currentLabel, setCurrentLabel] = useState("")
   const [status, setStatus] = useState<"idle" | "working" | "ok" | "err">("idle")
@@ -89,8 +70,6 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   // Modes
   const [modeId, setModeId] = useState<string>(() => getModeId())
 
-  const hasVisionModel = Object.values(visionByModel).some(Boolean)
-
   useEffect(() => {
     void loadConfig()
   }, [])
@@ -98,71 +77,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const loadConfig = async () => {
     try {
       const config = await window.electronAPI.getCurrentLlmConfig()
-      setSelectedProvider(config.provider)
-      setCurrentLabel(`${config.provider} · ${config.model}`)
-      if (config.isOllama) {
-        setSelectedOllamaModel(config.model)
-        await loadOllamaModels()
+      const provider: ProviderId =
+        config.provider === "qwen" ? "qwen" : "gemini"
+      setSelectedProvider(provider)
+      setCurrentLabel(`${provider} · ${config.model}`)
+      if (config.isQwen || config.provider === "qwen") {
+        setQwenModel(config.model || DEFAULT_QWEN_MODEL)
+        if (config.qwenBaseUrl) setQwenBaseUrl(config.qwenBaseUrl)
       }
     } catch (e) {
       console.error(e)
-    }
-  }
-
-  const loadOllamaModels = async () => {
-    try {
-      const models = await window.electronAPI.getAvailableOllamaModels()
-      setAvailableOllamaModels(models)
-      if (models.length > 0 && !selectedOllamaModel) {
-        setSelectedOllamaModel(models[0])
-      }
-
-      // Teach Me and autopilot both need a model that can read screenshots, so
-      // surface that per model rather than letting a run fail later.
-      const entries = await Promise.all(
-        models.map(async (model) => {
-          try {
-            const { vision } =
-              await window.electronAPI.getOllamaModelCapabilities(model)
-            return [model, vision] as const
-          } catch {
-            return [model, false] as const
-          }
-        })
-      )
-      setVisionByModel(Object.fromEntries(entries))
-    } catch {
-      setAvailableOllamaModels([])
-      setVisionByModel({})
-    }
-  }
-
-  const installVisionModel = async () => {
-    setPullError("")
-    setPullProgress({ status: "starting", percent: 0 })
-    const unsubscribe = window.electronAPI.onOllamaPullProgress((progress) => {
-      const percent =
-        progress.total && progress.completed
-          ? Math.round((progress.completed / progress.total) * 100)
-          : undefined
-      setPullProgress({ status: progress.status, percent })
-    })
-
-    try {
-      const result = await window.electronAPI.pullOllamaModel(
-        RECOMMENDED_VISION_MODEL
-      )
-      if (!result.success) {
-        setPullError(result.error ?? "The download failed.")
-        return
-      }
-      await loadOllamaModels()
-      setSelectedOllamaModel(RECOMMENDED_VISION_MODEL)
-    } catch (error) {
-      setPullError(String((error as Error)?.message ?? error))
-    } finally {
-      unsubscribe && unsubscribe()
-      setPullProgress(null)
     }
   }
 
@@ -171,10 +95,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setStatus("working")
       setErrorMessage("")
       let result
-      if (selectedProvider === "ollama") {
-        result = await window.electronAPI.switchToOllama(
-          selectedOllamaModel,
-          ollamaUrl
+      if (selectedProvider === "qwen") {
+        result = await window.electronAPI.switchToQwen(
+          qwenBaseUrl,
+          qwenModel,
+          qwenApiKey || "EMPTY"
         )
       } else {
         result = await window.electronAPI.switchToGemini(
@@ -186,7 +111,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         setStatus("ok")
         onModelChange?.(
           selectedProvider,
-          selectedProvider === "ollama" ? selectedOllamaModel : "gemini-3.5-flash"
+          selectedProvider === "qwen" ? qwenModel : "gemini-3.6-flash"
         )
         onOpenChat?.()
       } else {
@@ -313,16 +238,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setSelectedProvider("ollama")}
+                onClick={() => setSelectedProvider("qwen")}
                 className={cn(
                   "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
-                  selectedProvider === "ollama"
+                  selectedProvider === "qwen"
                     ? "glass-action"
                     : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
                 )}
               >
-                <Home className="w-3 h-3" strokeWidth={1.75} />
-                Ollama
+                <Server className="w-3 h-3" strokeWidth={1.75} />
+                Qwen
               </button>
             </div>
 
@@ -343,91 +268,43 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               <div className="space-y-2.5">
                 <div className="space-y-1.5">
                   <label className="text-[11px] uppercase tracking-wide glass-muted">
-                    Ollama URL
+                    vLLM base URL
                   </label>
                   <input
                     type="url"
-                    value={ollamaUrl}
-                    onChange={(e) => setOllamaUrl(e.target.value)}
+                    value={qwenBaseUrl}
+                    onChange={(e) => setQwenBaseUrl(e.target.value)}
+                    placeholder={DEFAULT_QWEN_BASE_URL}
                     className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[11px] uppercase tracking-wide glass-muted">
-                      Model
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => void loadOllamaModels()}
-                      className="p-1 rounded glass-icon hover:text-glass-heading"
-                      title="Refresh"
-                    >
-                      <RefreshCw className="w-3 h-3" strokeWidth={1.75} />
-                    </button>
-                  </div>
-                  {availableOllamaModels.length > 0 ? (
-                    <select
-                      value={selectedOllamaModel}
-                      onChange={(e) => setSelectedOllamaModel(e.target.value)}
-                      className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
-                    >
-                      {availableOllamaModels.map((m) => (
-                        <option key={m} value={m} className="bg-neutral-900">
-                          {m}
-                          {visionByModel[m] ? " · sees screen" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <p className="text-[11px] glass-muted">
-                      No local models found. Start Ollama and pull a model.
-                    </p>
-                  )}
-
-                  {selectedOllamaModel &&
-                    visionByModel[selectedOllamaModel] === false && (
-                      <p className="text-[11px] glass-muted">
-                        This model can’t read screenshots, so Teach Me and
-                        autopilot won’t work with it.
-                      </p>
-                    )}
-
-                  {!hasVisionModel && !pullProgress && (
-                    <button
-                      type="button"
-                      onClick={() => void installVisionModel()}
-                      className="glass-action flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[11px]"
-                    >
-                      <Download className="w-3 h-3" strokeWidth={1.75} />
-                      Install {RECOMMENDED_VISION_MODEL}
-                    </button>
-                  )}
-
-                  {pullProgress && (
-                    <div className="space-y-1" role="status">
-                      <div className="flex items-center justify-between text-[11px] glass-muted">
-                        <span>{pullProgress.status}</span>
-                        {pullProgress.percent !== undefined && (
-                          <span className="tabular-nums">
-                            {pullProgress.percent}%
-                          </span>
-                        )}
-                      </div>
-                      <div className="h-1 w-full overflow-hidden rounded-full bg-glass-soft">
-                        <div
-                          className="h-full rounded-full bg-white/60 transition-[width]"
-                          style={{ width: `${pullProgress.percent ?? 0}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {pullError && (
-                    <p className="text-[11px] glass-text" role="alert">
-                      {pullError}
-                    </p>
-                  )}
+                  <label className="text-[11px] uppercase tracking-wide glass-muted">
+                    Model
+                  </label>
+                  <input
+                    type="text"
+                    value={qwenModel}
+                    onChange={(e) => setQwenModel(e.target.value)}
+                    placeholder={DEFAULT_QWEN_MODEL}
+                    className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] uppercase tracking-wide glass-muted">
+                    API key
+                  </label>
+                  <input
+                    type="password"
+                    value={qwenApiKey}
+                    onChange={(e) => setQwenApiKey(e.target.value)}
+                    placeholder="EMPTY"
+                    className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
+                  />
+                  <p className="text-[11px] glass-subtle leading-relaxed">
+                    Remote Qwen3-VL via OpenAI-compatible vLLM. Sees the screen
+                    for chat, Teach Me, and autopilot.
+                  </p>
                 </div>
               </div>
             )}

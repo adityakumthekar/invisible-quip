@@ -189,29 +189,244 @@ export class LLMHelper {
   private useOllama: boolean = false
   private ollamaModel: string = "llama3.2"
   private ollamaUrl: string = "http://localhost:11434"
+  private useQwen: boolean = false
+  private qwenBaseUrl: string =
+    process.env.QWEN_BASE_URL || "http://100.123.38.63:8765/v1"
+  private qwenModel: string = process.env.QWEN_MODEL || "qwen3-vl"
+  private qwenApiKey: string = process.env.QWEN_API_KEY || "EMPTY"
   // gemini-2.0-flash was shut down June 1, 2026. 3.6 Flash (GA 2026-07-21) is
   // the pick for autopilot: it scores 83% on OSWorld-Verified against 78.4% for
   // 3.5 Flash, and screen grounding is the weakest link in a run.
   // Override with GEMINI_MODEL.
   private geminiModel: string = process.env.GEMINI_MODEL || "gemini-3.6-flash"
 
-  constructor(apiKey?: string, useOllama: boolean = false, ollamaModel?: string, ollamaUrl?: string) {
+  constructor(
+    apiKey?: string,
+    useOllama: boolean = false,
+    ollamaModel?: string,
+    ollamaUrl?: string,
+    useQwen: boolean = false,
+    qwenBaseUrl?: string,
+    qwenModel?: string,
+    qwenApiKey?: string
+  ) {
     this.useOllama = useOllama
-    
+    this.useQwen = useQwen && !useOllama
+
     if (useOllama) {
       this.ollamaUrl = ollamaUrl || "http://localhost:11434"
       this.ollamaModel = ollamaModel || "gemma:latest" // Default fallback
       console.log(`[LLMHelper] Using Ollama with model: ${this.ollamaModel}`)
-      
+
       // Auto-detect and use first available model if specified model doesn't exist
       this.initializeOllamaModel()
+    } else if (this.useQwen) {
+      if (qwenBaseUrl) this.qwenBaseUrl = this.normalizeOpenAIBaseUrl(qwenBaseUrl)
+      if (qwenModel) this.qwenModel = qwenModel
+      if (qwenApiKey) this.qwenApiKey = qwenApiKey
+      console.log(
+        `[LLMHelper] Using Qwen (OpenAI-compatible) ${this.qwenModel} at ${this.qwenBaseUrl}`
+      )
     } else if (apiKey) {
       const genAI = new GoogleGenerativeAI(apiKey)
       this.model = genAI.getGenerativeModel({ model: this.geminiModel })
       console.log(`[LLMHelper] Using Google Gemini (${this.geminiModel})`)
     } else {
-      throw new Error("Either provide Gemini API key or enable Ollama mode")
+      throw new Error(
+        "Provide a Gemini API key, enable Ollama (USE_OLLAMA=true), or enable Qwen (USE_QWEN=true)"
+      )
     }
+  }
+
+  private normalizeOpenAIBaseUrl(url: string): string {
+    const trimmed = url.trim().replace(/\/+$/, "")
+    return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`
+  }
+
+  private openAIHeaders(): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${this.qwenApiKey || "EMPTY"}`
+    }
+  }
+
+  private async imageToDataUrl(
+    image: string | Buffer,
+    fullRes: boolean
+  ): Promise<string> {
+    if (fullRes) {
+      const buf =
+        typeof image === "string" ? await fs.promises.readFile(image) : image
+      return `data:image/png;base64,${buf.toString("base64")}`
+    }
+    const part = await this.toChatImagePart(image)
+    return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+  }
+
+  private toOpenAIHistory(history: ChatTurn[]): {
+    role: "user" | "assistant"
+    content: string
+  }[] {
+    return history.map((turn) => ({
+      role: turn.role === "user" ? ("user" as const) : ("assistant" as const),
+      content: turn.text
+    }))
+  }
+
+  /**
+   * OpenAI-compatible chat completions (vLLM / Qwen3-VL).
+   * `content` may be a string or multimodal parts.
+   */
+  private async callOpenAI(
+    userContent:
+      | string
+      | Array<
+          | { type: "text"; text: string }
+          | { type: "image_url"; image_url: { url: string } }
+        >,
+    options: {
+      temperature?: number
+      maxTokens?: number
+      json?: boolean
+      history?: ChatTurn[]
+      system?: string
+    } = {}
+  ): Promise<string> {
+    const messages: Array<{
+      role: "system" | "user" | "assistant"
+      content: unknown
+    }> = []
+    const system = options.system ?? this.systemPrompt
+    if (system) {
+      messages.push({ role: "system", content: system })
+    }
+    if (options.history?.length) {
+      messages.push(...this.toOpenAIHistory(options.history))
+    }
+    messages.push({ role: "user", content: userContent })
+
+    const response = await fetch(`${this.qwenBaseUrl}/chat/completions`, {
+      method: "POST",
+      headers: this.openAIHeaders(),
+      body: JSON.stringify({
+        model: this.qwenModel,
+        messages,
+        temperature: options.temperature ?? 0.4,
+        max_tokens: options.maxTokens ?? 2048,
+        ...(options.json ? { response_format: { type: "json_object" } } : {})
+      })
+    })
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "")
+      throw new Error(
+        `Qwen API error: ${response.status} ${response.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`
+      )
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string | null } }>
+    }
+    const text = data.choices?.[0]?.message?.content
+    if (typeof text !== "string") {
+      throw new Error("Qwen returned an empty response")
+    }
+    return text
+  }
+
+  private async callOpenAIStream(
+    userContent:
+      | string
+      | Array<
+          | { type: "text"; text: string }
+          | { type: "image_url"; image_url: { url: string } }
+        >,
+    onChunk: (delta: string) => void,
+    options: {
+      temperature?: number
+      maxTokens?: number
+      history?: ChatTurn[]
+      system?: string
+      signal?: AbortSignal
+    } = {}
+  ): Promise<string> {
+    const messages: Array<{
+      role: "system" | "user" | "assistant"
+      content: unknown
+    }> = []
+    const system = options.system ?? this.systemPrompt
+    if (system) {
+      messages.push({ role: "system", content: system })
+    }
+    if (options.history?.length) {
+      messages.push(...this.toOpenAIHistory(options.history))
+    }
+    messages.push({ role: "user", content: userContent })
+
+    let response: Response
+    try {
+      response = await fetch(`${this.qwenBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers: this.openAIHeaders(),
+        body: JSON.stringify({
+          model: this.qwenModel,
+          messages,
+          temperature: options.temperature ?? 0.4,
+          max_tokens: options.maxTokens ?? 2048,
+          stream: true
+        }),
+        signal: options.signal
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `Failed to connect to Qwen at ${this.qwenBaseUrl}: ${message}`
+      )
+    }
+
+    if (!response.ok || !response.body) {
+      const body = await response.text().catch(() => "")
+      throw new Error(
+        `Qwen API error: ${response.status} ${response.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`
+      )
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let text = ""
+
+    const handleLine = (line: string) => {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith("data:")) return
+      const payload = trimmed.slice(5).trim()
+      if (!payload || payload === "[DONE]") return
+      let parsed: any
+      try {
+        parsed = JSON.parse(payload)
+      } catch {
+        return
+      }
+      const delta = parsed.choices?.[0]?.delta?.content
+      if (typeof delta !== "string" || !delta) return
+      text += delta
+      onChunk(delta)
+    }
+
+    while (true) {
+      if (options.signal?.aborted) {
+        await reader.cancel().catch(() => {})
+        break
+      }
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+      for (const line of lines) handleLine(line)
+    }
+    if (buffer.trim()) handleLine(buffer)
+    return text
   }
 
   /**
@@ -693,6 +908,20 @@ export class LLMHelper {
 
   public async analyzeImageFile(imagePath: string) {
     try {
+      if (this.useQwen) {
+        const dataUrl = await this.imageToDataUrl(imagePath, false)
+        const text = await this.callOpenAI(
+          [
+            { type: "text", text: this.imageAnalysisPrompt() },
+            { type: "image_url", image_url: { url: dataUrl } }
+          ],
+          { temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature }
+        )
+        return { text, timestamp: Date.now() }
+      }
+      if (!this.model) {
+        throw new Error("No LLM provider configured")
+      }
       const imagePart = await this.toChatImagePart(imagePath);
       const result = await this.model.generateContent({
         contents: [
@@ -717,6 +946,20 @@ export class LLMHelper {
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<string> {
+    if (this.useQwen) {
+      const dataUrl = await this.imageToDataUrl(imagePath, false)
+      return this.callOpenAIStream(
+        [
+          { type: "text", text: this.imageAnalysisPrompt() },
+          { type: "image_url", image_url: { url: dataUrl } }
+        ],
+        onChunk,
+        {
+          temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+          signal
+        }
+      )
+    }
     const imagePart = await this.toChatImagePart(imagePath)
     return this.consumeGeminiStream(
       {
@@ -743,16 +986,21 @@ export class LLMHelper {
     try {
       if (this.useOllama) {
         return this.callOllama(prompt);
-      } else if (this.model) {
+      }
+      if (this.useQwen) {
+        return this.callOpenAI(prompt, {
+          temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature
+        })
+      }
+      if (this.model) {
         const result = await this.model.generateContent({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: LLMHelper.CHAT_GENERATION_CONFIG
         });
         const response = await result.response;
         return response.text();
-      } else {
-        throw new Error("No LLM provider configured");
       }
+      throw new Error("No LLM provider configured");
     } catch (error) {
       console.error("[LLMHelper] Error in chatWithGemini:", error);
       throw error;
@@ -779,6 +1027,13 @@ export class LLMHelper {
         { signal }
       )
     }
+    if (this.useQwen) {
+      return this.callOpenAIStream(prompt, onChunk, {
+        temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+        history,
+        signal
+      })
+    }
     return this.consumeGeminiStream(
       {
         contents: [
@@ -804,6 +1059,21 @@ export class LLMHelper {
       // ponytail: most Ollama models are text-only — fall back to a text reply.
       if (this.useOllama) {
         return this.callOllama(message);
+      }
+      if (this.useQwen) {
+        const dataUrls = await Promise.all(
+          images.map((i) => this.imageToDataUrl(i, false))
+        )
+        return this.callOpenAI(
+          [
+            { type: "text", text: this.screenChatPrompt(message) },
+            ...dataUrls.map(
+              (url) =>
+                ({ type: "image_url", image_url: { url } }) as const
+            )
+          ],
+          { temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature }
+        )
       }
       if (!this.model) {
         throw new Error("No LLM provider configured");
@@ -841,6 +1111,26 @@ export class LLMHelper {
         { signal }
       )
     }
+    if (this.useQwen) {
+      const dataUrls = await Promise.all(
+        images.map((i) => this.imageToDataUrl(i, false))
+      )
+      return this.callOpenAIStream(
+        [
+          { type: "text", text: this.screenChatPrompt(message) },
+          ...dataUrls.map(
+            (url) =>
+              ({ type: "image_url", image_url: { url } }) as const
+          )
+        ],
+        onChunk,
+        {
+          temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+          history,
+          signal
+        }
+      )
+    }
     const imageParts = await Promise.all(
       images.map((i) => this.toChatImagePart(i))
     )
@@ -870,6 +1160,14 @@ export class LLMHelper {
   ): Promise<TeachingStepResponse> {
     if (this.useOllama) {
       return this.generateTeachingStepWithOllama(
+        goal,
+        history,
+        screenshotPath,
+        imageSize
+      )
+    }
+    if (this.useQwen) {
+      return this.generateTeachingStepWithQwen(
         goal,
         history,
         screenshotPath,
@@ -969,8 +1267,48 @@ export class LLMHelper {
     )
   }
 
+  private async generateTeachingStepWithQwen(
+    goal: string,
+    history: string[],
+    screenshotPath: string,
+    imageSize: { width: number; height: number }
+  ): Promise<TeachingStepResponse> {
+    const dataUrl = await this.imageToDataUrl(screenshotPath, true)
+    const raw = await this.callOpenAI(
+      [
+        {
+          type: "text",
+          text: buildTeachingPrompt(goal, history, imageSize, "pixels")
+        },
+        { type: "image_url", image_url: { url: dataUrl } }
+      ],
+      {
+        temperature: 0,
+        maxTokens: Number(process.env.TEACHING_MAX_OUTPUT_TOKENS) || 8192,
+        json: true,
+        system: ""
+      }
+    )
+
+    if (!raw.trim()) {
+      throw new Error(
+        `Qwen model "${this.qwenModel}" returned an empty teaching response.`
+      )
+    }
+
+    return normalizeTeachingStep(
+      parseTeachingModelText(raw),
+      imageSize,
+      "pixels"
+    )
+  }
+
   public isUsingOllama(): boolean {
     return this.useOllama;
+  }
+
+  public isUsingQwen(): boolean {
+    return this.useQwen
   }
 
   public async getOllamaModels(): Promise<string[]> {
@@ -988,16 +1326,25 @@ export class LLMHelper {
     }
   }
 
-  public getCurrentProvider(): "ollama" | "gemini" {
-    return this.useOllama ? "ollama" : "gemini";
+  public getCurrentProvider(): "ollama" | "gemini" | "qwen" {
+    if (this.useOllama) return "ollama"
+    if (this.useQwen) return "qwen"
+    return "gemini"
   }
 
   public getCurrentModel(): string {
-    return this.useOllama ? this.ollamaModel : this.geminiModel;
+    if (this.useOllama) return this.ollamaModel
+    if (this.useQwen) return this.qwenModel
+    return this.geminiModel
+  }
+
+  public getQwenBaseUrl(): string {
+    return this.qwenBaseUrl
   }
 
   public async switchToOllama(model?: string, url?: string): Promise<void> {
     this.useOllama = true;
+    this.useQwen = false
     if (url) this.ollamaUrl = url;
     
     if (model) {
@@ -1008,6 +1355,21 @@ export class LLMHelper {
     }
     
     console.log(`[LLMHelper] Switched to Ollama: ${this.ollamaModel} at ${this.ollamaUrl}`);
+  }
+
+  public async switchToQwen(
+    baseUrl?: string,
+    model?: string,
+    apiKey?: string
+  ): Promise<void> {
+    this.useOllama = false
+    this.useQwen = true
+    if (baseUrl) this.qwenBaseUrl = this.normalizeOpenAIBaseUrl(baseUrl)
+    if (model) this.qwenModel = model
+    if (apiKey) this.qwenApiKey = apiKey
+    console.log(
+      `[LLMHelper] Switched to Qwen: ${this.qwenModel} at ${this.qwenBaseUrl}`
+    )
   }
 
   public async switchToGemini(apiKey?: string): Promise<void> {
@@ -1021,6 +1383,7 @@ export class LLMHelper {
     }
     
     this.useOllama = false;
+    this.useQwen = false
     console.log(`[LLMHelper] Switched to Gemini (${this.geminiModel})`);
   }
 
@@ -1034,20 +1397,31 @@ export class LLMHelper {
         // Test with a simple prompt
         await this.callOllama("Hello");
         return { success: true };
-      } else {
-        if (!this.model) {
-          return { success: false, error: "No Gemini model configured" };
-        }
-        // Test with a simple prompt
-        const result = await this.model.generateContent("Hello");
-        const response = await result.response;
-        const text = response.text(); // Ensure the response is valid
-        if (text) {
-          return { success: true };
-        } else {
-          return { success: false, error: "Empty response from Gemini" };
-        }
       }
+      if (this.useQwen) {
+        const modelsRes = await fetch(`${this.qwenBaseUrl}/models`, {
+          headers: this.openAIHeaders()
+        })
+        if (!modelsRes.ok) {
+          return {
+            success: false,
+            error: `Qwen not available at ${this.qwenBaseUrl} (${modelsRes.status})`
+          }
+        }
+        await this.callOpenAI("Hello", { temperature: 0, maxTokens: 16 })
+        return { success: true }
+      }
+      if (!this.model) {
+        return { success: false, error: "No Gemini model configured" };
+      }
+      // Test with a simple prompt
+      const result = await this.model.generateContent("Hello");
+      const response = await result.response;
+      const text = response.text(); // Ensure the response is valid
+      if (text) {
+        return { success: true };
+      }
+      return { success: false, error: "Empty response from Gemini" };
     } catch (error) {
       return {
         success: false,

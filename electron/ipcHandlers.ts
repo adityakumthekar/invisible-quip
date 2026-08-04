@@ -124,9 +124,7 @@ export function initializeIpcHandlers(appState: AppState): void {
       stop: () => teachingSession.stop()
     },
     getProvider: (): AutopilotProvider =>
-      appState.processingHelper.getLLMHelper().isUsingOllama()
-        ? "ollama"
-        : "gemini",
+      appState.processingHelper.getLLMHelper().getCurrentProvider(),
     showTarget: (step) => appState.applyTeachingResult(step),
     clearTarget: () => appState.clearTeachingOverlay(),
     emit: (update: AutopilotUpdate) => {
@@ -542,9 +540,7 @@ export function initializeIpcHandlers(appState: AppState): void {
 
       const provider: AutopilotProvider = appState.processingHelper
         .getLLMHelper()
-        .isUsingOllama()
-        ? "ollama"
-        : "gemini"
+        .getCurrentProvider()
 
       void autopilot.start(goal, provider, options ?? {}).catch((error) => {
         console.error("Autopilot run failed to start:", error)
@@ -635,7 +631,9 @@ export function initializeIpcHandlers(appState: AppState): void {
       return {
         provider: llmHelper.getCurrentProvider(),
         model: llmHelper.getCurrentModel(),
-        isOllama: llmHelper.isUsingOllama()
+        isOllama: llmHelper.isUsingOllama(),
+        isQwen: llmHelper.isUsingQwen(),
+        qwenBaseUrl: llmHelper.getQwenBaseUrl()
       };
     } catch (error: any) {
       console.error("Error getting current LLM config:", error);
@@ -664,6 +662,20 @@ export function initializeIpcHandlers(appState: AppState): void {
       return { success: false, error: error.message };
     }
   });
+
+  ipcMain.handle(
+    "switch-to-qwen",
+    async (_, baseUrl?: string, model?: string, apiKey?: string) => {
+      try {
+        const llmHelper = appState.processingHelper.getLLMHelper()
+        await llmHelper.switchToQwen(baseUrl, model, apiKey)
+        return { success: true }
+      } catch (error: any) {
+        console.error("Error switching to Qwen:", error)
+        return { success: false, error: error.message }
+      }
+    }
+  )
 
   ipcMain.handle("switch-to-gemini", async (_, apiKey?: string) => {
     try {

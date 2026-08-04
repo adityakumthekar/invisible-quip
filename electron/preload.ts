@@ -99,9 +99,20 @@ interface ElectronAPI {
   quitApp: () => Promise<void>
   
   // LLM Model Management
-  getCurrentLlmConfig: () => Promise<{ provider: "ollama" | "gemini"; model: string; isOllama: boolean }>
+  getCurrentLlmConfig: () => Promise<{
+    provider: "ollama" | "gemini" | "qwen"
+    model: string
+    isOllama: boolean
+    isQwen: boolean
+    qwenBaseUrl: string
+  }>
   getAvailableOllamaModels: () => Promise<string[]>
   switchToOllama: (model?: string, url?: string) => Promise<{ success: boolean; error?: string }>
+  switchToQwen: (
+    baseUrl?: string,
+    model?: string,
+    apiKey?: string
+  ) => Promise<{ success: boolean; error?: string }>
   switchToGemini: (apiKey?: string) => Promise<{ success: boolean; error?: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   
@@ -361,6 +372,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   switchToOllama: (model?: string, url?: string) => ipcRenderer.invoke("switch-to-ollama", model, url),
+  switchToQwen: (baseUrl?: string, model?: string, apiKey?: string) =>
+    ipcRenderer.invoke("switch-to-qwen", baseUrl, model, apiKey),
   switchToGemini: (apiKey?: string) => ipcRenderer.invoke("switch-to-gemini", apiKey),
   testLlmConnection: () => ipcRenderer.invoke("test-llm-connection"),
   

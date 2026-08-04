@@ -15,7 +15,7 @@ import {
   gateForCategory
 } from "./sensitiveApps"
 
-export type AutopilotProvider = "gemini" | "ollama"
+export type AutopilotProvider = "gemini" | "ollama" | "qwen"
 
 /**
  * Words that mark an action as hard or impossible to undo. Matched on word
@@ -202,7 +202,7 @@ export function classifyStepRisk(
   }
 
   if (
-    context.provider === "ollama" &&
+    (context.provider === "ollama" || context.provider === "qwen") &&
     !NAVIGATION_ACTIONS.includes(step.action)
   ) {
     reasons.push(
