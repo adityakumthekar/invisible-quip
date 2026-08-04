@@ -278,7 +278,18 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         ))}
       </div>
 
-      <div className="pt-3 space-y-3">
+      {/*
+        The panel scrolls itself. Without this the document is the only
+        scroller, and the control bar is in it — a tall tab (Provider, Audio)
+        pushes past the 60% window height cap in electron/windowSizing.ts and
+        the bar scrolls away with the settings. Same cap the chat scroller
+        reads, for the same reason it can't use vh: the viewport is the window,
+        and the window is sized from this content.
+      */}
+      <div
+        className="pt-3 space-y-3 overflow-y-auto"
+        style={{ maxHeight: "var(--chat-max-h, 460px)" }}
+      >
         {tab === "modes" && (
           <>
             <p className="text-[11px] uppercase tracking-wide glass-muted">
