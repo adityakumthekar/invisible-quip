@@ -102,6 +102,8 @@ export interface ElectronAPI {
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
   analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[], system?: { data: string; mimeType: string }) => Promise<{ transcript: string; turns: { speaker: "you" | "them"; text: string }[]; text: string; timestamp: number }>
+  /** Live Listen stage one. Transcript only — the answer rides the chat stream. */
+  transcribeAudio: (data: string, mimeType: string) => Promise<{ text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>

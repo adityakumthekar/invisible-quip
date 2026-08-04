@@ -16,9 +16,14 @@ export const HISTORY_MAX_TURNS = 20
  *
  * Sized for a full interview rather than a couple of follow-ups: at 6000 the
  * window held 2-4 exchanges, so a problem stated at minute 5 was gone by minute
- * 25. 16000 is ~4k tokens — still a rounding error against the model's window.
+ * 25.
+ *
+ * Raised again for Live Listen. An exchange runs 1000-1800 characters, so 16000
+ * held 10-16 of them — fine when the user presses record per question, short of
+ * a 45-minute session once questions arrive on their own. 32000 is ~8k tokens
+ * against a 1M window; the binding cost is latency, not the model.
  */
-export const HISTORY_MAX_CHARS = 16000
+export const HISTORY_MAX_CHARS = 32000
 
 /**
  * Ollama takes one prompt string and `callOllamaStream` sets no `num_ctx`, so a

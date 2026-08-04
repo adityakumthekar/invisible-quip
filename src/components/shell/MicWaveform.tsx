@@ -25,8 +25,14 @@ const formatTime = (s: number) => {
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
 }
 
-// Live level bars driven by a Web Audio AnalyserNode — no viz library.
-const LevelBars: React.FC<{
+/**
+ * Live level bars driven by a Web Audio AnalyserNode — no viz library.
+ *
+ * Exported because Live Listen needs the same meter and the same
+ * not-routed detection, but none of the rest of this component: there is no mic
+ * to mute and no clip to time.
+ */
+export const LevelBars: React.FC<{
   stream: MediaStream
   width: number
   dimmed?: boolean

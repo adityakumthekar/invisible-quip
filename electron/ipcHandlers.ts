@@ -848,6 +848,17 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
+  // Live Listen's stage one. Transcript only — the answer goes out over the
+  // ordinary streaming chat channel, so nothing about answering lives here.
+  ipcMain.handle("transcribe-audio", async (event, data: string, mimeType: string) => {
+    try {
+      return await appState.processingHelper.getLLMHelper().transcribeAudio(data, mimeType)
+    } catch (error: any) {
+      console.error("Error in transcribe-audio handler:", error)
+      throw error
+    }
+  })
+
   // IPC handler for analyzing image from file path
   ipcMain.handle("analyze-image-file", async (event, path: string) => {
     try {

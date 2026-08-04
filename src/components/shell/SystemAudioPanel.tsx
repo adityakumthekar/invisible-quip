@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react"
-import { AlertTriangle, Headphones } from "lucide-react"
+import { AlertTriangle, Ear, Headphones } from "lucide-react"
 import { cn } from "../../lib/utils"
 import { createLevelMonitor } from "../../lib/audioLevel"
 import {
@@ -199,6 +199,33 @@ const SystemAudioPanel: React.FC = () => {
             {test.message}
           </span>
         )}
+      </div>
+
+      <div className="flex items-start gap-2 border-t border-glass pt-3">
+        <Ear
+          className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon"
+          strokeWidth={1.75}
+        />
+        <div className="space-y-1 text-[11px] glass-muted leading-relaxed">
+          <p className="glass-text">
+            Live listening — the <span className="glass-heading">Live</span>{" "}
+            button on the bar
+          </p>
+          <p>
+            Captures this call continuously and answers each question on its own,
+            about two seconds after the other person stops talking. Your
+            microphone is not opened; only their side is captured. ⌥M answers
+            whatever they have said so far without waiting.
+          </p>
+          {/* The one thing about this feature that is visible outside this app.
+              Better said here than discovered mid-call. */}
+          <p>
+            While Live is on, macOS shows the orange microphone dot in the menu
+            bar — a loopback device is a microphone as far as the system is
+            concerned. It stays lit until you switch Live off, and it is visible
+            to others if you share your whole screen.
+          </p>
+        </div>
       </div>
 
       <div className="flex items-start gap-2 border-t border-glass pt-3">

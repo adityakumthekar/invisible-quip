@@ -95,7 +95,8 @@ interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
-  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[]) => Promise<{ transcript: string; text: string; timestamp: number }>
+  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[], system?: { data: string; mimeType: string }) => Promise<{ transcript: string; turns: { speaker: "you" | "them"; text: string }[]; text: string; timestamp: number }>
+  transcribeAudio: (data: string, mimeType: string) => Promise<{ text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>
@@ -352,6 +353,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   moveWindowUp: () => ipcRenderer.invoke("move-window-up"),
   moveWindowDown: () => ipcRenderer.invoke("move-window-down"),
   analyzeAudioFromBase64: (data: string, mimeType: string, history: { role: "user" | "gemini"; text: string }[] = [], system?: { data: string; mimeType: string }) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType, history, system),
+  transcribeAudio: (data: string, mimeType: string) => ipcRenderer.invoke("transcribe-audio", data, mimeType),
   analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
   teachStart: (goal: string) => ipcRenderer.invoke("teach-start", goal),
   teachNext: () => ipcRenderer.invoke("teach-next"),
