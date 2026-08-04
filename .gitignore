@@ -42,6 +42,19 @@ build/Release
 node_modules/
 jspm_packages/
 dist-electron/
+dist-remote/
+
+# Capacitor / Android build output. The android/ project itself is committed —
+# it holds the manifest and network security config, which are source — but
+# everything Gradle generates is not.
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
 dist/
 
 # Snowpack dependency directory (https://snowpack.dev/)

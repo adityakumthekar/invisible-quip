@@ -11,6 +11,13 @@ export interface ChatMessage {
   at: number
   /** Clip length, voice turns only. */
   durationSec?: number
+  /**
+   * Which voice a turn came from when system audio is being captured too.
+   * `role` stays "user" for both — it means "not the assistant", and the
+   * provider contract has no third side. Undefined means "you", so every
+   * pre-existing turn keeps its meaning.
+   */
+  speaker?: "you" | "them"
 }
 
 let counter = 0
@@ -21,6 +28,7 @@ export function createMessage(init: {
   source: ChatSource
   durationSec?: number
   at?: number
+  speaker?: ChatMessage["speaker"]
 }): ChatMessage {
   counter += 1
   return {
@@ -29,7 +37,8 @@ export function createMessage(init: {
     role: init.role,
     text: init.text,
     source: init.source,
-    durationSec: init.durationSec
+    durationSec: init.durationSec,
+    speaker: init.speaker
   }
 }
 
@@ -45,8 +54,29 @@ export function startsExchange(
 ): boolean {
   if (!prev) return false
   if (curr.source === "system") return true
-  if (curr.role === "user") return true
+  // One two-speaker clip lands as several user turns. They are one question,
+  // so no rule goes between them — but a voice turn after a typed one still
+  // opens its own exchange, which is why this is narrowed to voice-on-voice.
+  if (curr.role === "user")
+    return !(
+      prev.role === "user" &&
+      prev.source === "voice" &&
+      curr.source === "voice"
+    )
   return prev.role === "gemini"
+}
+
+/**
+ * Index of the message that opens the newest exchange — the scroll anchor the
+ * answer panel pins to the top. Element 0 opens the first exchange by
+ * definition; startsExchange says otherwise only because it has no predecessor
+ * to compare against.
+ */
+export function lastExchangeStart(messages: ChatMessage[]): number {
+  for (let i = messages.length - 1; i > 0; i--) {
+    if (startsExchange(messages[i - 1], messages[i])) return i
+  }
+  return 0
 }
 
 /** A turn as it goes over the wire — the model has no use for ids or clocks. */
@@ -62,9 +92,40 @@ export interface ChatTurn {
  * an empty part in the request, which the model rejects.
  */
 export function toHistory(messages: ChatMessage[]): ChatTurn[] {
-  return messages
-    .filter((m) => m.source !== "system" && m.text.trim().length > 0)
-    .map((m) => ({ role: m.role, text: m.text }))
+  const kept = messages.filter(
+    (m) => m.source !== "system" && m.text.trim().length > 0
+  )
+
+  const turns: ChatTurn[] = []
+  for (let i = 0; i < kept.length; ) {
+    if (kept[i].role !== "user") {
+      turns.push({ role: kept[i].role, text: kept[i].text })
+      i += 1
+      continue
+    }
+    // A run of consecutive user turns is one two-speaker clip, or just
+    // unrelated turns that happen to be adjacent.
+    let end = i
+    while (end < kept.length && kept[end].role === "user") end += 1
+    const run = kept.slice(i, end)
+    if (run.some((m) => m.speaker === "them")) {
+      // Collapsed into one turn: two consecutive user `contents` is not a shape
+      // worth relying on, and the labels are what carry the attribution.
+      turns.push({
+        role: "user",
+        text: run
+          .map(
+            (m) => `${m.speaker === "them" ? "Interviewer" : "Me"}: ${m.text}`
+          )
+          .join("\n")
+      })
+    } else {
+      // Byte-identical to what typed and mic-only sessions have always sent.
+      for (const m of run) turns.push({ role: m.role, text: m.text })
+    }
+    i = end
+  }
+  return turns
 }
 
 export function formatDuration(totalSeconds: number): string {

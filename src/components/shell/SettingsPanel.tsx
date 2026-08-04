@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import {
   Cloud,
   Cpu,
@@ -8,6 +8,9 @@ import {
   Keyboard,
   Palette,
   RefreshCw,
+  Headphones,
+  Smartphone,
+  User,
   Wand2
 } from "lucide-react"
 import { cn } from "../../lib/utils"
@@ -21,6 +24,9 @@ import {
 } from "../../lib/glassTheme"
 import { MODES, getModeId, setMode, type Mode } from "../../lib/modes"
 import { SHORTCUTS } from "../../lib/shortcuts"
+import { PROFILE_MAX_CHARS, getProfile, setProfile } from "../../lib/userProfile"
+import RemotePanel from "./RemotePanel"
+import SystemAudioPanel from "./SystemAudioPanel"
 
 interface SettingsPanelProps {
   onModelChange?: (provider: "ollama" | "gemini", model: string) => void
@@ -30,7 +36,15 @@ interface SettingsPanelProps {
   onModeChange?: (mode: Mode) => void
 }
 
-type Tab = "modes" | "provider" | "appearance" | "keybinds" | "about"
+type Tab =
+  | "modes"
+  | "profile"
+  | "provider"
+  | "remote"
+  | "audio"
+  | "appearance"
+  | "keybinds"
+  | "about"
 
 /**
  * Offered when no installed local model can read screenshots. Qwen3-VL is
@@ -45,7 +59,10 @@ const RECOMMENDED_VISION_MODEL = "qwen3-vl:4b"
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "modes", label: "Modes", icon: Wand2 },
+  { id: "profile", label: "Profile", icon: User },
   { id: "provider", label: "Provider", icon: Cpu },
+  { id: "remote", label: "Remote", icon: Smartphone },
+  { id: "audio", label: "Audio", icon: Headphones },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "keybinds", label: "Keybinds", icon: Keyboard },
   { id: "about", label: "About", icon: Info }
@@ -88,6 +105,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   // Modes
   const [modeId, setModeId] = useState<string>(() => getModeId())
+
+  // Profile
+  const [profile, setProfileText] = useState<string>(() => getProfile())
+  const profileTimer = useRef<ReturnType<typeof setTimeout>>()
 
   const hasVisionModel = Object.values(visionByModel).some(Boolean)
 
@@ -211,6 +232,18 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     }
   }
 
+  useEffect(() => () => clearTimeout(profileTimer.current), [])
+
+  // No Apply button: the Modes tab already applies on click, and a profile you
+  // forgot to save is a profile the model never sees. Debounced so a paragraph
+  // of typing isn't one IPC round-trip per keystroke.
+  const editProfile = (text: string) => {
+    const clamped = text.slice(0, PROFILE_MAX_CHARS)
+    setProfileText(clamped)
+    clearTimeout(profileTimer.current)
+    profileTimer.current = setTimeout(() => setProfile(clamped), 400)
+  }
+
   const chooseMode = (id: string) => {
     const mode = setMode(id)
     setModeId(mode.id)
@@ -277,6 +310,30 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             <p className="text-[11px] glass-subtle leading-relaxed">
               A mode changes how the assistant responds. It applies to your next
               message.
+            </p>
+          </>
+        )}
+
+        {tab === "profile" && (
+          <>
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] uppercase tracking-wide glass-muted">
+                About you
+              </p>
+              <span className="text-[11px] glass-subtle tabular-nums">
+                {profile.length}/{PROFILE_MAX_CHARS}
+              </span>
+            </div>
+            <textarea
+              rows={5}
+              value={profile}
+              onChange={(e) => editProfile(e.target.value)}
+              placeholder="Senior backend engineer, 7 yrs. Go, Postgres, Kafka, k8s on AWS. Interviewing at Stripe for payments infra."
+              className="glass-control w-full resize-none rounded-lg px-3 py-2 text-[12px] leading-[1.5]"
+            />
+            <p className="text-[11px] glass-subtle leading-relaxed">
+              Sent with every question so answers land at your level and in your
+              stack. Saves as you type.
             </p>
           </>
         )}
@@ -545,6 +602,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             ))}
           </div>
         )}
+
+        {tab === "remote" && <RemotePanel />}
+
+        {tab === "audio" && <SystemAudioPanel />}
 
         {tab === "about" && (
           <div className="space-y-2 text-[11px] glass-muted">

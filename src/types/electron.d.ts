@@ -9,6 +9,58 @@ export interface AutopilotConsent {
   version: number
 }
 
+export interface RemoteServerInfo {
+  running: boolean
+  port: number | null
+  /** The LAN URL to put in the QR code, or null when not running. */
+  url: string | null
+  connectedDevices: number
+}
+
+export interface RemoteDeviceSummary {
+  id: string
+  name: string
+  pairedAt: string
+  lastSeenAt: string | null
+}
+
+/**
+ * Consent to the phone driving the mouse and keyboard directly.
+ *
+ * `consented` and `allowed` are separate on purpose: the first is a durable
+ * "I understand what this does", the second a live "and I want it on right
+ * now". The desktop kill switch drops `allowed` without discarding `consented`,
+ * so taking control back is one keystroke and handing it over again does not
+ * mean re-reading the notice.
+ */
+export interface RemoteInputConsent extends AutopilotConsent {
+  allowed: boolean
+}
+
+export interface RemoteDisplay {
+  id: number
+  label: string
+  width: number
+  height: number
+  primary: boolean
+}
+
+/** Everything the Settings -> Remote tab needs in one round trip. */
+export interface RemoteState {
+  server: RemoteServerInfo
+  consent: AutopilotConsent
+  inputConsent: RemoteInputConsent
+  devices: RemoteDeviceSummary[]
+  pairingCode: { code: string; expiresAt: number } | null
+  displays: RemoteDisplay[]
+}
+
+/** Payload of the overlay's remote indicator event. */
+export interface RemoteConnectionState {
+  count: number
+  inputEnabled: boolean
+}
+
 export interface OllamaPullProgress {
   model: string
   status: string
@@ -49,8 +101,7 @@ export interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
-  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[]) => Promise<{ transcript: string; text: string; timestamp: number }>
-  analyzeAudioFile: (path: string) => Promise<{ text: string; timestamp: number }>
+  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[], system?: { data: string; mimeType: string }) => Promise<{ transcript: string; turns: { speaker: "you" | "them"; text: string }[]; text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>
@@ -71,6 +122,8 @@ export interface ElectronAPI {
   // Autopilot (unattended runs)
   autopilotGetConsent: () => Promise<AutopilotConsent>
   autopilotAcknowledgeConsent: () => Promise<AutopilotConsent>
+  systemAudioGetConsent: () => Promise<AutopilotConsent>
+  systemAudioAcknowledgeConsent: () => Promise<AutopilotConsent>
   autopilotStart: (
     goal: string,
     options?: { maxSteps?: number }
@@ -79,6 +132,29 @@ export interface ElectronAPI {
   autopilotReject: () => Promise<{ success: true }>
   autopilotStop: () => Promise<{ success: true }>
   onAutopilotUpdate: (callback: (update: AutopilotUpdate) => void) => () => void
+
+  // Remote access (phone on the same Wi-Fi)
+  remoteGetState: () => Promise<RemoteState>
+  remoteAcknowledgeConsent: () => Promise<AutopilotConsent>
+  remoteAcknowledgeInputConsent: () => Promise<RemoteInputConsent>
+  remoteSetInputAllowed: (allowed: boolean) => Promise<RemoteInputConsent>
+  remoteStartServer: () => Promise<{
+    success: boolean
+    server?: RemoteServerInfo
+    error?: string
+  }>
+  remoteStopServer: () => Promise<{ success: true }>
+  remoteIssuePairingCode: () => Promise<{
+    code: string
+    expiresAt: number
+    url: string | null
+  }>
+  remoteRevokeDevice: (
+    deviceId: string
+  ) => Promise<{ success: boolean; devices: RemoteDeviceSummary[] }>
+  onRemoteConnectionsChanged: (
+    callback: (state: RemoteConnectionState) => void
+  ) => () => void
 
   quitApp: () => Promise<void>
   getCurrentLlmConfig: () => Promise<{

@@ -8,6 +8,7 @@ import {
   MessageSquarePlus,
   Mic,
   Settings2,
+  Smartphone,
   Sparkles
 } from "lucide-react"
 import { cn } from "../../lib/utils"
@@ -21,16 +22,35 @@ import {
 import MicWaveform from "./MicWaveform"
 import ShortcutsTooltip from "./ShortcutsTooltip"
 
+/**
+ * "Connected" and "can type here" are very different facts about this machine,
+ * and the indicator is the only place either is visible while the overlay is
+ * collapsed. Saying "remote control is live" for a phone that can only watch
+ * would cry wolf; saying "connected" for one that can type would under-report
+ * the thing that actually matters.
+ */
+function remoteIndicatorLabel(count: number, inputEnabled: boolean): string {
+  const devices = `${count} phone${count === 1 ? "" : "s"} connected`
+  return inputEnabled
+    ? `${devices} — can control this screen`
+    : `${devices} — watching only`
+}
+
 interface ControlBarProps {
   screenshots: Array<{ path: string; preview: string }>
   isRecording: boolean
   recordingSeconds?: number
   micStream?: MediaStream | null
+  systemStream?: MediaStream | null
   panelsOpen: boolean
   modelsOpen: boolean
   quickOpen: boolean
   teachingOpen: boolean
   collapsed: boolean
+  /** Phones currently attached to the remote server; 0 hides the indicator. */
+  remoteConnections: number
+  /** The phone may drive the mouse and keyboard, not merely watch. */
+  remoteInputEnabled: boolean
   /** Non-null disables the collapse control and explains why in its tooltip. */
   collapseDisabledReason?: string | null
   onToggleCollapsed: () => void
@@ -46,9 +66,12 @@ interface ControlBarProps {
 
 const ControlBar: React.FC<ControlBarProps> = ({
   screenshots,
+  remoteConnections,
+  remoteInputEnabled,
   isRecording,
   recordingSeconds = 0,
   micStream,
+  systemStream,
   panelsOpen,
   modelsOpen,
   quickOpen,
@@ -134,6 +157,17 @@ const ControlBar: React.FC<ControlBarProps> = ({
         >
           <Sparkles className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
+        {/* Even collapsed, a machine someone can drive from a phone must not
+            look identical to one nobody can. */}
+        {remoteConnections > 0 && (
+          <span
+            className="remote-dot"
+            data-input={remoteInputEnabled ? "on" : "off"}
+            role="status"
+            aria-label={remoteIndicatorLabel(remoteConnections, remoteInputEnabled)}
+            title={remoteIndicatorLabel(remoteConnections, remoteInputEnabled)}
+          />
+        )}
       </div>
     )
   }
@@ -156,8 +190,24 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <span className="drag-grip-dots" />
         </div>
 
+        {remoteConnections > 0 && (
+          <span
+            className="remote-indicator no-drag"
+            data-input={remoteInputEnabled ? "on" : "off"}
+            role="status"
+            aria-label={remoteIndicatorLabel(remoteConnections, remoteInputEnabled)}
+            title={remoteIndicatorLabel(remoteConnections, remoteInputEnabled)}
+          >
+            <Smartphone className="w-3.5 h-3.5" strokeWidth={1.75} />
+          </span>
+        )}
+
         {isRecording && micStream && (
-          <MicWaveform stream={micStream} seconds={recordingSeconds} />
+          <MicWaveform
+            stream={micStream}
+            seconds={recordingSeconds}
+            systemStream={systemStream}
+          />
         )}
 
         <button

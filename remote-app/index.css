@@ -1,0 +1,503 @@
+/* Plain CSS rather than Tailwind: the phone client is a separate bundle with a
+   handful of screens, and wiring it into the overlay's tailwind.config content
+   globs would couple two builds that have nothing else in common.
+
+   Dark-only by design. This is looked at in the dark, next to a laptop, and a
+   light flash while approving an action is worse than a fixed theme. */
+
+:root {
+  color-scheme: dark;
+  --bg: #0d0f13;
+  --surface: #171a20;
+  --surface-raised: #1f232b;
+  --border: rgba(255, 255, 255, 0.1);
+  --text: #f2f4f8;
+  --muted: rgba(226, 232, 240, 0.62);
+  --accent: #5b9dff;
+  --danger: #ff5f56;
+  --danger-ink: #2a0d0b;
+  --ok: #43c17a;
+  --warn: #f0b429;
+  /* Nothing may sit under the home indicator — least of all Stop. */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px; /* iOS zooms the page if an input is under 16px. */
+  line-height: 1.45;
+  overscroll-behavior-y: none;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding-top: var(--safe-top);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.conn::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.conn[data-state="live"]::before {
+  background: var(--ok);
+}
+
+.conn[data-state="down"]::before {
+  background: var(--danger);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs button {
+  flex: 1;
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.tabs button[aria-selected="true"] {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.panel {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+input,
+textarea {
+  width: 100%;
+  min-height: 46px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  resize: none;
+}
+
+input:focus,
+textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* 46px minimum on every control: this is operated one-handed, and a mis-tap
+   on Approve actuates something on a screen the user cannot see. */
+button {
+  min-height: 46px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+}
+
+button:disabled {
+  opacity: 0.4;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #06121f;
+  font-weight: 600;
+}
+
+button.danger {
+  background: var(--danger);
+  border-color: transparent;
+  color: var(--danger-ink);
+  font-weight: 700;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+}
+
+.row > * {
+  flex: 1;
+}
+
+.phase {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.phase strong {
+  font-size: 15px;
+}
+
+.phase span {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.instruction {
+  margin: 10px 0 0;
+  font-size: 15px;
+}
+
+.pending {
+  border: 1px solid var(--warn);
+  border-radius: 12px;
+  padding: 12px;
+  margin-top: 12px;
+  background: rgba(240, 180, 41, 0.08);
+}
+
+.pending p {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.reasons {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.notice {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.error {
+  font-size: 14px;
+  color: var(--danger);
+  margin: 0;
+}
+
+.frame {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  display: block;
+}
+
+.frame-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.bubble {
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 15px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble.user {
+  background: var(--accent);
+  color: #06121f;
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+.bubble.assistant {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  align-self: flex-start;
+  max-width: 95%;
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Stop is pinned outside the scrolling panel so it is reachable in every phase
+   of a run, not only when a step happens to be pending. */
+.stopbar {
+  padding: 10px 16px calc(10px + var(--safe-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.stopbar button {
+  width: 100%;
+}
+
+.composer {
+  display: flex;
+  gap: 10px;
+  padding: 10px 16px calc(10px + var(--safe-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.composer textarea {
+  flex: 1;
+  min-height: 46px;
+  max-height: 120px;
+}
+
+.composer button {
+  flex: 0 0 auto;
+}
+
+.center {
+  margin: auto;
+  max-width: 380px;
+  width: 100%;
+}
+
+.code-input {
+  font-size: 28px;
+  letter-spacing: 0.32em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+   Screen control
+   -------------------------------------------------------------------------- */
+
+.screen-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+}
+
+.screen-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.screen-toolbar select {
+  min-height: 36px;
+  padding: 4px 8px;
+  font-size: 14px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segmented button {
+  min-height: 36px;
+  padding: 4px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 14px;
+}
+
+.segmented button[aria-pressed="true"] {
+  background: #3b6ef6;
+  color: #fff;
+}
+
+.segmented button:disabled {
+  opacity: 0.4;
+}
+
+/* The whole point of this surface is that the browser does not treat these
+   gestures as page scrolling or pinch-zooming the app itself. */
+.screen-surface {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #05060a;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.screen-frame {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+/* The laptop is far away and silent; without this you cannot tell a tap that
+   registered from one that missed. */
+.tap-flash {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border: 2px solid rgba(120, 170, 255, 0.9);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: tap-flash 220ms ease-out forwards;
+}
+
+@keyframes tap-flash {
+  from { transform: scale(0.4); opacity: 1; }
+  to   { transform: scale(1.3); opacity: 0; }
+}
+
+.notice-inline {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.stream-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #2a1c1c;
+  color: #ffb4b4;
+  font-size: 13px;
+}
+
+.screen-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #7d8590;
+  text-align: center;
+}
+
+.keybar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.keybar-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.keybar-row input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+}
+
+.key {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 40px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+/* Sticky, so you can see what the next key will combine with. */
+.key-modifier[aria-pressed="true"] {
+  background: #3b6ef6;
+  color: #fff;
+}
+
+.muted { color: #9aa3ad; }
+.small { font-size: 12px; }
