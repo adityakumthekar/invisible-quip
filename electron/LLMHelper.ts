@@ -1,4 +1,9 @@
-import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai"
+import {
+  GoogleGenerativeAI,
+  GenerativeModel,
+  GenerateContentRequest,
+  Part
+} from "@google/generative-ai"
 import fs from "fs"
 import sharp from "sharp"
 import {
@@ -6,7 +11,7 @@ import {
   pixelTeachingTargetToNormalized,
   TeachingStepResponse
 } from "./teaching"
-import { parseAudioAnswer } from "./audioAnswer"
+import { parseAudioAnswer, parseTranscriptTurns } from "./audioAnswer"
 import { ChatTurn, flattenHistory, toGeminiHistory } from "./chatHistory"
 import {
   fitToVisionGrid,
@@ -141,41 +146,63 @@ interface OllamaResponse {
   done: boolean
 }
 
-const SOLUTION_JSON_FORMAT = `{
-  "solution": {
-    "code": "The code or main answer here.",
-    "problem_statement": "Restate the problem or situation.",
-    "context": "Relevant background/context.",
-    "suggested_responses": ["First possible answer or action", "Second possible answer or action", "..."],
-    "reasoning": "Explanation of why these suggestions are appropriate."
-  }
+/**
+ * SDK 0.2.1 predates `systemInstruction`, but it never needs to know about it:
+ * `formatGenerateContentInput` returns the request untouched when `contents` is
+ * present, and the caller hands the whole object to `JSON.stringify`, so the
+ * field reaches the REST body regardless. Typed here rather than cast at every
+ * call site.
+ */
+export type ChatRequest = GenerateContentRequest & {
+  systemInstruction?: { role: "user"; parts: [{ text: string }] }
 }
-Important: Return ONLY the JSON object, without any markdown formatting or code blocks.`
 
 /**
- * Output contract shared by every chat flow. Appended after the persona rather
- * than baked into the mode prompts (src/lib/modes.ts) so `set-system-prompt`
- * can't drop it. The renderer parses the result as markdown with GFM, KaTeX
- * math, and syntax-highlighted fences, so the formats named here all render.
+ * Output contract shared by every chat flow. Carried alongside the persona
+ * rather than baked into the mode prompts (src/lib/modes.ts) so
+ * `set-system-prompt` can't drop it. The renderer parses the result as markdown
+ * with GFM, KaTeX math, and syntax-highlighted fences, so the formats named
+ * here all render.
+ *
+ * Written as numbered rules rather than prose: this is read by the model as a
+ * system directive, and rules survive a long context better than paragraphs.
+ * Rules 2 and 6 exist because of what this is — an overlay read at a glance
+ * mid-conversation. Hedging is what made answers read as non-technical, and a
+ * clarifying question is dead air the reader cannot answer.
  */
 export const RESPONSE_FORMAT = `
 
-Answer directly. State the answer itself — do not open with "You're looking at…",
-do not restate the question, and never frame the answer as "your best next action
-is…" or a menu of options. No meta-commentary about the screen.
+OUTPUT CONTRACT
 
-If the question is a coding problem, write the complete, runnable solution as a
-fenced code block. Always tag the fence with its language — \`\`\`python,
-\`\`\`javascript, \`\`\`typescript, \`\`\`cpp, \`\`\`java, \`\`\`sql, and so on.
-Use the language already visible in the editor or question; if that is genuinely
-unclear, use Python. Never describe code in prose instead of writing it.
+1. Answer directly. The first line is the answer itself — no preamble, no
+   restating the question, no "You're looking at…", never "your best next action
+   is…" or a menu of options, no meta-commentary about the screen. Assume the
+   reader speaks aloud after reading one line.
 
-Structure a coding answer as: one or two lines on the approach, then the code
-block, then a single line of time and space complexity. Stop there.
+2. Do not hedge. Never open with "it depends", "there are several approaches",
+   or "generally". Where a real trade-off exists, commit to one answer first and
+   name the trade-off in a clause after it.
 
-Use LaTeX only for real mathematical formulas — $…$ inline, $$…$$ for display.
-Identifiers, variables, and expressions like \`nums[i]\` or \`max1\` go in
-backticks, not math.`
+3. Be specific, not general. Name the actual mechanism, data structure,
+   algorithm, protocol, API, or config flag. Prefer a number to an adjective —
+   complexity, latency, memory, size limits.
+
+4. Coding problems: one or two lines on the approach, then the complete,
+   runnable solution as a fenced code block, then one line of time and space
+   complexity. Always tag the fence with its language — \`\`\`python,
+   \`\`\`javascript, \`\`\`typescript, \`\`\`cpp, \`\`\`java, \`\`\`sql, and so
+   on. Use the language already visible in the editor or question; if that is
+   genuinely unclear, use Python. Never describe code in prose instead of
+   writing it. Add nothing after the complexity line — no recap, no offer to
+   continue.
+
+5. Use LaTeX only for real mathematical formulas — $…$ inline, $$…$$ for
+   display. Identifiers, variables, and expressions like \`nums[i]\` or \`max1\`
+   go in backticks, not math.
+
+6. If the question is ambiguous, answer the most likely reading and name the
+   reading you took in a short clause. Never ask a clarifying question — the
+   reader cannot reply to you.`
 
 export class LLMHelper {
   private static readonly CHAT_IMAGE_MAX_EDGE = 1568
@@ -188,15 +215,37 @@ export class LLMHelper {
    * truncates mid-function at that cap.
    */
   private static readonly CHAT_GENERATION_CONFIG = {
-    temperature: 0.4,
+    // Was 0.4. The contract's rules 2 and 3 want the confident, specific
+    // completion — sampling that hard is how "it depends" gets picked.
+    temperature: 0.25,
     candidateCount: 1,
     maxOutputTokens: 2048
   }
 
+  /**
+   * The voice path emits a verbatim transcript *and* the answer, so the chat cap
+   * would truncate it. It ran with no generationConfig at all until now, which
+   * is why the omission never showed.
+   */
+  private static readonly AUDIO_GENERATION_CONFIG = {
+    ...LLMHelper.CHAT_GENERATION_CONFIG,
+    maxOutputTokens: 3072
+  }
+
   private model: GenerativeModel | null = null
+  /**
+   * The SDK pins API_VERSION to "v1" with no override in 0.2.1. v1 is documented
+   * to take `systemInstruction`, but if this endpoint rejects it we downgrade to
+   * the old concatenated prompt rather than failing a question mid-interview.
+   * Sticky, so the retry is paid at most once per session.
+   */
+  private systemInstructionSupported = true
   // Mirrors the "general" mode in src/lib/modes.ts — this is what's live until
   // the renderer's applySavedMode() sends the persisted persona on startup.
   private systemPrompt = `You are Quip, a helpful, proactive assistant for any problem or situation. Analyze the situation and give a clear, direct answer. Be concise.`
+  // Who the user is, in their own words (Settings → Profile). Without it the
+  // model has no way to pitch an answer at the right stack or seniority.
+  private userProfile = ""
   private useOllama: boolean = false
   private ollamaModel: string = "llama3.2"
   private ollamaUrl: string = "http://localhost:11434"
@@ -610,6 +659,24 @@ export class LLMHelper {
     return text;
   }
 
+  /**
+   * The Gemini path puts the persona, profile and output contract in
+   * `systemInstruction`; Ollama's /api/generate has an equivalent `system`
+   * field, so both providers get the same layering instead of Ollama getting a
+   * bare message.
+   */
+  private plainSystem(persona?: string): string {
+    return `${this.personaBlock(persona)}${RESPONSE_FORMAT}`
+  }
+
+  /**
+   * User-turn text for the OpenAI-compatible path. Mirrors buildChatRequest's
+   * legacy join minus the persona, which rides in the system message instead.
+   */
+  private openAIUserText(message: string, preamble?: string): string {
+    return [preamble, message].filter((b) => b && b.length > 0).join("\n\n")
+  }
+
   private async callOllama(
     prompt: string,
     options: {
@@ -618,6 +685,8 @@ export class LLMHelper {
       /** Ask Ollama to constrain output to valid JSON. */
       json?: boolean
       temperature?: number
+      /** Persona + output contract, kept out of the prompt body. */
+      system?: string
     } = {}
   ): Promise<string> {
     try {
@@ -630,6 +699,7 @@ export class LLMHelper {
           model: this.ollamaModel,
           prompt: prompt,
           stream: false,
+          ...(options.system ? { system: options.system } : {}),
           ...(options.images?.length ? { images: options.images } : {}),
           ...(options.json ? { format: "json" } : {}),
           options: {
@@ -664,6 +734,8 @@ export class LLMHelper {
       images?: string[]
       temperature?: number
       signal?: AbortSignal
+      /** Persona + output contract, kept out of the prompt body. */
+      system?: string
     } = {}
   ): Promise<string> {
     let response: Response
@@ -675,6 +747,7 @@ export class LLMHelper {
           model: this.ollamaModel,
           prompt,
           stream: true,
+          ...(options.system ? { system: options.system } : {}),
           ...(options.images?.length ? { images: options.images } : {}),
           options: {
             temperature: options.temperature ?? 0.7,
@@ -887,83 +960,6 @@ export class LLMHelper {
     }
   }
 
-  public async extractProblemFromImages(imagePaths: string[]) {
-    try {
-      const imageParts = await Promise.all(imagePaths.map(path => this.fileToGenerativePart(path)))
-      
-      const prompt = `${this.systemPrompt}\n\nYou are a wingman. Please analyze these images and extract the following information in JSON format:\n{
-  "problem_statement": "A clear statement of the problem or situation depicted in the images.",
-  "context": "Relevant background or context from the images.",
-  "suggested_responses": ["First possible answer or action", "Second possible answer or action", "..."],
-  "reasoning": "Explanation of why these suggestions are appropriate."
-}\nImportant: Return ONLY the JSON object, without any markdown formatting or code blocks.`
-
-      const result = await this.model.generateContent([prompt, ...imageParts])
-      const response = await result.response
-      const text = this.cleanJsonResponse(response.text())
-      return JSON.parse(text)
-    } catch (error) {
-      console.error("Error extracting problem from images:", error)
-      throw error
-    }
-  }
-
-  public async generateSolution(problemInfo: any) {
-    const prompt = `${this.systemPrompt}\n\nGiven this problem or situation:\n${JSON.stringify(problemInfo, null, 2)}\n\nPlease provide your response in the following JSON format:\n${SOLUTION_JSON_FORMAT}`
-
-    console.log("[LLMHelper] Calling Gemini LLM for solution...");
-    try {
-      const result = await this.model.generateContent(prompt)
-      console.log("[LLMHelper] Gemini LLM returned result.");
-      const response = await result.response
-      const text = this.cleanJsonResponse(response.text())
-      const parsed = JSON.parse(text)
-      console.log("[LLMHelper] Parsed LLM response:", parsed)
-      return parsed
-    } catch (error) {
-      console.error("[LLMHelper] Error in generateSolution:", error);
-      throw error;
-    }
-  }
-
-  public async debugSolutionWithImages(problemInfo: any, currentCode: string, debugImagePaths: string[]) {
-    try {
-      const imageParts = await Promise.all(debugImagePaths.map(path => this.fileToGenerativePart(path)))
-      
-      const prompt = `${this.systemPrompt}\n\nYou are a wingman. Given:\n1. The original problem or situation: ${JSON.stringify(problemInfo, null, 2)}\n2. The current response or approach: ${currentCode}\n3. The debug information in the provided images\n\nPlease analyze the debug information and provide feedback in this JSON format:\n${SOLUTION_JSON_FORMAT}`
-
-      const result = await this.model.generateContent([prompt, ...imageParts])
-      const response = await result.response
-      const text = this.cleanJsonResponse(response.text())
-      const parsed = JSON.parse(text)
-      console.log("[LLMHelper] Parsed debug LLM response:", parsed)
-      return parsed
-    } catch (error) {
-      console.error("Error debugging solution with images:", error)
-      throw error
-    }
-  }
-
-  public async analyzeAudioFile(audioPath: string) {
-    try {
-      const audioData = await fs.promises.readFile(audioPath);
-      const audioPart = {
-        inlineData: {
-          data: audioData.toString("base64"),
-          mimeType: "audio/mp3"
-        }
-      };
-      const prompt = `${this.systemPrompt}\n\nDescribe this audio clip in a short, concise answer. In addition to your main answer, suggest several possible actions or responses the user could take next based on the audio. Do not return a structured JSON object, just answer naturally as you would to a user.`;
-      const result = await this.model.generateContent([prompt, audioPart]);
-      const response = await result.response;
-      const text = response.text();
-      return { text, timestamp: Date.now() };
-    } catch (error) {
-      console.error("Error analyzing audio file:", error);
-      throw error;
-    }
-  }
-
   /**
    * The record button's path. It used to ask the model to *describe* the clip,
    * which is the wrong job for an interview copilot — it now answers what was
@@ -973,7 +969,8 @@ export class LLMHelper {
   public async analyzeAudioFromBase64(
     data: string,
     mimeType: string,
-    history: ChatTurn[] = []
+    history: ChatTurn[] = [],
+    system?: { data: string; mimeType: string }
   ) {
     try {
       const audioPart = {
@@ -982,63 +979,217 @@ export class LLMHelper {
           mimeType
         }
       };
-      const prompt = `${this.systemPrompt}\n\nThe user spoke the attached audio clip. Answer what they asked.\n\nReply in exactly two sections and nothing else:\nTRANSCRIPT: the words that were spoken, verbatim, on one line — or "(no speech)" if the clip has none\nANSWER: your answer${RESPONSE_FORMAT}`;
+      const audioParts = system
+        ? [audioPart, { inlineData: { data: system.data, mimeType: system.mimeType } }]
+        : [audioPart]
+      // The section labels and the YOU:/THEM: prefixes are parsed by regex in
+      // audioAnswer.ts — reword the framing freely, but they must not move.
+      // Attribution is positional, so the mic clip has to stay part one.
+      const preamble = system
+        ? `Two audio clips are attached, recorded at the same time. The FIRST is this user's own microphone. The SECOND is this computer's audio output — the other people on the call. Each clip may bleed into the other; attribute a line to whoever is louder and clearer in it. Answer the question the other party asked, not the user's own words.
+
+Reply in exactly two sections and nothing else:
+TRANSCRIPT: one line per turn, in the order spoken, each starting with "YOU:" or "THEM:" — or "(no speech)" if neither clip has any
+ANSWER: your answer`
+        : `The attached audio clip is the user speaking, most likely a question asked out loud in the room. Answer what was asked.
+
+Reply in exactly two sections and nothing else:
+TRANSCRIPT: the words that were spoken, verbatim, on one line — or "(no speech)" if the clip has none
+ANSWER: your answer`
       // A spoken follow-up belongs to the same conversation as the typed turns
       // around it, so it carries the same history.
-      const result = await this.model.generateContent({
-        contents: [
-          ...toGeminiHistory(history),
-          { role: "user", parts: [{ text: prompt }, audioPart] }
-        ]
-      });
-      const response = await result.response;
-      const { transcript, answer } = parseAudioAnswer(response.text());
-      return { transcript, text: answer, timestamp: Date.now() };
+      const text = await this.generateChatContent((legacy) =>
+        this.buildChatRequest({
+          message: "",
+          preamble,
+          imageParts: audioParts,
+          history,
+          generationConfig: LLMHelper.AUDIO_GENERATION_CONFIG,
+          legacy
+        })
+      )
+      const { transcript, answer } = parseAudioAnswer(text);
+      return {
+        transcript,
+        turns: parseTranscriptTurns(transcript),
+        text: answer,
+        timestamp: Date.now()
+      };
     } catch (error) {
       console.error("Error analyzing audio from base64:", error);
       throw error;
     }
   }
 
-  // Prompt construction lives in one place per flow so the streaming and
-  // non-streaming variants below can't drift apart. Every chat flow carries
-  // RESPONSE_FORMAT, so a persona swap (set-system-prompt) can't drop it.
-  private imageAnalysisPrompt(): string {
-    return `${this.systemPrompt}\n\nAnswer the question visible in the attached screenshot. If there is no question, say what is on screen in one line.${RESPONSE_FORMAT}`
+  /**
+   * The active persona plus whatever the user told us about themselves. Every
+   * chat flow builds its system layer from this rather than `this.systemPrompt`
+   * directly, so a new flow can't ship without the profile by forgetting it.
+   *
+   * `override` replaces the persona for one request — quick actions are explicit
+   * tasks, and the active mode is the wrong voice for "Translate".
+   */
+  private personaBlock(override?: string): string {
+    const persona = override?.trim() || this.systemPrompt
+    if (!this.userProfile) return persona
+    return `${persona}\n\nAbout the user — use this to calibrate technical depth, stack, and first-person details. Never read it aloud, quote it, or mention that you have it:\n${this.userProfile}`
   }
 
-  private plainChatPrompt(message: string): string {
-    // Prepend the active mode/persona so Modes actually shape plain chat.
-    return `${this.systemPrompt}${RESPONSE_FORMAT}\n\nUser: ${message}`
+  /** Per-request facts about where the question came from. Not the system layer. */
+  private static readonly SCREEN_PREAMBLE =
+    "The attached screenshot is the user's screen. If it shows a question, problem, or exercise, that is what to answer — read any code carefully and reply in the language already on screen. Answer the user's message below in that context."
+
+  private static readonly IMAGE_PREAMBLE =
+    "Answer the question visible in the attached screenshot. Read any code or problem statement carefully and answer in the language already on screen. If there is genuinely no question, say what is on screen in one line."
+
+  /**
+   * The one place a chat request is shaped, so the six flows can't drift apart.
+   *
+   * The persona, profile and output contract go in `systemInstruction`: sent as
+   * part of the user turn they read as something the user just said this turn,
+   * which is the weakest position for instruction-following, and they were
+   * re-sent on every turn of a 45-minute session. `legacy` rebuilds the old
+   * concatenated shape for the downgrade path.
+   */
+  private buildChatRequest(opts: {
+    message: string
+    preamble?: string
+    imageParts?: Part[]
+    history?: ChatTurn[]
+    persona?: string
+    generationConfig?: object
+    legacy?: boolean
+  }): ChatRequest {
+    const { message, preamble, imageParts = [], history = [], persona } = opts
+    const generationConfig =
+      opts.generationConfig ?? LLMHelper.CHAT_GENERATION_CONFIG
+
+    const joinUser = (...blocks: (string | undefined)[]) =>
+      blocks.filter((b) => b && b.length > 0).join("\n\n")
+
+    if (opts.legacy || !this.systemInstructionSupported) {
+      const text = `${this.personaBlock(persona)}${preamble ? `\n\n${preamble}` : ""}${RESPONSE_FORMAT}${message ? `\n\nUser: ${message}` : ""}`
+      return {
+        contents: [
+          ...toGeminiHistory(history),
+          { role: "user", parts: [{ text }, ...imageParts] }
+        ],
+        generationConfig
+      }
+    }
+
+    return {
+      systemInstruction: {
+        role: "user",
+        parts: [{ text: `${this.personaBlock(persona)}${RESPONSE_FORMAT}` }]
+      },
+      contents: [
+        ...toGeminiHistory(history),
+        {
+          role: "user",
+          parts: [{ text: joinUser(preamble, message) }, ...imageParts]
+        }
+      ],
+      generationConfig
+    }
   }
 
-  private screenChatPrompt(message: string): string {
-    return `${this.systemPrompt}\n\nThe user is looking at the attached screenshot(s) of their screen. Answer their message based on what is visible.${RESPONSE_FORMAT}\n\nUser: ${message}`
+  /**
+   * Whether an error is the v1 endpoint refusing `systemInstruction`. Requires
+   * the field name to appear, so an unrelated 400 can't silently downgrade the
+   * whole session to the weaker prompt shape.
+   */
+  private static rejectsSystemInstruction(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return (
+      /systemInstruction/i.test(message) &&
+      /unknown name|cannot find field|invalid|not supported|unsupported/i.test(
+        message
+      )
+    )
+  }
+
+  private downgradeSystemInstruction(error: unknown): void {
+    this.systemInstructionSupported = false
+    console.warn(
+      "[LLMHelper] Endpoint rejected systemInstruction; falling back to the " +
+        "concatenated prompt for the rest of this session.",
+      error instanceof Error ? error.message : error
+    )
   }
 
   /**
    * Drive a Gemini stream, forwarding each delta as it lands and returning the
    * full text. Aborting stops forwarding immediately rather than waiting for
    * the remaining tokens, so a superseded request can't write into the chat.
+   *
+   * Takes a builder rather than a request so the downgrade can rebuild. The 400
+   * lands on the initial call, before any chunk, but the guard is explicit: a
+   * retry after the first delta would duplicate text in the panel.
    */
   private async consumeGeminiStream(
-    request: Parameters<GenerativeModel["generateContentStream"]>[0],
+    build: (legacy: boolean) => ChatRequest,
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<string> {
     if (!this.model) {
       throw new Error("No LLM provider configured")
     }
-    const result = await this.model.generateContentStream(request)
-    let text = ""
-    for await (const chunk of result.stream) {
-      if (signal?.aborted) break
-      const delta = chunk.text()
-      if (!delta) continue
-      text += delta
-      onChunk(delta)
+    let sawChunk = false
+    const run = async (legacy: boolean) => {
+      const result = await this.model!.generateContentStream(build(legacy))
+      let text = ""
+      for await (const chunk of result.stream) {
+        if (signal?.aborted) break
+        const delta = chunk.text()
+        if (!delta) continue
+        sawChunk = true
+        text += delta
+        onChunk(delta)
+      }
+      return text
     }
-    return text
+
+    try {
+      return await run(false)
+    } catch (error) {
+      if (
+        sawChunk ||
+        !this.systemInstructionSupported ||
+        !LLMHelper.rejectsSystemInstruction(error)
+      ) {
+        throw error
+      }
+      this.downgradeSystemInstruction(error)
+      return run(true)
+    }
+  }
+
+  /** Non-streaming counterpart to `consumeGeminiStream`, same downgrade. */
+  private async generateChatContent(
+    build: (legacy: boolean) => ChatRequest
+  ): Promise<string> {
+    if (!this.model) {
+      throw new Error("No LLM provider configured")
+    }
+    const run = async (legacy: boolean) => {
+      const result = await this.model!.generateContent(build(legacy))
+      const response = await result.response
+      return response.text()
+    }
+
+    try {
+      return await run(false)
+    } catch (error) {
+      if (
+        !this.systemInstructionSupported ||
+        !LLMHelper.rejectsSystemInstruction(error)
+      ) {
+        throw error
+      }
+      this.downgradeSystemInstruction(error)
+      return run(true)
+    }
   }
 
   public async analyzeImageFile(imagePath: string) {
@@ -1047,32 +1198,30 @@ export class LLMHelper {
         const image = await this.imageToDataUrl(imagePath)
         const text = await this.callOpenAI(
           [
-            { type: "text", text: this.imageAnalysisPrompt() },
+            {
+              type: "text",
+              text: this.openAIUserText("", LLMHelper.IMAGE_PREAMBLE)
+            },
             { type: "image_url", image_url: { url: image.url } }
           ],
           {
             temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+            system: this.plainSystem(),
             imageSizes: [image.size]
           }
         )
         return { text, timestamp: Date.now() }
       }
-      if (!this.model) {
-        throw new Error("No LLM provider configured")
-      }
-      const { part: imagePart } = await this.toChatImagePart(imagePath);
-      const result = await this.model.generateContent({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: this.imageAnalysisPrompt() }, imagePart]
-          }
-        ],
-        generationConfig: LLMHelper.CHAT_GENERATION_CONFIG
-      });
-      const response = await result.response;
-      const text = response.text();
-      return { text, timestamp: Date.now() };
+      const { part: imagePart } = await this.toChatImagePart(imagePath)
+      const text = await this.generateChatContent((legacy) =>
+        this.buildChatRequest({
+          message: "",
+          preamble: LLMHelper.IMAGE_PREAMBLE,
+          imageParts: [imagePart],
+          legacy
+        })
+      )
+      return { text, timestamp: Date.now() }
     } catch (error) {
       console.error("Error analyzing image file:", error);
       throw error;
@@ -1088,12 +1237,16 @@ export class LLMHelper {
       const image = await this.imageToDataUrl(imagePath)
       return this.callOpenAIStream(
         [
-          { type: "text", text: this.imageAnalysisPrompt() },
+          {
+            type: "text",
+            text: this.openAIUserText("", LLMHelper.IMAGE_PREAMBLE)
+          },
           { type: "image_url", image_url: { url: image.url } }
         ],
         onChunk,
         {
           temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+          system: this.plainSystem(),
           imageSizes: [image.size],
           signal
         }
@@ -1101,15 +1254,13 @@ export class LLMHelper {
     }
     const { part: imagePart } = await this.toChatImagePart(imagePath)
     return this.consumeGeminiStream(
-      {
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: this.imageAnalysisPrompt() }, imagePart]
-          }
-        ],
-        generationConfig: LLMHelper.CHAT_GENERATION_CONFIG
-      },
+      (legacy) =>
+        this.buildChatRequest({
+          message: "",
+          preamble: LLMHelper.IMAGE_PREAMBLE,
+          imageParts: [imagePart],
+          legacy
+        }),
       onChunk,
       signal
     )
@@ -1120,26 +1271,26 @@ export class LLMHelper {
     this.systemPrompt = text?.trim() ? text.trim() : this.systemPrompt
   }
 
+  // No fallback here, unlike setSystemPrompt: emptying the field in Settings is
+  // how the user takes their profile back out of every request.
+  public setUserProfile(text: string): void {
+    this.userProfile = text?.trim() ?? ""
+  }
+
   public async chatWithGemini(message: string): Promise<string> {
-    const prompt = this.plainChatPrompt(message);
     try {
       if (this.useOllama) {
-        return this.callOllama(prompt);
+        return this.callOllama(message, { system: this.plainSystem() })
       }
       if (this.useQwen) {
-        return this.callOpenAI(prompt, {
-          temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature
+        return this.callOpenAI(message, {
+          temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+          system: this.plainSystem()
         })
       }
-      if (this.model) {
-        const result = await this.model.generateContent({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: LLMHelper.CHAT_GENERATION_CONFIG
-        });
-        const response = await result.response;
-        return response.text();
-      }
-      throw new Error("No LLM provider configured");
+      return this.generateChatContent((legacy) =>
+        this.buildChatRequest({ message, legacy })
+      )
     } catch (error) {
       console.error("[LLMHelper] Error in chatWithGemini:", error);
       throw error;
@@ -1155,32 +1306,27 @@ export class LLMHelper {
     message: string,
     onChunk: (delta: string) => void,
     signal?: AbortSignal,
-    history: ChatTurn[] = []
+    history: ChatTurn[] = [],
+    persona?: string
   ): Promise<string> {
-    const prompt = this.plainChatPrompt(message)
     if (this.useOllama) {
       const prior = flattenHistory(history)
       return this.callOllamaStream(
-        prior ? `${prior}\n\n${prompt}` : prompt,
+        prior ? `${prior}\n\nUser: ${message}` : message,
         onChunk,
-        { signal }
+        { signal, system: this.plainSystem(persona) }
       )
     }
     if (this.useQwen) {
-      return this.callOpenAIStream(prompt, onChunk, {
+      return this.callOpenAIStream(message, onChunk, {
         temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+        system: this.plainSystem(persona),
         history,
         signal
       })
     }
     return this.consumeGeminiStream(
-      {
-        contents: [
-          ...toGeminiHistory(history),
-          { role: "user", parts: [{ text: prompt }] }
-        ],
-        generationConfig: LLMHelper.CHAT_GENERATION_CONFIG
-      },
+      (legacy) => this.buildChatRequest({ message, history, persona, legacy }),
       onChunk,
       signal
     )
@@ -1196,8 +1342,9 @@ export class LLMHelper {
   ): Promise<string> {
     try {
       // ponytail: most Ollama models are text-only — fall back to a text reply.
+      // The system layer still rides along; it used to be dropped entirely here.
       if (this.useOllama) {
-        return this.callOllama(message);
+        return this.callOllama(message, { system: this.plainSystem() })
       }
       if (this.useQwen) {
         const encoded = await Promise.all(
@@ -1205,7 +1352,10 @@ export class LLMHelper {
         )
         return this.callOpenAI(
           [
-            { type: "text", text: this.screenChatPrompt(message) },
+            {
+              type: "text",
+              text: this.openAIUserText(message, LLMHelper.SCREEN_PREAMBLE)
+            },
             ...encoded.map(
               (image) =>
                 ({ type: "image_url", image_url: { url: image.url } }) as const
@@ -1213,27 +1363,22 @@ export class LLMHelper {
           ],
           {
             temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+            system: this.plainSystem(),
             imageSizes: encoded.map((image) => image.size)
           }
         )
       }
-      if (!this.model) {
-        throw new Error("No LLM provider configured");
-      }
       const imageParts = await Promise.all(
         images.map(async (i) => (await this.toChatImagePart(i)).part)
-      );
-      const result = await this.model.generateContent({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: this.screenChatPrompt(message) }, ...imageParts]
-          }
-        ],
-        generationConfig: LLMHelper.CHAT_GENERATION_CONFIG
-      });
-      const response = await result.response;
-      return response.text();
+      )
+      return this.generateChatContent((legacy) =>
+        this.buildChatRequest({
+          message,
+          preamble: LLMHelper.SCREEN_PREAMBLE,
+          imageParts,
+          legacy
+        })
+      )
     } catch (error) {
       console.error("[LLMHelper] Error in chatWithImage:", error);
       throw error;
@@ -1245,14 +1390,17 @@ export class LLMHelper {
     images: (string | Buffer)[],
     onChunk: (delta: string) => void,
     signal?: AbortSignal,
-    history: ChatTurn[] = []
+    history: ChatTurn[] = [],
+    persona?: string
   ): Promise<string> {
     if (this.useOllama) {
+      // This used to send the bare message: no persona, no profile, no output
+      // contract. Ollama's /api/generate has a first-class `system` field.
       const prior = flattenHistory(history)
       return this.callOllamaStream(
-        prior ? `${prior}\n\n${message}` : message,
+        prior ? `${prior}\n\nUser: ${message}` : message,
         onChunk,
-        { signal }
+        { signal, system: this.plainSystem(persona) }
       )
     }
     if (this.useQwen) {
@@ -1261,7 +1409,10 @@ export class LLMHelper {
       )
       return this.callOpenAIStream(
         [
-          { type: "text", text: this.screenChatPrompt(message) },
+          {
+            type: "text",
+            text: this.openAIUserText(message, LLMHelper.SCREEN_PREAMBLE)
+          },
           ...encoded.map(
             (image) =>
               ({ type: "image_url", image_url: { url: image.url } }) as const
@@ -1270,6 +1421,7 @@ export class LLMHelper {
         onChunk,
         {
           temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+          system: this.plainSystem(persona),
           imageSizes: encoded.map((image) => image.size),
           history,
           signal
@@ -1282,16 +1434,15 @@ export class LLMHelper {
     // History is text-only: past screenshots are not re-uploaded, so a
     // follow-up reasons over what was said about a screen, not the screen.
     return this.consumeGeminiStream(
-      {
-        contents: [
-          ...toGeminiHistory(history),
-          {
-            role: "user",
-            parts: [{ text: this.screenChatPrompt(message) }, ...imageParts]
-          }
-        ],
-        generationConfig: LLMHelper.CHAT_GENERATION_CONFIG
-      },
+      (legacy) =>
+        this.buildChatRequest({
+          message,
+          preamble: LLMHelper.SCREEN_PREAMBLE,
+          imageParts,
+          history,
+          persona,
+          legacy
+        }),
       onChunk,
       signal
     )

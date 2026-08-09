@@ -16,6 +16,9 @@ import TeachingPanel, {
   type TeachingMode
 } from "../components/teaching/TeachingPanel"
 import { DEFAULT_PANEL_WIDTH, applySavedMode, getMode } from "../lib/modes"
+import { applySavedProfile } from "../lib/userProfile"
+import { closeSystemAudio, openSystemAudio } from "../lib/systemAudio"
+import { createLevelMonitor, type LevelMonitor } from "../lib/audioLevel"
 import { getBarCollapsed, setBarCollapsed } from "../lib/collapsedBar"
 import { streamChat } from "../lib/chatStream"
 import {
@@ -43,16 +46,17 @@ interface QueueProps {
   setView: React.Dispatch<React.SetStateAction<"queue" | "solutions">>
 }
 
-// What Cmd+Enter asks when the input is empty. Phrased to get oriented context
-// plus one concrete next step, rather than a bare description of the screen.
-// Empty-box Cmd+Enter. It used to always narrate ("what's going on… best next
-// action"), which on a coding problem produced coaching instead of the answer —
-// so a question on screen is now answered outright, and only a screen with no
-// question falls back to the narration.
+// Empty-box Cmd+Enter — the interview hotkey. It used to always narrate
+// ("what's going on… best next action"), which on a coding problem produced
+// coaching instead of the answer, so a question on screen is now answered
+// outright. The error case is explicit because half of what's actually on
+// screen mid-interview is failing output, not a question.
 const SCREEN_GLANCE_PROMPT =
-  "Look at my screen. If there is a question, problem, or exercise on screen, " +
-  "answer it directly — for a coding problem, give the working solution as code. " +
-  "Only if there is no question, say what's going on in a line and the single " +
+  "Look at my screen. If there is a question, problem, or exercise on it, " +
+  "answer it outright — for a coding problem, give the complete working " +
+  "solution as code in the language already on screen. If there is an error, " +
+  "stack trace, or failing output, name the cause and the fix. Only if there " +
+  "is no question at all, say what is going on in one line and the single " +
   "best next action I could take."
 
 // streamChat rejects with a DOMException named AbortError when the caller
@@ -99,6 +103,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   // Retracted to the blob. Read from storage once so the overlay comes back the
   // way it was left.
   const [collapsed, setCollapsed] = useState(getBarCollapsed)
+  // Phones attached to the remote server. Surfaced on the bar so the machine
+  // never looks unattended while someone can drive it from another room.
+  const [remote, setRemote] = useState({ count: 0, inputEnabled: false })
   const [teachingSession, dispatchTeaching] = useReducer(
     teachingSessionReducer,
     initialTeachingSessionState
@@ -141,6 +148,21 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [micStream, setMicStream] = useState<MediaStream | null>(null)
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null)
   const chunks = useRef<Blob[]>([])
+  // The interviewer's side, when system audio is configured. Held in refs
+  // rather than state because the mic recorder's onstop reads them, and that
+  // callback closes over whatever existed when the recorder was built.
+  const [systemStream, setSystemStream] = useState<MediaStream | null>(null)
+  const systemRecorder = useRef<MediaRecorder | null>(null)
+  const systemChunks = useRef<Blob[]>([])
+  const systemLevel = useRef<LevelMonitor | null>(null)
+  const systemStreamRef = useRef<MediaStream | null>(null)
+  systemStreamRef.current = systemStream
+  // Resolved by the system recorder's own onstop. The mic's onstop awaits it,
+  // so the two clips are assembled together however the stops interleave.
+  const systemBlobPromise = useRef<Promise<Blob | null>>(Promise.resolve(null))
+  const [systemAudioConsent, setSystemAudioConsent] = useState(false)
+  const systemAudioConsentRef = useRef(false)
+  systemAudioConsentRef.current = systemAudioConsent
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [currentModel, setCurrentModel] = useState<{
@@ -196,7 +218,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const sendPrompt = async (
     prompt: string,
-    opts?: { silentUser?: boolean; useScreen?: boolean }
+    opts?: { silentUser?: boolean; useScreen?: boolean; persona?: string }
   ) => {
     if (!prompt.trim()) return
     const withScreen = opts?.useScreen ?? includeScreen
@@ -228,7 +250,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     const controller = new AbortController()
     chatAbortRef.current = controller
     try {
-      await streamChat(window.electronAPI, channel, [prompt, history], {
+      // Third arg is the optional per-request persona override (quick actions).
+      // Undefined leaves the active mode in charge, which is the common path.
+      const args = [prompt, history, opts?.persona]
+      await streamChat(window.electronAPI, channel, args, {
         signal: controller.signal,
         onText: (text) => {
           if (epoch !== chatEpochRef.current) return
@@ -324,9 +349,13 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       })
   }
 
-  const runQuickAction = (prompt: string, useScreen: boolean) => {
+  const runQuickAction = (
+    prompt: string,
+    useScreen: boolean,
+    persona: string
+  ) => {
     setQuickOpen(false)
-    void sendPrompt(prompt, { useScreen })
+    void sendPrompt(prompt, { useScreen, persona })
   }
 
   const refreshPrivacyStatus = async () => {
@@ -428,6 +457,21 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     })
   }
 
+  const refreshSystemAudioConsent = async () => {
+    try {
+      const consent = await window.electronAPI.systemAudioGetConsent()
+      setSystemAudioConsent(consent.consented)
+    } catch {
+      // Not fatal: without it, capture falls back to mic-only, which is the
+      // safe direction to fail in.
+      setSystemAudioConsent(false)
+    }
+  }
+
+  useEffect(() => {
+    void refreshSystemAudioConsent()
+  }, [])
+
   const refreshAutopilotConsent = async () => {
     try {
       setAutopilotConsent(await window.electronAPI.autopilotGetConsent())
@@ -521,6 +565,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     handleNewChatRef.current = handleNewChat
   })
 
+  useEffect(
+    () => window.electronAPI.onRemoteConnectionsChanged(setRemote),
+    []
+  )
+
   // Progress for an autopilot run is pushed from main, which owns the loop.
   useEffect(() => {
     const unsubscribe = window.electronAPI.onAutopilotUpdate((update) => {
@@ -603,6 +652,16 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [teachingOpen])
 
+  // Both clips take the same trip to the model, so they share one reader.
+  const blobToBase64 = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onloadend = () =>
+        resolve((reader.result as string).split(",")[1] ?? "")
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(blob)
+    })
+
   const handleRecordClick = async () => {
     if (!isRecording) {
       try {
@@ -610,6 +669,42 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
           audio: true
         })
         setMicStream(stream)
+
+        // Opened after the mic on purpose: enumerateDevices() returns blank
+        // labels until some media grant exists, and the label is how the
+        // loopback device is found.
+        const system = await openSystemAudio(systemAudioConsentRef.current)
+        if (system.ok) {
+          setSystemStream(system.stream)
+          systemChunks.current = []
+          systemLevel.current = createLevelMonitor(system.stream)
+          const sysRecorder = new MediaRecorder(system.stream)
+          sysRecorder.ondataavailable = (e) => systemChunks.current.push(e.data)
+          systemBlobPromise.current = new Promise<Blob | null>((resolve) => {
+            sysRecorder.onstop = () => {
+              resolve(
+                new Blob(systemChunks.current, {
+                  type: systemChunks.current[0]?.type || "audio/webm"
+                })
+              )
+              systemChunks.current = []
+            }
+          })
+          systemRecorder.current = sysRecorder
+          sysRecorder.start()
+        } else {
+          systemRecorder.current = null
+          systemChunks.current = []
+          systemBlobPromise.current = Promise.resolve(null)
+          if (system.reason === "not-configured" || system.reason === "error") {
+            showToast(
+              "System audio unavailable",
+              "Recording your microphone only.",
+              "error"
+            )
+          }
+        }
+
         const recorder = new MediaRecorder(stream)
         chunks.current = []
         recorder.ondataavailable = (e) => chunks.current.push(e.data)
@@ -629,26 +724,74 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             type: chunks.current[0]?.type || "audio/webm"
           })
           chunks.current = []
-          const reader = new FileReader()
-          reader.onloadend = async () => {
-            const base64Data = (reader.result as string).split(",")[1]
+
+          // Read the peak before tearing the monitor down. Exactly zero for the
+          // whole clip means the virtual device was never routed — the clip is
+          // digital silence, not a quiet room.
+          const systemPeak = systemLevel.current?.peak() ?? 0
+          systemLevel.current?.stop()
+          systemLevel.current = null
+          const systemBlob = await systemBlobPromise.current
+          if (systemStreamRef.current) {
+            closeSystemAudio(systemStreamRef.current)
+            setSystemStream(null)
+          }
+          if (systemBlob && systemPeak === 0) {
+            // Don't pay tokens for a silent clip, and say why rather than
+            // quietly answering as if only the user had been in the room.
+            setChatMessages((msgs) => [
+              ...msgs,
+              createMessage({
+                role: "gemini",
+                text: "System audio captured nothing this clip. Check that your macOS Output is set to the Multi-Output device.",
+                source: "system"
+              })
+            ])
+          }
+          const systemPart =
+            systemBlob && systemPeak > 0
+              ? {
+                  data: await blobToBase64(systemBlob),
+                  mimeType: systemBlob.type
+                }
+              : undefined
+
+          {
+            const base64Data = await blobToBase64(blob)
             openPanels()
             setChatLoading(true)
             try {
               const result = await window.electronAPI.analyzeAudioFromBase64(
                 base64Data,
                 blob.type,
-                history
+                history,
+                systemPart
               )
               if (epoch !== chatEpochRef.current) return
+              // One clip can hold several turns once system audio is on. The
+              // length belongs to the clip, so only its first turn carries it;
+              // a clip with no speech at all still leaves a header-only turn.
+              const spoken = result.turns.length
+                ? result.turns.map((turn, i) =>
+                    createMessage({
+                      role: "user",
+                      text: turn.text,
+                      source: "voice",
+                      speaker: turn.speaker,
+                      durationSec: i === 0 ? clipSeconds : undefined
+                    })
+                  )
+                : [
+                    createMessage({
+                      role: "user",
+                      text: "",
+                      source: "voice",
+                      durationSec: clipSeconds
+                    })
+                  ]
               setChatMessages((msgs) => [
                 ...msgs,
-                createMessage({
-                  role: "user",
-                  text: result.transcript,
-                  source: "voice",
-                  durationSec: clipSeconds
-                }),
+                ...spoken,
                 createMessage({
                   role: "gemini",
                   text: result.text,
@@ -678,7 +821,6 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
               if (epoch === chatEpochRef.current) setChatLoading(false)
             }
           }
-          reader.readAsDataURL(blob)
         }
         setMediaRecorder(recorder)
         recorder.start()
@@ -688,6 +830,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         showToast("Error", "Could not start recording.", "error")
       }
     } else {
+      // System side first, so its blob is already resolving by the time the
+      // mic's onstop awaits it.
+      if (systemRecorder.current?.state === "recording")
+        systemRecorder.current.stop()
+      systemRecorder.current = null
       mediaRecorder?.stop()
       setIsRecording(false)
       setMediaRecorder(null)
@@ -719,6 +866,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
     void loadCurrentModel()
     applySavedMode()
+    applySavedProfile()
   }, [])
 
   // Size reporting lives in App.tsx alone. This effect used to run a second
@@ -864,6 +1012,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
           isRecording={isRecording}
           recordingSeconds={recordingSeconds}
           micStream={micStream}
+          systemStream={systemStream}
+          remoteConnections={remote.count}
+          remoteInputEnabled={remote.inputEnabled}
           panelsOpen={panelsOpen}
           modelsOpen={isSettingsOpen}
           quickOpen={quickOpen}

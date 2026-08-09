@@ -39,6 +39,8 @@ export class AppState {
   public processingHelper: ProcessingHelper
   private teachingOverlayHelper: TeachingOverlayHelper
   private autopilot: AutopilotControls | null = null
+  private remoteShutdown: (() => Promise<void>) | null = null
+  private remoteInputKillSwitch: (() => void) | null = null
   private tray: Tray | null = null
 
   // View management
@@ -240,6 +242,33 @@ export class AppState {
     this.autopilot = controls
   }
 
+  /**
+   * Registered by ipcHandlers so quitting always tears the remote server down.
+   * A listening socket that outlives the window would leave the machine
+   * reachable from the network with no UI left to switch it off.
+   */
+  public registerRemoteShutdown(shutdown: () => Promise<void>): void {
+    this.remoteShutdown = shutdown
+  }
+
+  public async shutdownRemote(): Promise<void> {
+    await this.remoteShutdown?.()
+  }
+
+  /**
+   * Registered by ipcHandlers so the abort shortcut can also revoke a phone's
+   * permission to type here. Autopilot's kill switch stops a run that Quip
+   * started; this stops a person holding a phone, which the keyboard shortcut
+   * would otherwise be powerless against.
+   */
+  public registerRemoteInputKillSwitch(disable: () => void): void {
+    this.remoteInputKillSwitch = disable
+  }
+
+  public disableRemoteInput(): void {
+    this.remoteInputKillSwitch?.()
+  }
+
   public abortAutopilot(): void {
     this.autopilot?.stop()
   }
@@ -405,6 +434,7 @@ async function initializeApp() {
     isQuitting = true
     ;(async () => {
       appState.closeTeachingOverlay()
+      await appState.shutdownRemote()
       await appState.deleteAllScreenshotFiles()
       app.quit()
     })()

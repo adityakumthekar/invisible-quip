@@ -3,6 +3,7 @@ import {
   createMessage,
   formatClock,
   formatDuration,
+  lastExchangeStart,
   startsExchange,
   toHistory
 } from "./chatMessages"
@@ -49,6 +50,71 @@ describe("startsExchange", () => {
   it("is true for an answer with no user turn before it", () => {
     expect(startsExchange(answer, answer)).toBe(true)
   })
+
+  it("keeps both halves of one two-speaker clip in a single exchange", () => {
+    const them = createMessage({
+      role: "user",
+      text: "how would you shard this",
+      source: "voice",
+      speaker: "them"
+    })
+    const you = createMessage({
+      role: "user",
+      text: "one moment",
+      source: "voice"
+    })
+    expect(startsExchange(them, you)).toBe(false)
+  })
+
+  it("still opens an exchange when a voice turn follows a typed one", () => {
+    const voice = createMessage({ role: "user", text: "q", source: "voice" })
+    expect(startsExchange(user, voice)).toBe(true)
+  })
+})
+
+describe("lastExchangeStart", () => {
+  const user = () => createMessage({ role: "user", text: "q", source: "typed" })
+  const answer = () =>
+    createMessage({ role: "gemini", text: "a", source: "typed" })
+  const note = () =>
+    createMessage({ role: "gemini", text: "n", source: "system" })
+
+  it("returns 0 for an empty list so the caller can index safely", () => {
+    expect(lastExchangeStart([])).toBe(0)
+  })
+
+  it("anchors a lone turn on itself", () => {
+    expect(lastExchangeStart([user()])).toBe(0)
+  })
+
+  it("anchors a pair on the question, not the answer", () => {
+    expect(lastExchangeStart([user(), answer()])).toBe(0)
+  })
+
+  it("anchors on the newest question once a second exchange opens", () => {
+    const msgs = [user(), answer(), user(), answer()]
+    expect(lastExchangeStart(msgs)).toBe(2)
+  })
+
+  it("anchors on the placeholder turn a stream is still filling in", () => {
+    // What the panel sees the instant a turn is sent: the question plus an
+    // empty assistant message.
+    const msgs = [
+      user(),
+      answer(),
+      user(),
+      createMessage({ role: "gemini", text: "", source: "typed" })
+    ]
+    expect(lastExchangeStart(msgs)).toBe(2)
+  })
+
+  it("anchors on a trailing system notice, which opens its own exchange", () => {
+    expect(lastExchangeStart([user(), answer(), note()])).toBe(2)
+  })
+
+  it("anchors on an answer with no question before it — a screen glance", () => {
+    expect(lastExchangeStart([user(), answer(), answer()])).toBe(2)
+  })
 })
 
 describe("formatDuration", () => {
@@ -93,6 +159,37 @@ describe("toHistory", () => {
       createMessage({ role: "user", text: "real", source: "typed" })
     ]
     expect(toHistory(msgs)).toEqual([{ role: "user", text: "real" }])
+  })
+
+  it("folds a two-speaker clip into one attributed turn", () => {
+    const msgs = [
+      createMessage({
+        role: "user",
+        text: "how would you shard this",
+        source: "voice",
+        speaker: "them"
+      }),
+      createMessage({ role: "user", text: "by tenant", source: "voice" }),
+      createMessage({ role: "gemini", text: "right", source: "voice" })
+    ]
+    expect(toHistory(msgs)).toEqual([
+      {
+        role: "user",
+        text: "Interviewer: how would you shard this\nMe: by tenant"
+      },
+      { role: "gemini", text: "right" }
+    ])
+  })
+
+  it("leaves a run with no interviewer turn unlabelled", () => {
+    const msgs = [
+      createMessage({ role: "user", text: "one", source: "typed" }),
+      createMessage({ role: "user", text: "two", source: "typed" })
+    ]
+    expect(toHistory(msgs)).toEqual([
+      { role: "user", text: "one" },
+      { role: "user", text: "two" }
+    ])
   })
 })
 

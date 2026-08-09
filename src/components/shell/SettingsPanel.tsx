@@ -1,12 +1,16 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import {
   Cloud,
   Cpu,
   Info,
   Keyboard,
   Palette,
+  Headphones,
+  RefreshCw,
   Server,
   ShieldCheck,
+  Smartphone,
+  User,
   Wand2
 } from "lucide-react"
 import { cn } from "../../lib/utils"
@@ -21,6 +25,9 @@ import {
 import { MODES, getModeId, setMode, type Mode } from "../../lib/modes"
 import { SHORTCUTS } from "../../lib/shortcuts"
 import type { AutonomyLevel } from "../../lib/autopilot"
+import { PROFILE_MAX_CHARS, getProfile, setProfile } from "../../lib/userProfile"
+import RemotePanel from "./RemotePanel"
+import SystemAudioPanel from "./SystemAudioPanel"
 
 type ProviderId = "gemini" | "qwen"
 
@@ -75,7 +82,15 @@ interface SettingsPanelProps {
 }
 
 type Tab =
-  "modes" | "provider" | "autopilot" | "appearance" | "keybinds" | "about"
+  | "modes"
+  | "profile"
+  | "provider"
+  | "autopilot"
+  | "remote"
+  | "audio"
+  | "appearance"
+  | "keybinds"
+  | "about"
 
 type Status = "idle" | "working" | "ok" | "err"
 
@@ -95,11 +110,14 @@ const DEFAULT_QWEN_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "modes", label: "Modes", icon: Wand2 },
+  { id: "profile", label: "Profile", icon: User },
   { id: "provider", label: "Provider", icon: Cpu },
   // Autonomy decides whether Quip will act inside a terminal without asking.
   // It used to live at the bottom of the Provider tab, under the vLLM base URL
   // and the API key — a safety control filed under hardware config.
   { id: "autopilot", label: "Autopilot", icon: ShieldCheck },
+  { id: "remote", label: "Remote", icon: Smartphone },
+  { id: "audio", label: "Audio", icon: Headphones },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "keybinds", label: "Keybinds", icon: Keyboard },
   { id: "about", label: "About", icon: Info }
@@ -136,6 +154,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   // Modes
   const [modeId, setModeId] = useState<string>(() => getModeId())
+
+  // Profile
+  const [profile, setProfileText] = useState<string>(() => getProfile())
+  const profileTimer = useRef<ReturnType<typeof setTimeout>>()
 
   useEffect(() => {
     void loadConfig()
@@ -253,6 +275,18 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     }
   }
 
+  useEffect(() => () => clearTimeout(profileTimer.current), [])
+
+  // No Apply button: the Modes tab already applies on click, and a profile you
+  // forgot to save is a profile the model never sees. Debounced so a paragraph
+  // of typing isn't one IPC round-trip per keystroke.
+  const editProfile = (text: string) => {
+    const clamped = text.slice(0, PROFILE_MAX_CHARS)
+    setProfileText(clamped)
+    clearTimeout(profileTimer.current)
+    profileTimer.current = setTimeout(() => setProfile(clamped), 400)
+  }
+
   const chooseMode = (id: string) => {
     const mode = setMode(id)
     setModeId(mode.id)
@@ -355,6 +389,30 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             <p className="text-meta glass-subtle leading-relaxed">
               A mode changes how the assistant responds. It applies to your next
               message.
+            </p>
+          </>
+        )}
+
+        {tab === "profile" && (
+          <>
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] uppercase tracking-wide glass-muted">
+                About you
+              </p>
+              <span className="text-[11px] glass-subtle tabular-nums">
+                {profile.length}/{PROFILE_MAX_CHARS}
+              </span>
+            </div>
+            <textarea
+              rows={5}
+              value={profile}
+              onChange={(e) => editProfile(e.target.value)}
+              placeholder="Senior backend engineer, 7 yrs. Go, Postgres, Kafka, k8s on AWS. Interviewing at Stripe for payments infra."
+              className="glass-control w-full resize-none rounded-lg px-3 py-2 text-[12px] leading-[1.5]"
+            />
+            <p className="text-[11px] glass-subtle leading-relaxed">
+              Sent with every question so answers land at your level and in your
+              stack. Saves as you type.
             </p>
           </>
         )}
@@ -634,6 +692,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             ))}
           </div>
         )}
+
+        {tab === "remote" && <RemotePanel />}
+
+        {tab === "audio" && <SystemAudioPanel />}
 
         {tab === "about" && (
           <div className="space-y-2 text-meta glass-muted">

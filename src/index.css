@@ -550,6 +550,58 @@ body,
     var(--glass-sheen), var(--glass-dark-bg);
 }
 
+/* Remote-access indicator. Deliberately the one warm accent in a UI that is
+   otherwise neutral graphite: it has to read as "someone else can act here"
+   at a glance, and it is the only signal when the bar is collapsed. No
+   pointer-events — it is a status light, not a control, so it stays out of
+   the click-through selector contract. */
+.remote-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  color: #f0b429;
+  pointer-events: none;
+}
+
+.remote-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f0b429;
+  box-shadow: 0 0 0 1.5px rgb(var(--glass-primary-rgb));
+  pointer-events: none;
+}
+
+/* A phone that can type here is a different state from one that is watching,
+   and the difference has to survive being a 7px dot. Amber says "someone is
+   attached"; red plus a pulse says "someone else's hands are on this machine".
+   The pulse is what carries it in peripheral vision — a hue shift alone is too
+   easy to miss, and too easy to lose to colour blindness. */
+.remote-indicator[data-input="on"],
+.remote-dot[data-input="on"] {
+  color: #ff5f56;
+  background: #ff5f56;
+}
+
+.remote-dot[data-input="on"] {
+  animation: remote-input-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes remote-input-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-dot[data-input="on"] {
+    animation: none;
+  }
+}
+
 .glass-panel-secondary,
 .glass-panel-light {
   background: var(--glass-sheen),

@@ -24,6 +24,7 @@ import { copyableText, extractCodeBlocks } from "../../lib/markdownCode"
 import {
   formatClock,
   formatDuration,
+  lastExchangeStart,
   startsExchange,
   type ChatMessage
 } from "../../lib/chatMessages"
@@ -32,6 +33,13 @@ export type { ChatMessage }
 
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkMath]
 const MARKDOWN_REHYPE_PLUGINS = [rehypeKatex]
+
+/**
+ * Breathing room above the pinned question. The anchor turn carries the
+ * exchange hairline on its own top edge (border-t + pt-3), so scrolling it
+ * flush would clip the rule against the scroller.
+ */
+const ANCHOR_TOP_GAP = 12
 
 /** Shared by the header and per-block copy buttons: writes, then confirms. */
 function useCopy(): [boolean, (text: string) => void] {
@@ -140,7 +148,10 @@ const SOURCE_META: Record<
 }
 
 const TurnHeader: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
-  const { icon: Icon, label } = SOURCE_META[msg.source]
+  const { icon: Icon, label: sourceLabel } = SOURCE_META[msg.source]
+  // The other side of the call is still a "user" turn, but labelling it "You"
+  // would attribute the interviewer's question to the person reading it.
+  const label = msg.speaker === "them" ? "Them · voice" : sourceLabel
   return (
     <div className="flex items-center gap-1.5 text-meta glass-subtle mb-1">
       <Icon className="w-3 h-3 shrink-0" strokeWidth={1.75} />
@@ -161,9 +172,6 @@ const MARKDOWN_COMPONENTS = {
   pre: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
   code: CodeBlock
 }
-
-/** How close to the bottom still counts as "following along". */
-const PIN_TOLERANCE_PX = 24
 
 interface AIResponseProps {
   title?: string
@@ -203,39 +211,66 @@ const AIResponse: React.FC<AIResponseProps> = ({
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Whether the reader is still following the tail. Mirrored into a ref because
-  // the effect below runs on every stream chunk and must not be re-subscribed
-  // per render just to read the latest value.
-  const pinnedRef = useRef(true)
-  const [pinned, setPinned] = useState(true)
+  // The panel used to pin itself to scrollHeight on every stream frame, which
+  // meant you watched the tail of an answer being written and had to hunt
+  // backwards for your own question to read it from the top. Instead: park the
+  // newest question at the top of the scroller and let the answer fill in
+  // beneath it.
+  //
+  // `followRef` drives the scrolling and `detached` only paints the Latest
+  // chip: the anchoring effect runs on every stream chunk and must read the
+  // current value without re-subscribing per render.
+  const followRef = useRef(true)
+  const [detached, setDetached] = useState(false)
+  const anchorId = messages[lastExchangeStart(messages)]?.id
 
-  const setPinnedState = (next: boolean) => {
-    pinnedRef.current = next
-    setPinned(next)
+  const setFollowing = (next: boolean) => {
+    followRef.current = next
+    setDetached(!next)
   }
 
-  const handleScroll = () => {
-    const el = scrollRef.current
-    if (!el) return
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
-    setPinnedState(distance <= PIN_TOLERANCE_PX)
+  const anchorToTop = () => {
+    const container = scrollRef.current
+    if (!container || !anchorId) return
+    const anchor = container.querySelector<HTMLElement>(
+      `[data-msg-id="${anchorId}"]`
+    )
+    if (!anchor) return
+    const offset =
+      anchor.getBoundingClientRect().top -
+      container.getBoundingClientRect().top +
+      container.scrollTop
+    container.scrollTop = Math.max(0, offset - ANCHOR_TOP_GAP)
   }
 
-  const jumpToLatest = () => {
-    const el = scrollRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-    setPinnedState(true)
-  }
-
-  // Only follow the tail while the reader is already at it. Scrolling up to
-  // re-read something from earlier in a long session used to be cancelled by
-  // the very next stream chunk.
+  // A new exchange re-arms anchoring, whatever the reader did during the last.
   useEffect(() => {
-    if (!pinnedRef.current) return
-    const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages, loading])
+    setFollowing(true)
+  }, [anchorId])
+
+  // Re-applied on every frame, not just at turn start: the assistant turn is an
+  // empty placeholder when the exchange opens, so there is nothing below the
+  // question to scroll against and the browser clamps the write. Re-running as
+  // the answer grows walks the question up to the top and holds it there.
+  useEffect(() => {
+    if (!followRef.current) return
+    anchorToTop()
+  }, [messages, loading, anchorId])
+
+  // Hand control over on the gesture itself rather than on a scroll event: main
+  // resizes the window from content height all through a stream (see App.tsx),
+  // and the resulting clamp of scrollTop is indistinguishable from a reader
+  // scrolling. A trackpad two-finger scroll fires wheel, which is the real case.
+  const releaseFollow = () => {
+    setFollowing(false)
+  }
+
+  // Back to the current exchange, rather than to the raw bottom: the whole
+  // point of anchoring is that the question stays readable from the top.
+  const jumpToLatest = () => {
+    setFollowing(true)
+    anchorToTop()
+  }
 
   const lastAssistant = [...messages].reverse().find((m) => m.role === "gemini")
   const hasContent = messages.length > 0 || loading
@@ -303,7 +338,8 @@ const AIResponse: React.FC<AIResponseProps> = ({
         <div className="relative flex min-h-0 flex-1">
           <div
             ref={scrollRef}
-            onScroll={handleScroll}
+            onWheel={releaseFollow}
+            onTouchMove={releaseFollow}
             className="glass-reading flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[120px]"
           >
             {messages.map((msg, idx) => {
@@ -328,6 +364,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
               return (
                 <div
                   key={msg.id}
+                  data-msg-id={msg.id}
                   className={cn(
                     "text-title leading-[1.6]",
                     rule && "border-t border-glass pt-3",
@@ -365,7 +402,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
           </div>
           {/* Only while detached. Pinned is the common case, and a permanent
               floating chip over the transcript would cost more than it earns. */}
-          {!pinned && (
+          {detached && (
             <button
               type="button"
               onClick={jumpToLatest}
@@ -391,7 +428,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
           // request now would leave two streams writing the same last message.
           if (streaming) return
           // You just acted — go to it, wherever you'd scrolled to.
-          setPinnedState(true)
+          setFollowing(true)
           onSend()
         }}
       >
