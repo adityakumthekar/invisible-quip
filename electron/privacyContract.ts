@@ -22,6 +22,17 @@ export const AUTOPILOT_CONSENT_VERSION = 1
 export const AUTOPILOT_CONSENT_TEXT =
   "In autopilot, Quip clicks, types, and scrolls on your real screen by itself. It pauses for your approval before actions that are hard to undo, but its view of the screen can be wrong. Stay at the machine and press Cmd/Ctrl+Shift+Backspace to stop it at any time."
 
+/**
+ * Shown whenever INVISIBLE=false. That switch is a deliberate opt-out of
+ * capture protection, so the self-capture preflight can never pass and gating
+ * on it would leave Teach Me permanently unreachable. Teaching is allowed and
+ * this warning stays on screen for the whole session instead.
+ */
+export const VISIBLE_MODE_WARNING =
+  "INVISIBLE=false disables capture protection for debugging, so Quip is intentionally capturable right now."
+export const VISIBLE_MODE_REMEDIATION =
+  "Set INVISIBLE=true (or unset it) and restart Quip before teaching during a real screen share."
+
 export interface PrivacyAcknowledgementRecord {
   version: number
   acknowledgedAt: string
@@ -42,11 +53,21 @@ export interface PrivacyGateStatus {
   acknowledgementVersion: number
   preflightPassed: boolean
   lastPreflightResult: PrivacyPreflightResult | null
+  /**
+   * INVISIBLE=false — Quip is capturable right now. Read from the environment
+   * rather than from `lastPreflightResult.debugMode`, so the gate knows before
+   * the preflight has ever run and the user needs no extra click.
+   */
+  visibleMode: boolean
 }
 
 export type PrivacyGateBlockReason = "acknowledgement" | "preflight"
 
+export type PrivacyGateWarning = "visible-mode"
+
 export interface PrivacyGateDecision {
   canStart: boolean
   blockingReason?: PrivacyGateBlockReason
+  /** Set when teaching is allowed but something must stay visible on screen. */
+  warning?: PrivacyGateWarning
 }

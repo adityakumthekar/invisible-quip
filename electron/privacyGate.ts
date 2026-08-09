@@ -9,6 +9,12 @@ export function evaluatePrivacyGate(status: PrivacyGateStatus): PrivacyGateDecis
   if (!status.acknowledged) {
     return { canStart: false, blockingReason: "acknowledgement" }
   }
+  // INVISIBLE=false is a deliberate opt-out of capture protection, so the
+  // preflight can never pass and gating on it would make Teach Me unreachable.
+  // Warn loudly instead of blocking; the banner stays up for the whole session.
+  if (status.visibleMode) {
+    return { canStart: true, warning: "visible-mode" }
+  }
   if (!status.preflightPassed) {
     return { canStart: false, blockingReason: "preflight" }
   }

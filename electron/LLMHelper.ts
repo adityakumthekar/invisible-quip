@@ -8,6 +8,17 @@ import {
 } from "./teaching"
 import { parseAudioAnswer } from "./audioAnswer"
 import { ChatTurn, flattenHistory, toGeminiHistory } from "./chatHistory"
+import {
+  fitToVisionGrid,
+  ImageSize,
+  isTargetWithinImage,
+  readVisionMaxPixels
+} from "./visionImage"
+import {
+  budgetMaxTokens,
+  estimateMessagesTokens,
+  promptCrowdsContext
+} from "./openAIBudget"
 
 /**
  * How a model expresses target coordinates. Gemini is trained on a normalized
@@ -191,9 +202,15 @@ export class LLMHelper {
   private ollamaUrl: string = "http://localhost:11434"
   private useQwen: boolean = false
   private qwenBaseUrl: string =
-    process.env.QWEN_BASE_URL || "http://100.123.38.63:8765/v1"
-  private qwenModel: string = process.env.QWEN_MODEL || "qwen3-vl"
+    process.env.QWEN_BASE_URL || "http://100.123.38.63:8000/v1"
+  private qwenModel: string = process.env.QWEN_MODEL || "Qwen/Qwen3-VL-4B-Instruct"
   private qwenApiKey: string = process.env.QWEN_API_KEY || "EMPTY"
+  // The context window the server actually serves, learned from /v1/models.
+  // Keyed by URL+model so switchToQwen invalidates it for free rather than
+  // needing its own reset — pointing at a different server is the one case
+  // where a stale limit would silently mis-size every request.
+  private qwenMaxModelLen: number | null = null
+  private qwenMaxModelLenKey: string = ""
   // gemini-2.0-flash was shut down June 1, 2026. 3.6 Flash (GA 2026-07-21) is
   // the pick for autopilot: it scores 83% on OSWorld-Verified against 78.4% for
   // 3.5 Flash, and screen grounding is the weakest link in a run.
@@ -250,17 +267,86 @@ export class LLMHelper {
     }
   }
 
-  private async imageToDataUrl(
-    image: string | Buffer,
-    fullRes: boolean
-  ): Promise<string> {
-    if (fullRes) {
-      const buf =
-        typeof image === "string" ? await fs.promises.readFile(image) : image
-      return `data:image/png;base64,${buf.toString("base64")}`
+  /** Richer message when TCP/DNS fails before any HTTP status from vLLM. */
+  private formatQwenConnectError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error)
+    const cause =
+      error instanceof Error && error.cause instanceof Error
+        ? error.cause.message
+        : error instanceof Error && error.cause != null
+          ? String(error.cause)
+          : ""
+    const detail = [message, cause].filter(Boolean).join(" — ")
+    const hint =
+      "Host may be reachable (Tailscale/SSH) while the vLLM API on :8000 is down — check `docker ps` / `docker logs vllm` on redrob until GET /v1/models returns JSON."
+    return `Failed to connect to Qwen at ${this.qwenBaseUrl}: ${detail}. ${hint}`
+  }
+
+  /**
+   * Pull `max_model_len` out of a /v1/models payload and cache it, so the one
+   * request the Settings picker already makes also teaches us the context size.
+   */
+  private cacheQwenMaxModelLen(data: unknown, baseUrl: string): void {
+    const entries = (data as { data?: Array<Record<string, unknown>> })?.data
+    if (!Array.isArray(entries)) return
+
+    const match = entries.find((entry) => entry?.id === this.qwenModel)
+    const advertised = Number(match?.max_model_len)
+    if (Number.isFinite(advertised) && advertised > 0) {
+      this.qwenMaxModelLen = advertised
+      this.qwenMaxModelLenKey = `${baseUrl}::${this.qwenModel}`
     }
-    const part = await this.toChatImagePart(image)
-    return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+  }
+
+  /**
+   * The server's context window, or null if we could not find out.
+   *
+   * Never throws: a failure here must not stand in for the real connection
+   * error the actual request is about to raise. Null simply means "don't clamp".
+   */
+  private async getQwenMaxModelLen(): Promise<number | null> {
+    // Escape hatch for OpenAI-compatible servers that omit the field.
+    const override = Number(process.env.QWEN_MAX_MODEL_LEN)
+    if (Number.isFinite(override) && override > 0) return override
+
+    const key = `${this.qwenBaseUrl}::${this.qwenModel}`
+    if (this.qwenMaxModelLenKey === key) return this.qwenMaxModelLen
+
+    try {
+      const response = await fetch(`${this.qwenBaseUrl}/models`, {
+        headers: this.openAIHeaders()
+      })
+      if (response.ok) {
+        this.cacheQwenMaxModelLen(await response.json(), this.qwenBaseUrl)
+      }
+    } catch (error) {
+      console.error("[LLMHelper] Could not read max_model_len:", error)
+    }
+
+    // Remember the miss too, so an endpoint without the field is not re-probed
+    // before every message.
+    if (this.qwenMaxModelLenKey !== key) {
+      this.qwenMaxModelLenKey = key
+      this.qwenMaxModelLen = null
+    }
+    return this.qwenMaxModelLen
+  }
+
+  /**
+   * Chat-sized data URL for the OpenAI-compatible path, with the size it came
+   * out at — the server prices an image by its dimensions, and the data URL
+   * alone does not tell us those. Teaching does not use this: it needs the
+   * grid-aligned resize in generateTeachingStepWithQwen so the coordinates it
+   * gets back mean something.
+   */
+  private async imageToDataUrl(
+    image: string | Buffer
+  ): Promise<{ url: string; size: ImageSize }> {
+    const { part, size } = await this.toChatImagePart(image)
+    return {
+      url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
+      size
+    }
   }
 
   private toOpenAIHistory(history: ChatTurn[]): {
@@ -271,6 +357,37 @@ export class LLMHelper {
       role: turn.role === "user" ? ("user" as const) : ("assistant" as const),
       content: turn.text
     }))
+  }
+
+  /**
+   * How many output tokens this request may ask for.
+   *
+   * Sits in front of both senders so every Qwen call site is covered at once:
+   * teaching, image analysis, chat, and the connection test. Without it we sent
+   * caps chosen for Gemini — 8192 for teaching, 2048 elsewhere — which a server
+   * running `--max-model-len 4096` rejects outright, with the screenshot alone
+   * costing ~2000 of those tokens.
+   */
+  private async budgetQwenOutput(
+    messages: Array<{ content: unknown }>,
+    options: { maxTokens?: number; imageSizes?: ImageSize[] }
+  ): Promise<number> {
+    const maxModelLen = await this.getQwenMaxModelLen()
+    const promptTokens = estimateMessagesTokens(messages, options.imageSizes)
+
+    if (promptCrowdsContext(promptTokens, maxModelLen)) {
+      console.warn(
+        `[LLMHelper] Prompt is ~${promptTokens} tokens against a ` +
+          `${maxModelLen}-token context at ${this.qwenBaseUrl}; the reply may be ` +
+          "cut short. Restart vLLM with a larger --max-model-len for long sessions."
+      )
+    }
+
+    return budgetMaxTokens({
+      maxModelLen,
+      promptTokens,
+      requestedMaxTokens: options.maxTokens ?? 2048
+    })
   }
 
   /**
@@ -290,6 +407,12 @@ export class LLMHelper {
       json?: boolean
       history?: ChatTurn[]
       system?: string
+      /**
+       * Dimensions of the images in `userContent`, in order. Passed alongside
+       * rather than on the parts themselves because those go straight onto the
+       * wire — an extra field would leak into the request body.
+       */
+      imageSizes?: ImageSize[]
     } = {}
   ): Promise<string> {
     const messages: Array<{
@@ -305,17 +428,24 @@ export class LLMHelper {
     }
     messages.push({ role: "user", content: userContent })
 
-    const response = await fetch(`${this.qwenBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: this.openAIHeaders(),
-      body: JSON.stringify({
-        model: this.qwenModel,
-        messages,
-        temperature: options.temperature ?? 0.4,
-        max_tokens: options.maxTokens ?? 2048,
-        ...(options.json ? { response_format: { type: "json_object" } } : {})
+    const maxTokens = await this.budgetQwenOutput(messages, options)
+
+    let response: Response
+    try {
+      response = await fetch(`${this.qwenBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers: this.openAIHeaders(),
+        body: JSON.stringify({
+          model: this.qwenModel,
+          messages,
+          temperature: options.temperature ?? 0.4,
+          max_tokens: maxTokens,
+          ...(options.json ? { response_format: { type: "json_object" } } : {})
+        })
       })
-    })
+    } catch (error) {
+      throw new Error(this.formatQwenConnectError(error))
+    }
 
     if (!response.ok) {
       const body = await response.text().catch(() => "")
@@ -348,6 +478,7 @@ export class LLMHelper {
       history?: ChatTurn[]
       system?: string
       signal?: AbortSignal
+      imageSizes?: ImageSize[]
     } = {}
   ): Promise<string> {
     const messages: Array<{
@@ -363,6 +494,8 @@ export class LLMHelper {
     }
     messages.push({ role: "user", content: userContent })
 
+    const maxTokens = await this.budgetQwenOutput(messages, options)
+
     let response: Response
     try {
       response = await fetch(`${this.qwenBaseUrl}/chat/completions`, {
@@ -372,16 +505,13 @@ export class LLMHelper {
           model: this.qwenModel,
           messages,
           temperature: options.temperature ?? 0.4,
-          max_tokens: options.maxTokens ?? 2048,
+          max_tokens: maxTokens,
           stream: true
         }),
         signal: options.signal
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      throw new Error(
-        `Failed to connect to Qwen at ${this.qwenBaseUrl}: ${message}`
-      )
+      throw new Error(this.formatQwenConnectError(error))
     }
 
     if (!response.ok || !response.body) {
@@ -458,12 +588,17 @@ export class LLMHelper {
         withoutEnlargement: true
       })
       .jpeg({ quality: 80 })
-      .toBuffer()
+      // Trust what sharp actually produced, never what we asked for — the same
+      // rule the teaching path follows, and what the token budget prices.
+      .toBuffer({ resolveWithObject: true })
     return {
-      inlineData: {
-        data: jpeg.toString("base64"),
-        mimeType: "image/jpeg"
-      }
+      part: {
+        inlineData: {
+          data: jpeg.data.toString("base64"),
+          mimeType: "image/jpeg"
+        }
+      },
+      size: { width: jpeg.info.width, height: jpeg.info.height }
     }
   }
 
@@ -909,20 +1044,23 @@ export class LLMHelper {
   public async analyzeImageFile(imagePath: string) {
     try {
       if (this.useQwen) {
-        const dataUrl = await this.imageToDataUrl(imagePath, false)
+        const image = await this.imageToDataUrl(imagePath)
         const text = await this.callOpenAI(
           [
             { type: "text", text: this.imageAnalysisPrompt() },
-            { type: "image_url", image_url: { url: dataUrl } }
+            { type: "image_url", image_url: { url: image.url } }
           ],
-          { temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature }
+          {
+            temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+            imageSizes: [image.size]
+          }
         )
         return { text, timestamp: Date.now() }
       }
       if (!this.model) {
         throw new Error("No LLM provider configured")
       }
-      const imagePart = await this.toChatImagePart(imagePath);
+      const { part: imagePart } = await this.toChatImagePart(imagePath);
       const result = await this.model.generateContent({
         contents: [
           {
@@ -947,20 +1085,21 @@ export class LLMHelper {
     signal?: AbortSignal
   ): Promise<string> {
     if (this.useQwen) {
-      const dataUrl = await this.imageToDataUrl(imagePath, false)
+      const image = await this.imageToDataUrl(imagePath)
       return this.callOpenAIStream(
         [
           { type: "text", text: this.imageAnalysisPrompt() },
-          { type: "image_url", image_url: { url: dataUrl } }
+          { type: "image_url", image_url: { url: image.url } }
         ],
         onChunk,
         {
           temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+          imageSizes: [image.size],
           signal
         }
       )
     }
-    const imagePart = await this.toChatImagePart(imagePath)
+    const { part: imagePart } = await this.toChatImagePart(imagePath)
     return this.consumeGeminiStream(
       {
         contents: [
@@ -1061,24 +1200,29 @@ export class LLMHelper {
         return this.callOllama(message);
       }
       if (this.useQwen) {
-        const dataUrls = await Promise.all(
-          images.map((i) => this.imageToDataUrl(i, false))
+        const encoded = await Promise.all(
+          images.map((i) => this.imageToDataUrl(i))
         )
         return this.callOpenAI(
           [
             { type: "text", text: this.screenChatPrompt(message) },
-            ...dataUrls.map(
-              (url) =>
-                ({ type: "image_url", image_url: { url } }) as const
+            ...encoded.map(
+              (image) =>
+                ({ type: "image_url", image_url: { url: image.url } }) as const
             )
           ],
-          { temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature }
+          {
+            temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+            imageSizes: encoded.map((image) => image.size)
+          }
         )
       }
       if (!this.model) {
         throw new Error("No LLM provider configured");
       }
-      const imageParts = await Promise.all(images.map((i) => this.toChatImagePart(i)));
+      const imageParts = await Promise.all(
+        images.map(async (i) => (await this.toChatImagePart(i)).part)
+      );
       const result = await this.model.generateContent({
         contents: [
           {
@@ -1112,27 +1256,28 @@ export class LLMHelper {
       )
     }
     if (this.useQwen) {
-      const dataUrls = await Promise.all(
-        images.map((i) => this.imageToDataUrl(i, false))
+      const encoded = await Promise.all(
+        images.map((i) => this.imageToDataUrl(i))
       )
       return this.callOpenAIStream(
         [
           { type: "text", text: this.screenChatPrompt(message) },
-          ...dataUrls.map(
-            (url) =>
-              ({ type: "image_url", image_url: { url } }) as const
+          ...encoded.map(
+            (image) =>
+              ({ type: "image_url", image_url: { url: image.url } }) as const
           )
         ],
         onChunk,
         {
           temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+          imageSizes: encoded.map((image) => image.size),
           history,
           signal
         }
       )
     }
     const imageParts = await Promise.all(
-      images.map((i) => this.toChatImagePart(i))
+      images.map(async (i) => (await this.toChatImagePart(i)).part)
     )
     // History is text-only: past screenshots are not re-uploaded, so a
     // follow-up reasons over what was said about a screen, not the screen.
@@ -1273,20 +1418,41 @@ export class LLMHelper {
     screenshotPath: string,
     imageSize: { width: number; height: number }
   ): Promise<TeachingStepResponse> {
-    const dataUrl = await this.imageToDataUrl(screenshotPath, true)
+    // Resize to the model's own patch grid before sending, so the image the
+    // server's smart_resize would produce is the image we already sent — that
+    // makes "absolute pixels" unambiguous whichever frame the model answers in.
+    // See visionImage.ts for why this matters more than it looks.
+    const requested = fitToVisionGrid(imageSize, {
+      maxPixels: readVisionMaxPixels()
+    })
+    const resized = await sharp(screenshotPath)
+      .resize(requested.width, requested.height, { fit: "fill" })
+      .png()
+      .toBuffer({ resolveWithObject: true })
+
+    // Trust what sharp actually produced, never what we asked for.
+    const sentSize = { width: resized.info.width, height: resized.info.height }
+    const dataUrl = `data:image/png;base64,${resized.data.toString("base64")}`
+
     const raw = await this.callOpenAI(
       [
         {
           type: "text",
-          text: buildTeachingPrompt(goal, history, imageSize, "pixels")
+          text: buildTeachingPrompt(goal, history, sentSize, "pixels")
         },
         { type: "image_url", image_url: { url: dataUrl } }
       ],
       {
         temperature: 0,
-        maxTokens: Number(process.env.TEACHING_MAX_OUTPUT_TOKENS) || 8192,
+        // Not TEACHING_MAX_OUTPUT_TOKENS: that knob budgets Gemini's invisible
+        // thinking tokens, which is why it is 8192 there. Qwen3-VL-Instruct does
+        // not think out loud and emits ~200 tokens of JSON, so 8192 bought
+        // nothing and exceeded the whole context of a 4096-token server.
+        maxTokens: Number(process.env.TEACHING_QWEN_MAX_OUTPUT_TOKENS) || 1024,
         json: true,
-        system: ""
+        system: "",
+        // Exact, not estimated — we resized this image ourselves just above.
+        imageSizes: [sentSize]
       }
     )
 
@@ -1296,11 +1462,19 @@ export class LLMHelper {
       )
     }
 
-    return normalizeTeachingStep(
-      parseTeachingModelText(raw),
-      imageSize,
-      "pixels"
-    )
+    const parsed = parseTeachingModelText(raw)
+
+    // A target centred off-image means the model answered in some other
+    // coordinate frame. Downstream this would be silently clamped to a screen
+    // edge and clicked with full confidence, so fail and let the loop retry.
+    if (parsed.state === "step" && !isTargetWithinImage(parsed.target, sentSize)) {
+      throw new Error(
+        `Qwen returned a target outside the ${sentSize.width}x${sentSize.height} ` +
+          `image (${Math.round(parsed.target.x)}, ${Math.round(parsed.target.y)}).`
+      )
+    }
+
+    return normalizeTeachingStep(parsed, sentSize, "pixels")
   }
 
   public isUsingOllama(): boolean {
@@ -1309,6 +1483,48 @@ export class LLMHelper {
 
   public isUsingQwen(): boolean {
     return this.useQwen
+  }
+
+  /**
+   * Models the vLLM endpoint is actually serving, for the Settings picker.
+   *
+   * Takes the URL as an argument rather than reading `this.qwenBaseUrl` so the
+   * panel can list what's on a server before committing to it — the point is to
+   * catch a wrong model id at Apply rather than at the first message. Returns
+   * an empty list on any failure: an endpoint without /models should fall back
+   * to typing the id, not show an error.
+   */
+  public async listQwenModels(
+    baseUrl?: string,
+    apiKey?: string
+  ): Promise<string[]> {
+    const url = baseUrl
+      ? this.normalizeOpenAIBaseUrl(baseUrl)
+      : this.qwenBaseUrl
+
+    try {
+      const response = await fetch(`${url}/models`, {
+        headers: {
+          Authorization: `Bearer ${apiKey || this.qwenApiKey || "EMPTY"}`
+        }
+      })
+      if (!response.ok) {
+        return []
+      }
+
+      const data = (await response.json()) as {
+        data?: Array<{ id?: unknown }>
+      }
+      // Same payload carries max_model_len; learn it here rather than paying
+      // for a second round trip on the first message.
+      this.cacheQwenMaxModelLen(data, url)
+      return (data.data ?? [])
+        .map((entry) => entry?.id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    } catch (error) {
+      console.error("[LLMHelper] Could not list Qwen models:", error)
+      return []
+    }
   }
 
   public async getOllamaModels(): Promise<string[]> {
@@ -1399,9 +1615,14 @@ export class LLMHelper {
         return { success: true };
       }
       if (this.useQwen) {
-        const modelsRes = await fetch(`${this.qwenBaseUrl}/models`, {
-          headers: this.openAIHeaders()
-        })
+        let modelsRes: Response
+        try {
+          modelsRes = await fetch(`${this.qwenBaseUrl}/models`, {
+            headers: this.openAIHeaders()
+          })
+        } catch (error) {
+          return { success: false, error: this.formatQwenConnectError(error) }
+        }
         if (!modelsRes.ok) {
           return {
             success: false,

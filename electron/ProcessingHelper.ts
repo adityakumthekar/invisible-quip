@@ -1,12 +1,41 @@
 // ProcessingHelper.ts
 
+import { app } from "electron"
+import fs from "fs"
+import path from "path"
 import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
 import { abortAllChatStreams } from "./chatStreams"
 import { ChatTurn } from "./chatHistory"
+import {
+  LLM_SETTINGS_FILENAME,
+  parseLlmSettings,
+  type LlmSettings
+} from "./llmSettingsStore"
 import dotenv from "dotenv"
 
 dotenv.config()
+
+/**
+ * What the user last chose in Settings, or null when they never have.
+ *
+ * Read synchronously because the constructor below is synchronous and runs
+ * before any window exists — it's one small file, once, at startup. A missing
+ * or corrupt file yields null so the environment still decides, which is what
+ * an .env-only setup has always relied on.
+ */
+function readStoredLlmSettings(): LlmSettings | null {
+  try {
+    return parseLlmSettings(
+      fs.readFileSync(
+        path.join(app.getPath("userData"), LLM_SETTINGS_FILENAME),
+        "utf8"
+      )
+    )
+  } catch {
+    return null
+  }
+}
 
 const isDev = process.env.NODE_ENV === "development"
 const isDevTest = process.env.IS_DEV_TEST === "true"
@@ -21,15 +50,31 @@ export class ProcessingHelper {
   constructor(appState: AppState) {
     this.appState = appState
     
-    // Check if user wants to use Ollama or remote Qwen (vLLM)
-    const useOllama = process.env.USE_OLLAMA === "true"
-    const useQwen = process.env.USE_QWEN === "true"
-    const ollamaModel = process.env.OLLAMA_MODEL // Don't set default here, let LLMHelper auto-detect
-    const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434"
+    // What the user picked in Settings wins; the environment is the fallback,
+    // so an existing .env-only setup keeps behaving exactly as it did.
+    const stored = readStoredLlmSettings()
+
+    const useOllama = stored
+      ? stored.provider === "ollama"
+      : process.env.USE_OLLAMA === "true"
+    const useQwen = stored
+      ? stored.provider === "qwen"
+      : process.env.USE_QWEN === "true"
+
+    // Don't default the Ollama model here; let LLMHelper auto-detect.
+    const ollamaModel = stored?.ollama?.model ?? process.env.OLLAMA_MODEL
+    const ollamaUrl =
+      stored?.ollama?.url ?? process.env.OLLAMA_URL ?? "http://localhost:11434"
     const qwenBaseUrl =
-      process.env.QWEN_BASE_URL || "http://100.123.38.63:8765/v1"
-    const qwenModel = process.env.QWEN_MODEL || "qwen3-vl"
-    const qwenApiKey = process.env.QWEN_API_KEY || "EMPTY"
+      stored?.qwen?.baseUrl ??
+      process.env.QWEN_BASE_URL ??
+      "http://100.123.38.63:8000/v1"
+    const qwenModel =
+      stored?.qwen?.model ??
+      process.env.QWEN_MODEL ??
+      "Qwen/Qwen3-VL-4B-Instruct"
+    const qwenApiKey =
+      stored?.qwen?.apiKey ?? process.env.QWEN_API_KEY ?? "EMPTY"
 
     if (useOllama) {
       console.log("[ProcessingHelper] Initializing with Ollama")
@@ -47,7 +92,7 @@ export class ProcessingHelper {
         qwenApiKey
       )
     } else {
-      const apiKey = process.env.GEMINI_API_KEY
+      const apiKey = stored?.gemini?.apiKey ?? process.env.GEMINI_API_KEY
       if (!apiKey) {
         throw new Error(
           "GEMINI_API_KEY not found in environment variables. Set GEMINI_API_KEY, enable Ollama with USE_OLLAMA=true, or enable Qwen with USE_QWEN=true"

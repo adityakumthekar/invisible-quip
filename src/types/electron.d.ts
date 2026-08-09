@@ -1,12 +1,17 @@
 import type { TeachingResult } from "../lib/teaching"
 import type { TeachingOverlayTargetEvent } from "../lib/teachingOverlayContract"
 import type { PrivacyGateStatus, PrivacyPreflightResult } from "../lib/privacyContract"
-import type { AutopilotUpdate } from "../lib/autopilot"
+import type { AutonomyLevel, AutopilotUpdate } from "../lib/autopilot"
 
 export interface AutopilotConsent {
   consented: boolean
   text: string
   version: number
+}
+
+export interface AutopilotAutonomy {
+  level: AutonomyLevel
+  description: string
 }
 
 export interface OllamaPullProgress {
@@ -71,6 +76,8 @@ export interface ElectronAPI {
   // Autopilot (unattended runs)
   autopilotGetConsent: () => Promise<AutopilotConsent>
   autopilotAcknowledgeConsent: () => Promise<AutopilotConsent>
+  autopilotGetAutonomy: () => Promise<AutopilotAutonomy>
+  autopilotSetAutonomy: (level: AutonomyLevel) => Promise<AutopilotAutonomy>
   autopilotStart: (
     goal: string,
     options?: { maxSteps?: number }
@@ -105,6 +112,7 @@ export interface ElectronAPI {
     model?: string,
     apiKey?: string
   ) => Promise<{ success: boolean; error?: string }>
+  listQwenModels: (baseUrl?: string, apiKey?: string) => Promise<string[]>
   switchToGemini: (
     apiKey?: string
   ) => Promise<{ success: boolean; error?: string }>

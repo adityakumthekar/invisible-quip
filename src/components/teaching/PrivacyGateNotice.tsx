@@ -27,7 +27,7 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
 }) => {
   if (!privacy.status && !privacy.error) {
     return (
-      <p className="mt-4 text-[11px] glass-muted" role="status">
+      <p className="mt-4 text-meta glass-muted" role="status">
         Checking privacy status…
       </p>
     )
@@ -35,7 +35,7 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
 
   if (privacy.error) {
     return (
-      <p className="mt-4 text-[12.5px] leading-relaxed glass-text" role="alert">
+      <p className="mt-4 text-body leading-relaxed glass-text" role="alert">
         {privacy.error}
       </p>
     )
@@ -55,14 +55,14 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
             className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon"
             strokeWidth={1.75}
           />
-          <p className="text-[11.5px] leading-relaxed glass-text">
+          <p className="text-label leading-relaxed glass-text">
             {privacy.status.acknowledgementText}
           </p>
         </div>
         <button
           type="button"
           onClick={onAcknowledge}
-          className="glass-action rounded-lg px-3 py-2 text-[11px]"
+          className="glass-action rounded-nested px-3 py-2 text-meta"
         >
           I understand
         </button>
@@ -73,7 +73,7 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
   if (gate.blockingReason === "preflight") {
     return (
       <div className="mt-4 space-y-3">
-        <p className="text-[11.5px] leading-relaxed glass-text">
+        <p className="text-label leading-relaxed glass-text">
           Before this session, Quip runs a local, one-time check to see whether
           a test marker leaks into a screenshot. This is best-effort — always
           verify your own share preview too.
@@ -85,13 +85,13 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
                 ? "status"
                 : "alert"
             }
-            className="rounded-lg bg-glass-soft px-2.5 py-2"
+            className="rounded-nested bg-glass-soft px-2.5 py-2"
           >
-            <p className="text-[11px] glass-muted">
+            <p className="text-meta glass-muted">
               {privacy.status.lastPreflightResult.reason}
             </p>
             {privacy.status.lastPreflightResult.remediation && (
-              <p className="mt-1 text-[11px] glass-muted">
+              <p className="mt-1 text-meta glass-muted">
                 {privacy.status.lastPreflightResult.remediation}
               </p>
             )}
@@ -101,7 +101,7 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
           type="button"
           onClick={onRunCheck}
           disabled={privacy.checking}
-          className="glass-action flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+          className="glass-action flex items-center gap-1.5 rounded-nested px-3 py-2 text-meta disabled:opacity-40"
         >
           <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} />
           {privacy.checking

@@ -4,13 +4,19 @@
 
 /* The overlay lives on a transparent, frameless Electron window. Note that
    `backdrop-filter` there only blurs content *inside* the page — it cannot blur
-   the desktop behind the window (electron#30412). So the surfaces below are
-   really a flat translucent scrim over unblurred desktop, and ~28% of whatever
-   sits behind bleeds through as high-frequency noise. Readability is bought by
-   a neutral (non-tinting) fill, high text alphas, and a per-glyph text shadow —
-   NOT by the blur, which is kept only as free progressive enhancement.
+   the desktop behind the window (electron#30412). So the surfaces below are a
+   translucent scrim over unblurred desktop, and ~28% of whatever sits behind
+   bleeds through as high-frequency noise. Readability is bought by a neutral
+   (non-tinting) fill, high text alphas, and a per-glyph text shadow — NOT by
+   the blur, which is kept only as free progressive enhancement.
    Raising the alpha is deliberately not the lever: the overlay is meant to stay
-   see-through. */
+   see-through.
+
+   What the surfaces *do* get is a light model — a top-lit sheen and a specular
+   rim that is bright at the top edge and fades toward the bottom. That is the
+   half of Apple's glass material which doesn't depend on blur, and it is what
+   makes these read as lenses rather than as grey boxes. See the "Glass
+   surfaces" section below. */
 :root {
   color-scheme: dark;
   /* Default theme is neutral graphite: a saturated fill tints everything behind
@@ -42,9 +48,71 @@
   --glass-control-bg: rgba(0, 0, 0, 0.24);
   --glass-control-border: rgba(255, 255, 255, 0.16);
   --glass-blur: blur(30px) saturate(155%);
-  --glass-radius: 18px;
-  --glass-radius-sm: 12px;
-  --glass-radius-pill: 999px;
+
+  /* ——— Lens material ———
+     Top-lit gloss: light entering the top edge. Layered OVER the token colour,
+     so the themes and all three [data-glass-strength] levels keep working
+     underneath.
+
+     The stops are in PIXELS, not percentages, and this is load-bearing. A
+     percentage wash (the obvious first cut: 0.10 white fading out by 55% of
+     the panel) sits *behind the text*, and adding white behind light text on a
+     translucent panel costs contrast — measured, it dropped the subtle tier
+     over a white desktop from 4.94:1 to 4.24:1, straight through the 4.5:1
+     floor this file exists to hold. A 10px band is fully transparent before
+     any text starts (the tightest case is .icon-btn in the bar at ~11.6px, and
+     panel headers start at 14px), so it reads as gloss and costs nothing.
+     It is also closer to the reference: Apple's specular highlight is a
+     concentrated band under the edge, not a broad wash. Keep the final stop
+     at or under 10px. */
+  --glass-sheen: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.16) 0,
+    rgba(255, 255, 255, 0.06) 4px,
+    rgba(255, 255, 255, 0) 10px
+  );
+  /* Specular rim stops. Bright top, near-nothing middle, a little bounce-light
+     returning at the bottom — the asymmetry is what reads as a lens rather
+     than a box with a border. */
+  --glass-rim-top: rgba(255, 255, 255, 0.34);
+  --glass-rim-mid: rgba(255, 255, 255, 0.12);
+  --glass-rim-low: rgba(255, 255, 255, 0.05);
+  --glass-rim-bounce: rgba(255, 255, 255, 0.14);
+  /* Zero-offset outer ring. Edge definition against a bright desktop — this is
+     the only part of the old four-layer shadow stack that was load-bearing. */
+  --glass-contact-ring: rgba(0, 0, 0, 0.34);
+
+  /* Radius, concentric. Apple's rule is inner = outer − padding, which is what
+     makes a control inside a panel look struck from the same arc rather than
+     pasted on: a 16px surface with 12px padding gives 10px children, and a
+     10px segmented track gives 6px segments. The old tokens (18/12) were
+     declared but bypassed — every component reached for Tailwind's rounded-lg
+     (8px) instead, so an 8px control sat inside an 18px panel. */
+  --r-surface: 16px;
+  --r-nested: 10px;
+  --r-inner: 6px;
+  --r-pill: 999px;
+
+  /* Type. Four steps plus the key-cap size. The overlay had seven sizes inside
+     a 3px range — 11/11.5 and 12/12.5 are differences no reader perceives but
+     which guarantee no two components agree. */
+  --fs-title: 13px;
+  --fs-body: 12.5px;
+  --fs-label: 11.5px;
+  --fs-meta: 11px;
+  --fs-kbd: 10px;
+
+  /* Spacing, so panel padding stops being chosen per component. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+
+  /* Aliases kept so the surface rules below read as before. */
+  --glass-radius: var(--r-surface);
+  --glass-radius-sm: var(--r-nested);
+  --glass-radius-pill: var(--r-pill);
 
   /* Local contrast per glyph, so text survives whatever bleeds through. Same
      trick subtitles and desktop icon labels use. Set to `none` to disable. */
@@ -82,6 +150,11 @@
   --glass-accent-soft: rgba(143, 176, 255, 0.16);
   --glass-hover: rgba(143, 176, 255, 0.12);
   --glass-link: #a8c4ff;
+  /* The rim picks up the theme's hue the way the old tinted border did. */
+  --glass-rim-top: rgba(190, 212, 255, 0.36);
+  --glass-rim-mid: rgba(190, 212, 255, 0.14);
+  --glass-rim-low: rgba(190, 212, 255, 0.06);
+  --glass-rim-bounce: rgba(190, 212, 255, 0.16);
 }
 
 [data-glass-theme="purple"] {
@@ -94,6 +167,10 @@
   --glass-accent-soft: rgba(168, 140, 255, 0.16);
   --glass-hover: rgba(168, 140, 255, 0.12);
   --glass-link: #cbb8ff;
+  --glass-rim-top: rgba(214, 199, 255, 0.36);
+  --glass-rim-mid: rgba(214, 199, 255, 0.14);
+  --glass-rim-low: rgba(214, 199, 255, 0.06);
+  --glass-rim-bounce: rgba(214, 199, 255, 0.16);
 }
 
 /* Strength is how much desktop bleeds through — it is not a blur amount, since
@@ -125,6 +202,34 @@
   --glass-scrim: rgba(10, 11, 14, 0.12);
   --glass-text-shadow: none;
   --glass-text-shadow-strong: 0 1px 1.5px rgba(0, 0, 0, 0.4);
+}
+
+/* macOS "Reduce Transparency" (and the Windows/GNOME equivalents). This is the
+   one accessibility setting the overlay's core constraint makes worst: someone
+   who turns it on is telling us they can't read text over a busy background,
+   and blur — the usual mitigation — is exactly what this window can't do. So
+   honour it by going nearly opaque and dropping the compensations that only
+   exist to survive bleed-through.
+   Selector deliberately matches [data-glass-strength] too: those blocks are
+   attribute selectors and would otherwise out-specify a bare :root. Placed
+   after them so equal specificity resolves in this rule's favour. */
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  [data-glass-strength] {
+    --glass-primary-alpha: 0.97;
+    --glass-secondary-alpha: 0.96;
+    --glass-scrim: transparent;
+    --glass-text-shadow: none;
+    --glass-text-shadow-strong: none;
+    /* The sheen lightens the top of each panel, which is exactly where the
+       headings sit — worth it for the lens read, not worth it for someone who
+       asked the OS to stop making surfaces hard to read. */
+    --glass-sheen: none;
+    --glass-rim-top: rgba(255, 255, 255, 0.2);
+    --glass-rim-mid: rgba(255, 255, 255, 0.12);
+    --glass-rim-low: rgba(255, 255, 255, 0.1);
+    --glass-rim-bounce: rgba(255, 255, 255, 0.12);
+  }
 }
 
 html,
@@ -192,14 +297,14 @@ body,
 .chat-md code {
   background: rgba(0, 0, 0, 0.06);
   padding: 0.1em 0.35em;
-  border-radius: 4px;
+  border-radius: var(--r-inner);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.9em;
 }
 .chat-md pre {
   background: rgba(0, 0, 0, 0.06);
   padding: 0.7em;
-  border-radius: 8px;
+  border-radius: var(--r-nested);
   overflow-x: auto;
   max-width: 100%;
   margin: 0.5em 0;
@@ -210,7 +315,7 @@ body,
 .chat-md .chat-code {
   position: relative;
   background: rgba(0, 0, 0, 0.06);
-  border-radius: 8px;
+  border-radius: var(--r-nested);
   max-width: 100%;
   margin: 0.5em 0;
 }
@@ -219,7 +324,7 @@ body,
 .chat-md .chat-code-scroll {
   overflow-x: auto;
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: var(--r-nested);
 }
 .chat-md .chat-code-copy {
   position: absolute;
@@ -337,24 +442,81 @@ body,
 .chat-md-dark th { background: rgba(0, 0, 0, 0.18); }
 
 /* ——— Glass surfaces ———
-   Each surface carries two rings: a dark outer one so the edge stays defined
-   against a bright desktop, and the light inset one so it stays defined against
-   a dark desktop. A single hairline disappears on one or the other. */
-.glass-bar {
-  background: var(--glass-dark-bg);
+   Apple's Settings material reads as glass because of four things: backdrop
+   blur, a specular rim that is brightest along the top edge and fades toward
+   the bottom, a top-lit luminance falloff inside the surface, and a faint
+   bounce of light returning at the bottom edge. The blur is unavailable here
+   (see the note at the top of this file), so the other three do all the work.
+   Modelling where the light is turns out to be most of what the eye reads as
+   "lens" — and unlike blur, none of it costs anything.
+
+   Deliberately NO drop shadow. The window is sized to its own content and
+   box-shadows don't contribute to layout, so every pixel a shadow reaches past
+   the wrapper padding is either hard-clipped at the transparent window edge or
+   paid for with dead space — this used to cost 32px of pb in Queue.tsx and a
+   hand-reported 26px in ShortcutsTooltip. What survives is a zero-offset
+   contact ring, which is edge definition against a bright desktop, not depth.
+
+   The shared rule below is a plain selector list rather than a new utility
+   class on purpose: the set of surface class names is duplicated in
+   HIT_SELECTOR (src/hooks/useClickThrough.ts) and asserted in sync by
+   clickThroughSelectors.test.ts, so introducing one is a click-through
+   decision, not a styling one. */
+.glass-bar,
+.glass-panel-dark,
+.glass-panel-secondary,
+.glass-panel-light {
+  position: relative;
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-dark-border);
-  border-radius: var(--glass-radius-pill);
+  /* No border: the rim below is a gradient, which border-color can't express.
+     Boxes are border-box, so dropping it doesn't change the outer size. */
+  border: 0;
+  box-shadow: 0 0 0 1px var(--glass-contact-ring);
+}
+
+/* The specular rim. Bright at the top, almost gone through the middle, with a
+   little bounce-light back at the bottom — that asymmetry is the single
+   strongest lens cue, and a flat 1px border can never give it. Painted as a
+   masked pseudo-element so it stays a true hairline around every corner
+   radius, including the pill. */
+.glass-bar::after,
+.glass-panel-dark::after,
+.glass-panel-secondary::after,
+.glass-panel-light::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    180deg,
+    var(--glass-rim-top) 0%,
+    var(--glass-rim-mid) 30%,
+    var(--glass-rim-low) 62%,
+    var(--glass-rim-bounce) 100%
+  );
+  /* Both spellings on purpose. Autoprefixer does not generate the standard
+     `mask` from the prefixed one, so writing only `-webkit-mask` would leave
+     `mask-composite: exclude` with nothing to composite and make the rim
+     depend entirely on the prefixed path. Standard last, so it wins. */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  /* Pseudo-elements aren't matched by the `#root *` reset above, so this opts
+     out by hand rather than inheriting anything. */
+  pointer-events: none;
+}
+
+.glass-bar {
+  background: var(--glass-sheen), var(--glass-dark-bg);
+  border-radius: var(--r-pill);
   color: var(--glass-dark-text);
-  /* Reach (offset + blur/2) is kept under the wrapper padding in Queue.tsx —
-     the window is sized to content and shadows don't affect layout, so
-     anything taller than that padding gets hard-clipped at the window edge. */
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 2px 5px rgba(0, 0, 0, 0.24),
-    0 8px 24px rgba(0, 0, 0, 0.46);
 }
 
 /* Retracted control bar. Everything visual — surface, rings, shadow, and the
@@ -377,37 +539,30 @@ body,
 .collapsed-blob:active {
   cursor: grabbing;
 }
+/* Layered, not replaced: a bare `background: <colour>` here would drop the
+   sheen and the fill along with it and the blob would go flat on hover. */
 .collapsed-blob:hover {
-  background: var(--glass-accent-soft);
+  background: linear-gradient(
+      0deg,
+      var(--glass-accent-soft),
+      var(--glass-accent-soft)
+    ),
+    var(--glass-sheen), var(--glass-dark-bg);
 }
 
 .glass-panel-secondary,
 .glass-panel-light {
-  background: rgb(var(--glass-secondary-rgb) / var(--glass-secondary-alpha));
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-secondary-border);
-  border-radius: var(--glass-radius);
+  background: var(--glass-sheen),
+    rgb(var(--glass-secondary-rgb) / var(--glass-secondary-alpha));
+  border-radius: var(--r-surface);
   color: var(--glass-text);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    0 2px 6px rgba(0, 0, 0, 0.26),
-    0 10px 28px rgba(0, 0, 0, 0.44);
 }
 
 .glass-panel-dark {
-  background: rgb(var(--glass-primary-rgb) / var(--glass-primary-alpha));
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-primary-border);
-  border-radius: var(--glass-radius);
+  background: var(--glass-sheen),
+    rgb(var(--glass-primary-rgb) / var(--glass-primary-alpha));
+  border-radius: var(--r-surface);
   color: var(--glass-text);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    0 2px 6px rgba(0, 0, 0, 0.26),
-    0 10px 28px rgba(0, 0, 0, 0.48);
 }
 
 /* Denser backing for running text, so the panel chrome can stay see-through
@@ -417,24 +572,76 @@ body,
   background: var(--glass-scrim);
 }
 
+/* Persistent "you are capturable" warning. It has to survive a bright desktop
+   showing through the panel, so it carries its own opaque-ish tint and a
+   warning-toned rule rather than relying on backdrop-filter, which never
+   reaches the desktop from this overlay. */
+.glass-warning-panel {
+  background: rgba(72, 52, 14, 0.55);
+  border: 1px solid rgba(242, 196, 107, 0.34);
+  border-left: 3px solid var(--glass-warning);
+  border-radius: var(--r-nested);
+}
+
 /* An alert has to be unambiguous, so the toast sits denser than the panels.
-   It is transient, so little translucency is lost in practice. */
+   It is transient, so little translucency is lost in practice.
+   No specular rim here on purpose: the toast's left edge is a 3px semantic
+   colour rule, and a gradient hairline running over it would blunt the one
+   signal the component exists to carry. */
 .glass-toast {
-  background: rgb(var(--glass-primary-rgb) / 0.92);
+  background: var(--glass-sheen), rgb(var(--glass-primary-rgb) / 0.92);
   border: 1px solid var(--glass-primary-border);
   border-left-width: 3px;
-  border-radius: var(--glass-radius-sm, 12px);
+  border-radius: var(--r-nested);
   color: var(--glass-text);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.35),
-    0 2px 6px rgba(0, 0, 0, 0.26),
-    0 10px 28px rgba(0, 0, 0, 0.48);
+  box-shadow: 0 0 0 1px var(--glass-contact-ring);
   text-shadow: none;
 }
 
 .glass-toast-neutral { border-left-color: var(--glass-warning); }
 .glass-toast-success { border-left-color: var(--glass-success); }
 .glass-toast-error { border-left-color: var(--glass-danger); }
+
+/* Keyed off Radix's own data-state, so the toast gets a real exit as well as an
+   entrance. It previously carried `animate-in fade-in slide-in-from-bottom`
+   from tailwindcss-animate — a package this project has never depended on, so
+   two of those three classes emitted nothing and the toast simply vanished.
+   Transform and opacity only: the toast now sits in normal flow, and animating
+   a layout property would re-fire the ResizeObserver that sizes the window. */
+.glass-toast[data-state="open"] {
+  animation: toast-in 0.22s cubic-bezier(0.2, 0.9, 0.25, 1.15);
+}
+
+.glass-toast[data-state="closed"] {
+  animation: toast-out 0.16s ease-in forwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-toast[data-state] {
+    animation: none;
+  }
+}
 
 /* The lower-contrast tiers get the stronger halo — they are the ones that
    actually stop clearing 4.5:1 when a bright window sits behind the panel. */
@@ -456,6 +663,22 @@ body,
 .glass-subtle {
   color: var(--glass-subtle);
   text-shadow: var(--glass-text-shadow-strong);
+}
+
+/* Small, permanent metadata that lives in panel *chrome* rather than in the
+   scrimmed running-text area — the model name in the chat header, chiefly.
+   The strength levels are tuned so the low tiers clear 4.5:1 against the
+   reading scrim; in an unscrimmed header they don't, and `subtle` over the
+   thinnest fill on a white desktop measures only 3.36:1. This is the same
+   0.28 black backing the key caps use, and it takes that to 5.01:1.
+   Declared after .glass-subtle so its `text-shadow: none` wins — like
+   .glass-control, it sits on its own well and needs no halo. */
+.glass-badge {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--r-inner);
+  padding: 0.1rem 0.4rem;
+  text-shadow: none;
 }
 
 .glass-icon {
@@ -505,8 +728,8 @@ textarea:focus-visible {
   justify-content: center;
   min-width: 1.25rem;
   padding: 0.15rem 0.4rem;
-  border-radius: 5px;
-  font-size: 10px;
+  border-radius: var(--r-inner);
+  font-size: var(--fs-kbd);
   line-height: 1;
   color: var(--glass-muted);
   /* Dark chip, not a light one — a key cap needs to read as recessed, and the
@@ -522,8 +745,8 @@ textarea:focus-visible {
   justify-content: center;
   gap: 0.35rem;
   padding: 0.35rem 0.65rem;
-  border-radius: 999px;
-  font-size: 11.5px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-label);
   line-height: 1;
   color: var(--glass-text);
   text-shadow: var(--glass-text-shadow);
@@ -668,28 +891,7 @@ textarea,
   cursor: pointer;
 }
 
-/* Legacy aliases so older class names still render quietly */
-.liquid-glass,
-.liquid-glass.chat-container {
-  background: var(--glass-light-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-light-border);
-  border-radius: var(--glass-radius);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
-}
-
-.liquid-glass-bar,
-.liquid-glass-dark {
-  background: var(--glass-dark-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-dark-border);
-  border-radius: var(--glass-radius-pill);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-}
-
-.glass-content {
-  position: relative;
-  z-index: 1;
-}
+/* The `.liquid-glass*` and `.glass-content` aliases that used to live here were
+   removed on 2026-08-09: they were labelled "so older class names still render
+   quietly", and the older class names had already been gone long enough that
+   nothing in src/ referenced them. */

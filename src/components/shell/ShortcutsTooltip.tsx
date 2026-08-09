@@ -20,9 +20,10 @@ const ShortcutsTooltip: React.FC<ShortcutsTooltipProps> = ({
     let tooltipHeight = 0
     if (tooltipRef.current && isTooltipVisible) {
       // The tooltip is absolutely positioned, so its height is reported into
-      // the window measurement by hand. The slack covers the panel's drop
-      // shadow, which would otherwise be clipped at the window edge.
-      tooltipHeight = tooltipRef.current.offsetHeight + 26
+      // the window measurement by hand. The slack covers the panel's contact
+      // ring and its mt-2 offset, which would otherwise be clipped at the
+      // window edge. It was 26 when the panel still cast a 24px drop shadow.
+      tooltipHeight = tooltipRef.current.offsetHeight + 4
     }
     onTooltipVisibilityChange(isTooltipVisible, tooltipHeight)
   }, [isTooltipVisible, onTooltipVisibilityChange])
@@ -41,7 +42,7 @@ const ShortcutsTooltip: React.FC<ShortcutsTooltipProps> = ({
           ref={tooltipRef}
           className="absolute top-full right-0 mt-2 w-72 z-50"
         >
-          <div className="glass-panel-dark p-3 text-[11px] glass-text space-y-2.5">
+          <div className="glass-panel-dark p-3 text-meta glass-text space-y-2.5">
             <p className="font-medium glass-heading">Shortcuts</p>
             {shortcuts.map((s) => (
               <div key={s.action} className="flex justify-between gap-3">

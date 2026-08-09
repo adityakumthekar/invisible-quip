@@ -28,8 +28,21 @@ import {
   getFrontmostApp,
   isFrontmostAppProbeSupported
 } from "./frontmostApp"
-import type { AutopilotProvider } from "./autopilotPolicy"
+import {
+  describeAutonomyLevel,
+  parseAutonomyLevel,
+  type AutonomyLevel,
+  type AutopilotProvider
+} from "./autopilotPolicy"
+import { AutonomyStore } from "./autonomyStore"
+import {
+  LLM_SETTINGS_FILENAME,
+  LlmSettingsStore,
+  type LlmSettings,
+  type StoredProvider
+} from "./llmSettingsStore"
 import { PrivacyAcknowledgementStore } from "./privacyAcknowledgement"
+import { isInvisibleMode } from "./invisibleMode"
 import { evaluatePrivacyGate } from "./privacyGate"
 import { PrivacyPreflightChecker } from "./privacyPreflight"
 import { createElectronPrivacyPreflightDependencies } from "./privacyPreflightRuntime"
@@ -115,6 +128,21 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
   let teachingLifecycle = 0
 
+  // Constructed before the coordinator, which reads its cached level at the
+  // start of every run. `load()` fills that cache from disk; until it resolves
+  // the store reports the default, so an early run is never *looser* than the
+  // stored setting by accident.
+  const autonomyStore = new AutonomyStore(
+    path.join(app.getPath("userData"), "autopilot-autonomy.json"),
+    {
+      readFile: (filePath) => fs.promises.readFile(filePath, "utf8"),
+      writeFile: (filePath, contents) =>
+        fs.promises.writeFile(filePath, contents, "utf8"),
+      now: () => new Date()
+    }
+  )
+  void autonomyStore.load()
+
   const autopilot = new AutopilotCoordinator({
     session: {
       start: (goal) => teachingSession.start(goal),
@@ -125,6 +153,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     },
     getProvider: (): AutopilotProvider =>
       appState.processingHelper.getLLMHelper().getCurrentProvider(),
+    getAutonomy: (): AutonomyLevel => autonomyStore.getLevel(),
     showTarget: (step) => appState.applyTeachingResult(step),
     clearTarget: () => appState.clearTeachingOverlay(),
     emit: (update: AutopilotUpdate) => {
@@ -186,7 +215,8 @@ export function initializeIpcHandlers(appState: AppState): void {
       acknowledgementText: PRIVACY_ACKNOWLEDGEMENT_TEXT,
       acknowledgementVersion: PRIVACY_ACKNOWLEDGEMENT_VERSION,
       preflightPassed: privacyPreflightSession.hasPassed(),
-      lastPreflightResult: privacyPreflightSession.getLastResult()
+      lastPreflightResult: privacyPreflightSession.getLastResult(),
+      visibleMode: !isInvisibleMode()
     }
   }
 
@@ -511,6 +541,30 @@ export function initializeIpcHandlers(appState: AppState): void {
     return getAutopilotConsent()
   })
 
+  ipcMain.handle("autopilot-get-autonomy", async () => {
+    const level = await autonomyStore.load()
+    return { level, description: describeAutonomyLevel(level) }
+  })
+
+  ipcMain.handle("autopilot-set-autonomy", async (_, level: unknown) => {
+    // Validated here rather than trusted from the renderer: this widens what a
+    // run may do without asking, so an unrecognised value must fail loudly
+    // instead of falling through to some default.
+    const parsed = parseAutonomyLevel(level)
+    if (parsed === null) {
+      throw new Error(`Unknown autonomy level: ${String(level)}`)
+    }
+
+    // Changing the envelope mid-run would apply on the next step but not this
+    // one, which reads worse than simply not allowing it.
+    if (autopilot.isRunning()) {
+      throw new Error("Stop the current autopilot run before changing this.")
+    }
+
+    await autonomyStore.setLevel(parsed)
+    return { level: parsed, description: describeAutonomyLevel(parsed) }
+  })
+
   // Kicks off the unattended loop. Resolves as soon as the run is under way —
   // progress arrives on the "autopilot-update" channel, because a run can last
   // minutes and must stay interruptible.
@@ -625,6 +679,32 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   // LLM Model Management Handlers
+  //
+  // The record holds API keys, so it is written 0600 and never handed back to
+  // the renderer — get-current-llm-config below returns the provider, model and
+  // URL only.
+  const llmSettingsStore = new LlmSettingsStore(
+    path.join(app.getPath("userData"), LLM_SETTINGS_FILENAME),
+    {
+      readFile: (filePath) => fs.promises.readFile(filePath, "utf8"),
+      writeFile: (filePath, contents) =>
+        fs.promises.writeFile(filePath, contents, { encoding: "utf8", mode: 0o600 })
+    }
+  )
+
+  async function persistLlmChoice(
+    provider: StoredProvider,
+    details: Pick<LlmSettings, "qwen" | "gemini" | "ollama">
+  ): Promise<void> {
+    try {
+      await llmSettingsStore.save(provider, details)
+    } catch (error) {
+      // A read-only userData shouldn't undo a switch the user just made and can
+      // see working; it only means it won't survive a restart.
+      console.error("Could not persist the LLM provider choice:", error)
+    }
+  }
+
   ipcMain.handle("get-current-llm-config", async () => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
@@ -652,10 +732,23 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
+  ipcMain.handle("list-qwen-models", async (_, baseUrl?: string, apiKey?: string) => {
+    try {
+      const llmHelper = appState.processingHelper.getLLMHelper()
+      return await llmHelper.listQwenModels(baseUrl, apiKey)
+    } catch (error: any) {
+      console.error("Error listing Qwen models:", error)
+      return []
+    }
+  })
+
   ipcMain.handle("switch-to-ollama", async (_, model?: string, url?: string) => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
       await llmHelper.switchToOllama(model, url);
+      // Persisted only after the switch succeeds, so a failed one is never
+      // remembered and re-applied at the next launch.
+      await persistLlmChoice("ollama", { ollama: { model, url } })
       return { success: true };
     } catch (error: any) {
       console.error("Error switching to Ollama:", error);
@@ -669,6 +762,7 @@ export function initializeIpcHandlers(appState: AppState): void {
       try {
         const llmHelper = appState.processingHelper.getLLMHelper()
         await llmHelper.switchToQwen(baseUrl, model, apiKey)
+        await persistLlmChoice("qwen", { qwen: { baseUrl, model, apiKey } })
         return { success: true }
       } catch (error: any) {
         console.error("Error switching to Qwen:", error)
@@ -681,6 +775,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
       await llmHelper.switchToGemini(apiKey);
+      await persistLlmChoice("gemini", { gemini: { apiKey } })
       return { success: true };
     } catch (error: any) {
       console.error("Error switching to Gemini:", error);

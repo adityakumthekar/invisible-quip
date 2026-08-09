@@ -15,10 +15,17 @@ const ToastViewport = React.forwardRef<
   React.ElementRef<typeof ToastPrimitive.Viewport>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitive.Viewport>
 >(({ className, ...props }, ref) => (
+  // Deliberately in normal flow, not `fixed`. The overlay's window is sized
+  // from its content, so a fixed-position toast contributes nothing to
+  // scrollHeight and can only ever be drawn *over* the panels or clipped off
+  // at the transparent window edge — which is why the Root below used to pin
+  // itself to top-4 left-4, straight on top of the control bar. In flow, the
+  // window simply grows to make room. `empty:hidden` keeps the padding from
+  // costing height when there is no toast.
   <ToastPrimitive.Viewport
     ref={ref}
     className={cn(
-      "bg-transparent fixed bottom-0 right-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]",
+      "flex w-full flex-col gap-2 bg-transparent px-3 pt-1 outline-none empty:hidden",
       className
     )}
     {...props}
@@ -28,8 +35,9 @@ ToastViewport.displayName = ToastPrimitive.Viewport.displayName
 
 type ToastVariant = "neutral" | "success" | "error"
 
-interface ToastProps
-  extends React.ComponentPropsWithoutRef<typeof ToastPrimitive.Root> {
+interface ToastProps extends React.ComponentPropsWithoutRef<
+  typeof ToastPrimitive.Root
+> {
   variant?: ToastVariant
 }
 
@@ -47,8 +55,12 @@ const Toast = React.forwardRef<
 >(({ className, variant = "neutral", ...props }, ref) => (
   <ToastPrimitive.Root
     ref={ref}
+    // The enter/exit animation lives in index.css, keyed off Radix's
+    // data-state. The `animate-in fade-in slide-in-from-bottom` that used to
+    // sit here came from tailwindcss-animate, which this project has never
+    // depended on — two of those three classes emitted nothing at all.
     className={cn(
-      "hit-region group fixed top-4 left-4 z-50 w-auto max-w-sm px-4 py-2.5 animate-in fade-in slide-in-from-bottom",
+      "hit-region group relative w-auto max-w-sm py-2.5 pl-4 pr-9",
       toastVariants[variant],
       className
     )}
@@ -64,7 +76,7 @@ const ToastAction = React.forwardRef<
   <ToastPrimitive.Action
     ref={ref}
     className={cn(
-      "text-xs font-medium text-glass-heading hover:opacity-90",
+      "text-body font-medium text-glass-heading hover:opacity-90",
       className
     )}
     {...props}
@@ -78,13 +90,14 @@ const ToastClose = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Close
     ref={ref}
+    aria-label="Dismiss"
     className={cn(
-      "absolute top-2 right-2 text-white opacity-70 hover:opacity-100",
+      "absolute top-2 right-2 rounded-inner p-1 glass-icon hover:bg-glass-hover hover:text-glass-heading",
       className
     )}
     {...props}
   >
-    <X className="h-4 w-4" />
+    <X className="h-3.5 w-3.5" strokeWidth={1.75} />
   </ToastPrimitive.Close>
 ))
 ToastClose.displayName = ToastPrimitive.Close.displayName
@@ -95,7 +108,7 @@ const ToastTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Title
     ref={ref}
-    className={cn("font-semibold text-sm", className)}
+    className={cn("font-semibold text-title", className)}
     {...props}
   />
 ))
@@ -107,7 +120,7 @@ const ToastDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Description
     ref={ref}
-    className={cn("text-xs opacity-90", className)}
+    className={cn("text-body opacity-90", className)}
     {...props}
   />
 ))

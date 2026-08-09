@@ -3,11 +3,17 @@ import { TeachingResult } from "./teaching"
 import type { TeachingOverlayTargetEvent } from "./teachingOverlayContract"
 import type { PrivacyGateStatus, PrivacyPreflightResult } from "./privacyContract"
 import type { AutopilotUpdate } from "./autopilot"
+import type { AutonomyLevel } from "./autopilotPolicy"
 
 export interface AutopilotConsent {
   consented: boolean
   text: string
   version: number
+}
+
+export interface AutopilotAutonomy {
+  level: AutonomyLevel
+  description: string
 }
 
 export interface OllamaPullProgress {
@@ -78,6 +84,8 @@ interface ElectronAPI {
   // Autopilot (unattended runs)
   autopilotGetConsent: () => Promise<AutopilotConsent>
   autopilotAcknowledgeConsent: () => Promise<AutopilotConsent>
+  autopilotGetAutonomy: () => Promise<AutopilotAutonomy>
+  autopilotSetAutonomy: (level: AutonomyLevel) => Promise<AutopilotAutonomy>
   autopilotStart: (
     goal: string,
     options?: { maxSteps?: number }
@@ -107,6 +115,7 @@ interface ElectronAPI {
     qwenBaseUrl: string
   }>
   getAvailableOllamaModels: () => Promise<string[]>
+  listQwenModels: (baseUrl?: string, apiKey?: string) => Promise<string[]>
   switchToOllama: (model?: string, url?: string) => Promise<{ success: boolean; error?: string }>
   switchToQwen: (
     baseUrl?: string,
@@ -340,6 +349,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   autopilotGetConsent: () => ipcRenderer.invoke("autopilot-get-consent"),
   autopilotAcknowledgeConsent: () =>
     ipcRenderer.invoke("autopilot-acknowledge-consent"),
+  autopilotGetAutonomy: () => ipcRenderer.invoke("autopilot-get-autonomy"),
+  autopilotSetAutonomy: (level: AutonomyLevel) =>
+    ipcRenderer.invoke("autopilot-set-autonomy", level),
   autopilotStart: (goal: string, options?: { maxSteps?: number }) =>
     ipcRenderer.invoke("autopilot-start", goal, options),
   autopilotConfirm: () => ipcRenderer.invoke("autopilot-confirm"),
@@ -374,6 +386,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   switchToOllama: (model?: string, url?: string) => ipcRenderer.invoke("switch-to-ollama", model, url),
   switchToQwen: (baseUrl?: string, model?: string, apiKey?: string) =>
     ipcRenderer.invoke("switch-to-qwen", baseUrl, model, apiKey),
+  listQwenModels: (baseUrl?: string, apiKey?: string) =>
+    ipcRenderer.invoke("list-qwen-models", baseUrl, apiKey),
   switchToGemini: (apiKey?: string) => ipcRenderer.invoke("switch-to-gemini", apiKey),
   testLlmConnection: () => ipcRenderer.invoke("test-llm-connection"),
   

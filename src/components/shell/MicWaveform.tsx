@@ -78,7 +78,7 @@ const MicWaveform: React.FC<MicWaveformProps> = ({ stream, seconds }) => {
   return (
     <div className="no-drag flex items-center gap-2 px-2">
       <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
-      <span className="text-[11px] tabular-nums glass-muted">
+      <span className="text-meta tabular-nums glass-muted">
         {formatTime(seconds)}
       </span>
       <canvas
@@ -91,7 +91,7 @@ const MicWaveform: React.FC<MicWaveformProps> = ({ stream, seconds }) => {
         type="button"
         onClick={toggleMute}
         title={muted ? "Unmute mic" : "Mute mic"}
-        className="p-1 rounded-md glass-icon hover:text-glass-heading hover:bg-glass-hover"
+        className="p-1 rounded-inner glass-icon hover:text-glass-heading hover:bg-glass-hover"
       >
         {muted ? (
           <MicOff className="w-3.5 h-3.5 text-red-300" strokeWidth={1.75} />

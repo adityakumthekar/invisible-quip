@@ -45,9 +45,11 @@ const MainApp: React.FC = () => {
   useEffect(() => {
     const unsubscribe = window.electronAPI.onContentLimits(
       ({ maxHeight, maxWidth }) => {
-        // Control bar + panel header + input row + the pb-8 shadow guard, none
-        // of which live inside the scroller.
-        const CHROME_PX = 150
+        // Control bar + panel header + input row + the wrapper's bottom
+        // padding, none of which live inside the scroller. Dropped from 150
+        // when the surfaces lost their drop shadows: 28px of that was the
+        // pb-8 shadow guard in Queue.tsx, now pb-1.
+        const CHROME_PX = 122
         const budget = Math.max(200, maxHeight - CHROME_PX)
         document.documentElement.style.setProperty("--chat-max-h", `${budget}px`)
 
