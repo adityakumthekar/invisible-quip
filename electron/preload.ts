@@ -1,3 +1,5 @@
+import "./workspacePreload"
+import "./companionPreload"
 import { contextBridge, ipcRenderer } from "electron"
 import { TeachingResult } from "./teaching"
 import type { TeachingOverlayTargetEvent } from "./teachingOverlayContract"
@@ -101,7 +103,7 @@ interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
-  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[]) => Promise<{ transcript: string; text: string; timestamp: number }>
+  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "assistant"; text: string }[]) => Promise<{ transcript: string; text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>
@@ -371,7 +373,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   moveWindowRight: () => ipcRenderer.invoke("move-window-right"),
   moveWindowUp: () => ipcRenderer.invoke("move-window-up"),
   moveWindowDown: () => ipcRenderer.invoke("move-window-down"),
-  analyzeAudioFromBase64: (data: string, mimeType: string, history: { role: "user" | "gemini"; text: string }[] = [], system?: { data: string; mimeType: string }) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType, history, system),
+  analyzeAudioFromBase64: (data: string, mimeType: string, history: { role: "user" | "assistant"; text: string }[] = [], system?: { data: string; mimeType: string }) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType, history, system),
   analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
   teachStart: (goal: string) => ipcRenderer.invoke("teach-start", goal),
   teachNext: () => ipcRenderer.invoke("teach-next"),
@@ -509,5 +511,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.removeListener("chat-stream-error", subscription)
     }
   },
-  invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args)
+  invoke: (channel: string, ...args: any[]) => {
+    const allowed = ["set-user-profile", "set-system-prompt", "process-screenshot-queue", "toggle-window", "cancel-chat-stream", "gemini-chat-stream", "chat-with-screen-stream", "analyze-image-file-stream"]
+    if (!allowed.includes(channel)) return Promise.reject(new Error("Unsupported operation"))
+    return ipcRenderer.invoke(channel, ...args)
+  }
 } as ElectronAPI)

@@ -1,6 +1,7 @@
+import { trustedRenderer } from "./workspacePolicy"
 // ipcHandlers.ts
 
-import { ipcMain, app, screen } from "electron"
+import { ipcMain, app, screen, safeStorage } from "electron"
 import fs from "node:fs"
 import path from "node:path"
 import { AppState } from "./main"
@@ -73,8 +74,16 @@ import { PrivacyPreflightChecker } from "./privacyPreflight"
 import { createElectronPrivacyPreflightDependencies } from "./privacyPreflightRuntime"
 import { PrivacyPreflightSessionState } from "./privacyPreflightSession"
 
-export function initializeIpcHandlers(appState: AppState): void {
-  const inputAutomation = new InputAutomationHelper()
+export function initializeIpcHandlers(appState: AppState) {
+  const handle: typeof ipcMain.handle = (channel, listener) => ipcMain.handle(channel, (event, ...args) => {
+    if (event.senderFrame !== event.sender.mainFrame || !trustedRenderer(event.senderFrame.url, app.isPackaged)) throw new Error("Untrusted IPC caller")
+    return listener(event, ...args)
+  })
+  let inputGeneration = 0
+  let actionGeneration: number | null = null
+  const inputAutomation = new InputAutomationHelper(undefined, undefined, () => {
+    if (actionGeneration !== null && actionGeneration !== inputGeneration) throw new Error("Desktop input was stopped.")
+  })
 
   // Declared up front because the autopilot coordinator below closes over
   // `broadcastRemote`, and the server it forwards to is only constructed once
@@ -108,16 +117,22 @@ export function initializeIpcHandlers(appState: AppState): void {
     )
   }
   const teachingSession = new TeachingSessionCoordinator({
-    capture: () => appState.getScreenshotHelper().captureForTeaching(),
+    capture: async () => {
+      await releaseKeyboardFocus()
+      await appState.companion?.tasks.capturePlanContext()
+      return appState.getScreenshotHelper().captureForTeaching()
+    },
     generate: (goal, history, screenshotPath, imageSize) =>
       appState.processingHelper
         .getLLMHelper()
-        .generateTeachingStep(goal, history, screenshotPath, imageSize),
+        .generateTeachingStep(`${goal}\n${appState.companion?.context.prompt() ?? ""}`, history, screenshotPath, imageSize),
     remove: (screenshotPath) => fs.promises.unlink(screenshotPath),
     actuate: async (actuation) => {
+      actionGeneration = inputGeneration
       // Input control needs macOS Accessibility permission (≠ Screen Recording).
       ensureAccessibilityPermission()
       await releaseKeyboardFocus()
+      if (!teachingSession.isActive()) throw new Error("Desktop control was stopped.")
 
       switch (actuation.action) {
         case "click":
@@ -192,7 +207,10 @@ export function initializeIpcHandlers(appState: AppState): void {
     getAutonomy: (): AutonomyLevel => autonomyStore.getLevel(),
     showTarget: (step) => appState.applyTeachingResult(step),
     clearTarget: () => appState.clearTeachingOverlay(),
+    authorizeStep: step => appState.companion?.tasks.authorize(step) ?? Promise.resolve(false),
+    beforeAction: step => appState.companion?.tasks.beforeAction(step) ?? Promise.resolve(),
     emit: (update: AutopilotUpdate) => {
+      void appState.companion?.tasks.update(update).catch(error => console.error("Task checkpoint:", error.message))
       const mainWindow = appState.getMainWindow()
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("autopilot-update", update)
@@ -216,7 +234,7 @@ export function initializeIpcHandlers(appState: AppState): void {
   // Lets the global kill-switch shortcut abort without routing through the
   // renderer, which may be hidden or busy.
   appState.registerAutopilot({
-    stop: () => autopilot.stop(),
+    stop: () => { inputGeneration++; autopilot.stop() },
     confirm: () => autopilot.confirm(),
     isAwaitingConfirmation: () => autopilot.isAwaitingConfirmation(),
     isRunning: () => autopilot.isRunning()
@@ -548,6 +566,8 @@ export function initializeIpcHandlers(appState: AppState): void {
       point: NormalizedPoint,
       options: { button: "left" | "right"; clicks: 1 | 2 }
     ) => {
+      if (appState.companion?.tasks.ownsDesktop() || teachingSession.isActive()) throw new Error("Desktop control is busy.")
+      actionGeneration = null
       takeInputToken()
       const target = resolveInputPoint(point)
       if (options.button === "right") {
@@ -562,6 +582,8 @@ export function initializeIpcHandlers(appState: AppState): void {
     },
 
     inputDrag: async (from: NormalizedPoint, to: NormalizedPoint) => {
+      if (appState.companion?.tasks.ownsDesktop() || teachingSession.isActive()) throw new Error("Desktop control is busy.")
+      actionGeneration = null
       takeInputToken()
       await inputAutomation.dragTo(resolveInputPoint(from), resolveInputPoint(to))
     },
@@ -570,6 +592,8 @@ export function initializeIpcHandlers(appState: AppState): void {
       point: NormalizedPoint,
       delta: { dx: number; dy: number }
     ) => {
+      if (appState.companion?.tasks.ownsDesktop() || teachingSession.isActive()) throw new Error("Desktop control is busy.")
+      actionGeneration = null
       takeInputToken()
       const target = resolveInputPoint(point)
       for (const axis of scrollDeltaToSteps(delta)) {
@@ -578,11 +602,15 @@ export function initializeIpcHandlers(appState: AppState): void {
     },
 
     inputText: async (text: string) => {
+      if (appState.companion?.tasks.ownsDesktop() || teachingSession.isActive()) throw new Error("Desktop control is busy.")
+      actionGeneration = null
       takeInputToken()
       await inputAutomation.typeText(text)
     },
 
     inputKey: async (combo: string) => {
+      if (appState.companion?.tasks.ownsDesktop() || teachingSession.isActive()) throw new Error("Desktop control is busy.")
+      actionGeneration = null
       takeInputToken()
       await inputAutomation.pressKey(combo)
     }
@@ -598,7 +626,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     autopilotStart: (goal, options) => startAutopilotRun(goal, options),
     autopilotConfirm: () => autopilot.confirm(),
     autopilotReject: () => autopilot.reject(),
-    autopilotStop: () => autopilot.stop(),
+    autopilotStop: () => { if (appState.companion) void appState.companion.tasks.stop(); else { inputGeneration++; autopilot.stop() } },
     chatSend: (request) => runRemoteChat(request),
     chatCancel: (requestId) => {
       activeChatStreams.get(requestId)?.abort()
@@ -706,7 +734,7 @@ export function initializeIpcHandlers(appState: AppState): void {
   // would leave the machine reachable with no UI to turn it off.
   appState.registerRemoteShutdown(() => stopRemoteServer())
 
-  ipcMain.handle("remote-get-state", async () => ({
+  handle("remote-get-state", async () => ({
     server: remoteServer?.getInfo() ?? {
       running: false,
       port: null,
@@ -720,13 +748,13 @@ export function initializeIpcHandlers(appState: AppState): void {
     displays: listRemoteDisplays()
   }))
 
-  ipcMain.handle("remote-acknowledge-consent", async () => {
+  handle("remote-acknowledge-consent", async () => {
     await remoteConsentStore.acknowledge()
     remoteControlEnabled = true
     return getRemoteConsent()
   })
 
-  ipcMain.handle("remote-acknowledge-input-consent", async () => {
+  handle("remote-acknowledge-input-consent", async () => {
     await remoteInputConsentStore.acknowledge()
     remoteInputConsented = true
     // Accepting the notice turns it on: the user pressed a button that says so.
@@ -737,7 +765,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     return getRemoteInputConsent()
   })
 
-  ipcMain.handle("remote-set-input-allowed", async (_, allowed: boolean) => {
+  handle("remote-set-input-allowed", async (_, allowed: boolean) => {
     if (!allowed) {
       disableRemoteInput("settings toggle")
       return getRemoteInputConsent()
@@ -752,7 +780,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     return getRemoteInputConsent()
   })
 
-  ipcMain.handle("remote-start-server", async () => {
+  handle("remote-start-server", async () => {
     try {
       return { success: true, server: await startRemoteServer() }
     } catch (error: any) {
@@ -760,12 +788,12 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
-  ipcMain.handle("remote-stop-server", async () => {
+  handle("remote-stop-server", async () => {
     await stopRemoteServer()
     return { success: true }
   })
 
-  ipcMain.handle("remote-issue-pairing-code", async () => {
+  handle("remote-issue-pairing-code", async () => {
     if (!remoteServer?.isRunning()) {
       throw new Error("Start the remote server before pairing a device.")
     }
@@ -773,20 +801,20 @@ export function initializeIpcHandlers(appState: AppState): void {
     return { code, expiresAt, url: remoteServer.getInfo().url }
   })
 
-  ipcMain.handle("remote-revoke-device", async (_, deviceId: string) => {
+  handle("remote-revoke-device", async (_, deviceId: string) => {
     const revoked = await remotePairing.revoke(deviceId)
     remoteServer?.revokeDeviceTickets(deviceId)
     return { success: revoked, devices: await remotePairing.listDevices() }
   })
 
-  ipcMain.handle("update-content-dimensions", async (event, { width, height }: { width: number; height: number }) => {
+  handle("update-content-dimensions", async (event, { width, height }: { width: number; height: number }) => {
       if (width && height) {
         appState.setWindowDimensions(width, height)
       }
     }
   )
 
-  ipcMain.handle(
+  handle(
     "set-ignore-mouse-events",
     async (_event, ignore: boolean) => {
       appState.setIgnoreMouseEvents(Boolean(ignore))
@@ -795,19 +823,19 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   // Manual grip drag — the renderer only signals the gesture boundaries; main
   // follows the OS cursor in between (see WindowHelper.startWindowDrag).
-  ipcMain.handle("window-drag-start", async () => {
+  handle("window-drag-start", async () => {
     appState.startWindowDrag()
   })
 
-  ipcMain.handle("window-drag-end", async () => {
+  handle("window-drag-end", async () => {
     appState.stopWindowDrag()
   })
 
-  ipcMain.handle("delete-screenshot", async (event, path: string) => {
+  handle("delete-screenshot", async (event, path: string) => {
     return appState.deleteScreenshot(path)
   })
 
-  ipcMain.handle("take-screenshot", async () => {
+  handle("take-screenshot", async () => {
     try {
       const screenshotPath = await appState.takeScreenshot()
       const preview = await appState.getImagePreview(screenshotPath)
@@ -821,11 +849,11 @@ export function initializeIpcHandlers(appState: AppState): void {
   // Runs the queued-screenshot solver. Cmd+Enter no longer routes here — it
   // captures and analyzes the current screen instead — so this is reached only
   // from the Solve button, which appears once the Cmd+H queue is non-empty.
-  ipcMain.handle("process-screenshot-queue", async () => {
+  handle("process-screenshot-queue", async () => {
     await appState.processingHelper.processScreenshots()
   })
 
-  ipcMain.handle("get-screenshots", async () => {
+  handle("get-screenshots", async () => {
     try {
       let previews = []
       if (appState.getView() === "queue") {
@@ -850,11 +878,11 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
-  ipcMain.handle("toggle-window", async () => {
+  handle("toggle-window", async () => {
     appState.toggleMainWindow()
   })
 
-  ipcMain.handle("reset-queues", async () => {
+  handle("reset-queues", async () => {
     try {
       appState.clearQueues()
       console.log("Screenshot queues have been cleared.")
@@ -866,7 +894,7 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   // IPC handler for analyzing audio from base64 data
-  ipcMain.handle("analyze-audio-base64", async (event, data: string, mimeType: string, history: ChatTurn[] = [], system?: { data: string; mimeType: string }) => {
+  handle("analyze-audio-base64", async (event, data: string, mimeType: string, history: ChatTurn[] = [], system?: { data: string; mimeType: string }) => {
     try {
       const result = await appState.processingHelper.processAudioBase64(data, mimeType, history, system)
       return result
@@ -877,7 +905,7 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   // IPC handler for analyzing image from file path
-  ipcMain.handle("analyze-image-file", async (event, path: string) => {
+  handle("analyze-image-file", async (event, path: string) => {
     try {
       const result = await appState.processingHelper.getLLMHelper().analyzeImageFile(path)
       return result
@@ -887,7 +915,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
-  ipcMain.handle("gemini-chat", async (event, message: string) => {
+  handle("gemini-chat", async (event, message: string) => {
     try {
       const result = await appState.processingHelper.getLLMHelper().chatWithGemini(message);
       return result;
@@ -898,7 +926,7 @@ export function initializeIpcHandlers(appState: AppState): void {
   });
 
   // Chat that includes a screenshot of the active display (📸 toggle)
-  ipcMain.handle("chat-with-screen", async (event, message: string) => {
+  handle("chat-with-screen", async (event, message: string) => {
     let shot: string | undefined
     try {
       shot = await appState.getScreenshotHelper().captureForChat()
@@ -953,7 +981,7 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   // `persona` is an optional per-request override of the active mode — quick
   // actions use it so "Translate" isn't answered by an interview copilot.
-  ipcMain.handle(
+  handle(
     "gemini-chat-stream",
     async (
       event,
@@ -965,11 +993,11 @@ export function initializeIpcHandlers(appState: AppState): void {
       runChatStream(event, requestId, (onChunk, signal) =>
         appState.processingHelper
           .getLLMHelper()
-          .chatWithGeminiStream(message, onChunk, signal, history, persona)
+          .chatWithGeminiStream(`${message}\n${appState.companion?.context.prompt() ?? ""}`, onChunk, signal, history, persona)
       )
   )
 
-  ipcMain.handle(
+  handle(
     "chat-with-screen-stream",
     async (
       event,
@@ -998,7 +1026,7 @@ export function initializeIpcHandlers(appState: AppState): void {
       })
   )
 
-  ipcMain.handle(
+  handle(
     "analyze-image-file-stream",
     async (event, requestId: string, imagePath: string) =>
       runChatStream(event, requestId, (onChunk, signal) =>
@@ -1008,25 +1036,26 @@ export function initializeIpcHandlers(appState: AppState): void {
       )
   )
 
-  ipcMain.handle("cancel-chat-stream", async (_event, requestId: string) => {
+  handle("cancel-chat-stream", async (_event, requestId: string) => {
     activeChatStreams.get(requestId)?.abort()
     activeChatStreams.delete(requestId)
   })
 
-  ipcMain.handle("privacy-get-status", async () => getPrivacyGateStatus())
+  handle("privacy-get-status", async () => getPrivacyGateStatus())
 
-  ipcMain.handle("privacy-acknowledge", async () => {
+  handle("privacy-acknowledge", async () => {
     await privacyAcknowledgementStore.acknowledge()
     return getPrivacyGateStatus()
   })
 
-  ipcMain.handle("privacy-run-preflight", async () => {
+  handle("privacy-run-preflight", async () => {
     const result = await privacyPreflightChecker.run()
     privacyPreflightSession.recordResult(result)
     return result
   })
 
-  ipcMain.handle("teach-start", async (_, goal: string) => {
+  handle("teach-start", async (_, goal: string) => {
+    if (autopilot.isRunning() || appState.companion?.tasks.ownsDesktop()) throw new Error("A desktop task is running. Stop it before using manual teaching.")
     const gate = evaluatePrivacyGate(await getPrivacyGateStatus())
     if (!gate.canStart) {
       throw new Error(
@@ -1052,7 +1081,8 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
-  ipcMain.handle("teach-next", async () => {
+  handle("teach-next", async () => {
+    if (autopilot.isRunning() || appState.companion?.tasks.ownsDesktop()) throw new Error("A desktop task is running. Stop it before using manual teaching.")
     const lifecycle = teachingLifecycle
     try {
       const result = await teachingSession.next()
@@ -1074,7 +1104,8 @@ export function initializeIpcHandlers(appState: AppState): void {
   // Perform the confirmed action for the current step, then advance. Unlike
   // teach-next, a failure (e.g. Accessibility not yet granted) leaves the
   // overlay in place so the user can grant permission and press execute again.
-  ipcMain.handle("teach-execute", async () => {
+  handle("teach-execute", async () => {
+    if (autopilot.isRunning() || appState.companion?.tasks.ownsDesktop()) throw new Error("A desktop task is running. Stop it before using manual teaching.")
     const lifecycle = teachingLifecycle
     const result = await teachingSession.execute()
     if (lifecycle === teachingLifecycle) {
@@ -1083,7 +1114,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     return result
   })
 
-  ipcMain.handle("teach-stop", () => {
+  handle("teach-stop", () => {
     teachingLifecycle += 1
     autopilot.stop()
     teachingSession.stop()
@@ -1091,19 +1122,19 @@ export function initializeIpcHandlers(appState: AppState): void {
     return { success: true }
   })
 
-  ipcMain.handle("autopilot-get-consent", async () => getAutopilotConsent())
+  handle("autopilot-get-consent", async () => getAutopilotConsent())
 
-  ipcMain.handle("autopilot-acknowledge-consent", async () => {
+  handle("autopilot-acknowledge-consent", async () => {
     await autopilotConsentStore.acknowledge()
     return getAutopilotConsent()
   })
 
-  ipcMain.handle("autopilot-get-autonomy", async () => {
+  handle("autopilot-get-autonomy", async () => {
     const level = await autonomyStore.load()
     return { level, description: describeAutonomyLevel(level) }
   })
 
-  ipcMain.handle("autopilot-set-autonomy", async (_, level: unknown) => {
+  handle("autopilot-set-autonomy", async (_, level: unknown) => {
     // Validated here rather than trusted from the renderer: this widens what a
     // run may do without asking, so an unrecognised value must fail loudly
     // instead of falling through to some default.
@@ -1122,9 +1153,9 @@ export function initializeIpcHandlers(appState: AppState): void {
     return { level: parsed, description: describeAutonomyLevel(parsed) }
   })
 
-  ipcMain.handle("system-audio-get-consent", async () => getSystemAudioConsent())
+  handle("system-audio-get-consent", async () => getSystemAudioConsent())
 
-  ipcMain.handle("system-audio-acknowledge-consent", async () => {
+  handle("system-audio-acknowledge-consent", async () => {
     await systemAudioConsentStore.acknowledge()
     return getSystemAudioConsent()
   })
@@ -1141,6 +1172,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     goal: string,
     options?: { maxSteps?: number }
   ): Promise<{ started: boolean; maxSteps: number }> {
+    if (appState.companion?.tasks.ownsDesktop() || autopilot.isRunning()) throw new Error("A desktop task is already running.")
     const gate = evaluatePrivacyGate(await getPrivacyGateStatus())
     if (!gate.canStart) {
       throw new Error(
@@ -1175,34 +1207,35 @@ export function initializeIpcHandlers(appState: AppState): void {
     return { started: true, maxSteps: autopilot.getMaxSteps() }
   }
 
-  ipcMain.handle(
+  handle(
     "autopilot-start",
     async (_, goal: string, options?: { maxSteps?: number }) =>
       startAutopilotRun(goal, options)
   )
 
-  ipcMain.handle("autopilot-confirm", () => {
+  handle("autopilot-confirm", () => {
     autopilot.confirm()
     return { success: true }
   })
 
-  ipcMain.handle("autopilot-reject", () => {
+  handle("autopilot-reject", () => {
     autopilot.reject()
     return { success: true }
   })
 
-  ipcMain.handle("autopilot-stop", () => {
-    autopilot.stop()
+  handle("autopilot-stop", () => {
+    if (appState.companion) void appState.companion.tasks.stop()
+    else autopilot.stop()
     return { success: true }
   })
 
-  ipcMain.handle("ollama-model-capabilities", async (_, model: string) => {
+  handle("ollama-model-capabilities", async (_, model: string) => {
     return appState.processingHelper
       .getLLMHelper()
       .getOllamaModelCapabilities(model)
   })
 
-  ipcMain.handle("ollama-pull-model", async (event, model: string) => {
+  handle("ollama-pull-model", async (event, model: string) => {
     try {
       await appState.processingHelper
         .getLLMHelper()
@@ -1217,46 +1250,46 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
-  ipcMain.handle("teaching-overlay-ready", (event) => {
+  handle("teaching-overlay-ready", (event) => {
     return appState.teachingOverlayReady(event.sender)
   })
 
-  ipcMain.handle("set-window-opacity", async (_, value: number) => {
+  handle("set-window-opacity", async (_, value: number) => {
     appState.setWindowOpacity(value)
   });
 
   // Swap the active AI mode/persona (system prompt)
-  ipcMain.handle("set-system-prompt", async (_, text: string) => {
+  handle("set-system-prompt", async (_, text: string) => {
     appState.processingHelper.getLLMHelper().setSystemPrompt(text)
   });
 
   // Who the user is (Settings → Profile), carried by every chat flow.
-  ipcMain.handle("set-user-profile", async (_, text: string) => {
+  handle("set-user-profile", async (_, text: string) => {
     appState.processingHelper.getLLMHelper().setUserProfile(text)
   });
 
-  ipcMain.handle("quit-app", () => {
+  handle("quit-app", () => {
     app.quit()
   })
 
   // Window movement handlers
-  ipcMain.handle("move-window-left", async () => {
+  handle("move-window-left", async () => {
     appState.moveWindowLeft()
   })
 
-  ipcMain.handle("move-window-right", async () => {
+  handle("move-window-right", async () => {
     appState.moveWindowRight()
   })
 
-  ipcMain.handle("move-window-up", async () => {
+  handle("move-window-up", async () => {
     appState.moveWindowUp()
   })
 
-  ipcMain.handle("move-window-down", async () => {
+  handle("move-window-down", async () => {
     appState.moveWindowDown()
   })
 
-  ipcMain.handle("center-and-show-window", async () => {
+  handle("center-and-show-window", async () => {
     appState.centerAndShowWindow()
   })
 
@@ -1268,9 +1301,14 @@ export function initializeIpcHandlers(appState: AppState): void {
   const llmSettingsStore = new LlmSettingsStore(
     path.join(app.getPath("userData"), LLM_SETTINGS_FILENAME),
     {
-      readFile: (filePath) => fs.promises.readFile(filePath, "utf8"),
-      writeFile: (filePath, contents) =>
-        fs.promises.writeFile(filePath, contents, { encoding: "utf8", mode: 0o600 })
+      readFile: async (filePath) => {
+        const raw = await fs.promises.readFile(filePath)
+        return raw[0] === 123 ? raw.toString("utf8") : safeStorage.decryptString(raw)
+      },
+      writeFile: async (filePath, contents) => {
+        if (!safeStorage.isEncryptionAvailable()) throw new Error("Secure storage is unavailable")
+        await fs.promises.writeFile(filePath, safeStorage.encryptString(contents), {mode:0o600})
+      }
     }
   )
 
@@ -1287,7 +1325,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   }
 
-  ipcMain.handle("get-current-llm-config", async () => {
+  handle("get-current-llm-config", async () => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
       return {
@@ -1303,7 +1341,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
-  ipcMain.handle("get-available-ollama-models", async () => {
+  handle("get-available-ollama-models", async () => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
       const models = await llmHelper.getOllamaModels();
@@ -1314,7 +1352,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
-  ipcMain.handle("list-qwen-models", async (_, baseUrl?: string, apiKey?: string) => {
+  handle("list-qwen-models", async (_, baseUrl?: string, apiKey?: string) => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper()
       return await llmHelper.listQwenModels(baseUrl, apiKey)
@@ -1324,7 +1362,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
-  ipcMain.handle("switch-to-ollama", async (_, model?: string, url?: string) => {
+  handle("switch-to-ollama", async (_, model?: string, url?: string) => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
       await llmHelper.switchToOllama(model, url);
@@ -1338,7 +1376,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
-  ipcMain.handle(
+  handle(
     "switch-to-qwen",
     async (_, baseUrl?: string, model?: string, apiKey?: string) => {
       try {
@@ -1353,7 +1391,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   )
 
-  ipcMain.handle("switch-to-gemini", async (_, apiKey?: string) => {
+  handle("switch-to-gemini", async (_, apiKey?: string) => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
       await llmHelper.switchToGemini(apiKey);
@@ -1365,7 +1403,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
-  ipcMain.handle("test-llm-connection", async () => {
+  handle("test-llm-connection", async () => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
       const result = await llmHelper.testConnection();
@@ -1375,4 +1413,16 @@ export function initializeIpcHandlers(appState: AppState): void {
       return { success: false, error: error.message };
     }
   });
+  return {
+    start: async (goal: string, maxSteps: number) => {
+      if (autopilot.isRunning()) throw new Error("Desktop control is busy.")
+      teachingLifecycle++
+      appState.closeTeachingOverlay()
+      ensureAccessibilityPermission()
+      await autopilot.start(goal, appState.processingHelper.getLLMHelper().getCurrentProvider(), { maxSteps })
+    },
+    stop: () => { inputGeneration++; autopilot.stop(); teachingSession.stop(); appState.clearTeachingOverlay() },
+    busy: () => autopilot.isRunning() || teachingSession.isActive(),
+  }
+
 }

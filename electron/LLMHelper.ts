@@ -1,9 +1,4 @@
-import {
-  GoogleGenerativeAI,
-  GenerativeModel,
-  GenerateContentRequest,
-  Part
-} from "@google/generative-ai"
+import { GoogleGenerativeAI, type GenerativeModel, type GenerateContentRequest, type Part } from "./geminiAdapter"
 import fs from "fs"
 import sharp from "sharp"
 import {
@@ -251,7 +246,7 @@ export class LLMHelper {
   private ollamaUrl: string = "http://localhost:11434"
   private useQwen: boolean = false
   private qwenBaseUrl: string =
-    process.env.QWEN_BASE_URL || "http://100.123.38.63:8000/v1"
+    process.env.QWEN_BASE_URL || "http://localhost:8000/v1"
   private qwenModel: string = process.env.QWEN_MODEL || "Qwen/Qwen3-VL-4B-Instruct"
   private qwenApiKey: string = process.env.QWEN_API_KEY || "EMPTY"
   // The context window the server actually serves, learned from /v1/models.
@@ -297,10 +292,6 @@ export class LLMHelper {
       const genAI = new GoogleGenerativeAI(apiKey)
       this.model = genAI.getGenerativeModel({ model: this.geminiModel })
       console.log(`[LLMHelper] Using Google Gemini (${this.geminiModel})`)
-    } else {
-      throw new Error(
-        "Provide a Gemini API key, enable Ollama (USE_OLLAMA=true), or enable Qwen (USE_QWEN=true)"
-      )
     }
   }
 
@@ -1059,8 +1050,10 @@ ANSWER: your answer`
     persona?: string
     generationConfig?: object
     legacy?: boolean
+    responseFormat?: string
   }): ChatRequest {
     const { message, preamble, imageParts = [], history = [], persona } = opts
+    const responseFormat = opts.responseFormat ?? RESPONSE_FORMAT
     const generationConfig =
       opts.generationConfig ?? LLMHelper.CHAT_GENERATION_CONFIG
 
@@ -1068,7 +1061,7 @@ ANSWER: your answer`
       blocks.filter((b) => b && b.length > 0).join("\n\n")
 
     if (opts.legacy || !this.systemInstructionSupported) {
-      const text = `${this.personaBlock(persona)}${preamble ? `\n\n${preamble}` : ""}${RESPONSE_FORMAT}${message ? `\n\nUser: ${message}` : ""}`
+      const text = `${this.personaBlock(persona)}${preamble ? `\n\n${preamble}` : ""}${responseFormat}${message ? `\n\nUser: ${message}` : ""}`
       return {
         contents: [
           ...toGeminiHistory(history),
@@ -1081,7 +1074,7 @@ ANSWER: your answer`
     return {
       systemInstruction: {
         role: "user",
-        parts: [{ text: `${this.personaBlock(persona)}${RESPONSE_FORMAT}` }]
+        parts: [{ text: `${this.personaBlock(persona)}${responseFormat}` }]
       },
       contents: [
         ...toGeminiHistory(history),
@@ -1330,6 +1323,20 @@ ANSWER: your answer`
       onChunk,
       signal
     )
+  }
+
+  /** Companion tasks own their output contract; interview/chat formatting must not override it. */
+  public async companionAnswer(message: string, images: Buffer[], system: string, signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted()
+    if (this.useOllama) {
+      return this.callOllamaStream(message, () => {}, { system: this.personaBlock(system), temperature: 0.2, images: images.map(image => image.toString("base64")), signal })
+    }
+    if (this.useQwen) {
+      const encoded = await Promise.all(images.map(image => this.imageToDataUrl(image)))
+      return this.callOpenAIStream([{ type: "text", text: message }, ...encoded.map(image => ({ type: "image_url" as const, image_url: { url: image.url } }))], () => {}, { system: this.personaBlock(system), temperature: 0.2, maxTokens: 4096, imageSizes: encoded.map(image => image.size), signal })
+    }
+    const imageParts = await Promise.all(images.map(async image => (await this.toChatImagePart(image)).part))
+    return this.consumeGeminiStream(legacy => this.buildChatRequest({ message, imageParts, persona: system, responseFormat: "", generationConfig: { temperature: 0.2, maxOutputTokens: 4096 }, legacy }), () => {}, signal)
   }
 
   public async chat(message: string): Promise<string> {

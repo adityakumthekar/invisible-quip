@@ -1,6 +1,6 @@
 // ProcessingHelper.ts
 
-import { app } from "electron"
+import { app, safeStorage } from "electron"
 import fs from "fs"
 import path from "path"
 import { AppState } from "./main"
@@ -14,7 +14,7 @@ import {
 } from "./llmSettingsStore"
 import dotenv from "dotenv"
 
-dotenv.config()
+if (!app.isPackaged) dotenv.config()
 
 /**
  * What the user last chose in Settings, or null when they never have.
@@ -26,12 +26,11 @@ dotenv.config()
  */
 function readStoredLlmSettings(): LlmSettings | null {
   try {
-    return parseLlmSettings(
-      fs.readFileSync(
-        path.join(app.getPath("userData"), LLM_SETTINGS_FILENAME),
-        "utf8"
-      )
-    )
+    const file = path.join(app.getPath("userData"), LLM_SETTINGS_FILENAME)
+    const raw = fs.readFileSync(file)
+    const plaintext = raw[0] === 123 ? raw.toString("utf8") : safeStorage.decryptString(raw)
+    if (raw[0] === 123 && safeStorage.isEncryptionAvailable()) fs.writeFileSync(file,safeStorage.encryptString(plaintext),{mode:0o600})
+    return parseLlmSettings(plaintext)
   } catch {
     return null
   }
@@ -67,7 +66,7 @@ export class ProcessingHelper {
     const qwenBaseUrl =
       stored?.qwen?.baseUrl ??
       process.env.QWEN_BASE_URL ??
-      "http://100.123.38.63:8000/v1"
+      "http://localhost:8000/v1"
     const qwenModel =
       stored?.qwen?.model ??
       process.env.QWEN_MODEL ??
@@ -92,11 +91,6 @@ export class ProcessingHelper {
       )
     } else {
       const apiKey = stored?.gemini?.apiKey ?? process.env.GEMINI_API_KEY
-      if (!apiKey) {
-        throw new Error(
-          "GEMINI_API_KEY not found in environment variables. Set GEMINI_API_KEY, enable Ollama with USE_OLLAMA=true, or enable Qwen with USE_QWEN=true"
-        )
-      }
       console.log("[ProcessingHelper] Initializing with Gemini")
       this.llmHelper = new LLMHelper(apiKey, false)
     }

@@ -239,7 +239,7 @@ function luhnValid(digits: string): boolean {
 
 /** A 13–19 digit run, separators allowed, that passes Luhn — i.e. a card. */
 function looksLikeCardNumber(text: string): boolean {
-  const candidates = text.match(/\b(?:\d[ -]?){12,18}\d\b/g) ?? []
+  const candidates: string[] = Array.from(text.match(/\b(?:\d[ -]?){12,18}\d\b/g) ?? [])
   return candidates.some((candidate) => {
     const digits = candidate.replace(/\D/g, "")
     return digits.length >= 13 && digits.length <= 19 && luhnValid(digits)

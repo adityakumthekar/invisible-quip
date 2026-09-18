@@ -5,7 +5,7 @@ export type ChatSource = "typed" | "voice" | "screen" | "system"
 
 export interface ChatMessage {
   id: string
-  role: "user" | "gemini"
+  role: "user" | "assistant"
   text: string
   source: ChatSource
   at: number
@@ -63,7 +63,7 @@ export function startsExchange(
       prev.source === "voice" &&
       curr.source === "voice"
     )
-  return prev.role === "gemini"
+  return prev.role === "assistant"
 }
 
 /**
@@ -81,7 +81,7 @@ export function lastExchangeStart(messages: ChatMessage[]): number {
 
 /** A turn as it goes over the wire — the model has no use for ids or clocks. */
 export interface ChatTurn {
-  role: "user" | "gemini"
+  role: "user" | "assistant"
   text: string
 }
 

@@ -105,7 +105,7 @@ const STATUS_TONE: Record<Status, string> = {
   err: "text-glass-danger"
 }
 
-const DEFAULT_QWEN_BASE_URL = "http://100.123.38.63:8000/v1"
+const DEFAULT_QWEN_BASE_URL = "http://localhost:8000/v1"
 const DEFAULT_QWEN_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [

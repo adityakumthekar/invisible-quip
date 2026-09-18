@@ -72,6 +72,8 @@ export interface AutopilotDependencies {
   /** Which app owns the screen; null when unknown. */
   getFrontmostApp: FrontmostAppProbe
   /** False on platforms with no probe, so "unknown" isn't treated as a red flag. */
+  authorizeStep?: (step: TeachingStepResult) => Promise<boolean>
+  beforeAction?: (step: TeachingStepResult) => Promise<void>
   appProbeSupported: boolean
 }
 
@@ -158,6 +160,7 @@ export class AutopilotCoordinator {
     const wasRunning = this.running
     this.runId += 1
     this.running = false
+    this.dependencies.session.stop()
     this.settleDecision("stop")
     this.dependencies.session.stop()
     this.dependencies.clearTarget()
@@ -260,7 +263,11 @@ export class AutopilotCoordinator {
         return
       }
 
-      const verdict = classifyStepRisk(step, {
+      let scoped = false
+      try { scoped = await this.dependencies.authorizeStep?.(step) ?? false }
+      catch (error) { this.fail(runId, error); return }
+      if (!this.isCurrent(runId)) return
+      const verdict = scoped ? { requiresConfirmation: false, reasons: [] } : classifyStepRisk(step, {
         provider: this.provider,
         autonomy: this.autonomy,
         targetApp,
@@ -293,6 +300,9 @@ export class AutopilotCoordinator {
         }
       }
 
+      try { await this.dependencies.beforeAction?.(step) }
+      catch (error) { if (this.isCurrent(runId)) this.fail(runId, error); return }
+      if (!this.isCurrent(runId)) return
       this.emit(runId, { phase: "acting", result: step })
 
       // Never actuate under our own highlight, and never let it reach the next
@@ -447,6 +457,7 @@ export class AutopilotCoordinator {
     result: TeachingResult
   ): void {
     this.running = false
+    this.dependencies.session.stop()
     this.settleDecision("stop")
     this.dependencies.clearTarget()
 
@@ -475,6 +486,7 @@ export class AutopilotCoordinator {
     decision: Extract<LoopDecision, "stop-errors"> | null = null
   ): void {
     this.running = false
+    this.dependencies.session.stop()
     this.settleDecision("stop")
     this.dependencies.clearTarget()
 
