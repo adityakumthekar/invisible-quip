@@ -132,7 +132,7 @@ export class ShortcutsHelper {
     })
 
     globalShortcut.register("CommandOrControl+B", () => {
-      this.appState.toggleMainWindow()
+      this.appState.toggleQuipWindows()
       // If window exists and we're showing it, bring it to front
       const mainWindow = this.appState.getMainWindow()
       if (mainWindow && !this.appState.isVisible()) {

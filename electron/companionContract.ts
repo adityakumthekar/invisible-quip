@@ -1,5 +1,6 @@
+import type { DailyTaskAPI } from "./dailyTaskContract";
 import { z } from "zod";
-import type { DailyAPI, PromptTarget } from "./dailyContract";
+import type { PromptTarget } from "./dailyContract";
 
 const short = z.string().trim().min(1).max(300);
 const id = z.string().min(1).max(100);
@@ -93,7 +94,7 @@ export interface CompanionSnapshot {
 export const runRequestSchema = z.object({ goal: z.string().trim().min(1).max(6000), authority: authoritySchema }).strict();
 export const surfaceValueSchema = z.object({ surfaceId: id, key: z.string().max(300), value: z.union([z.string().max(20000), z.boolean()]) }).strict();
 export type SurfaceCommand = "copy" | "save-note" | "refine";
-export interface CompanionAPI extends DailyAPI {
+export interface CompanionAPI extends DailyTaskAPI {
   snapshot(): Promise<CompanionSnapshot>;
   listApps(): Promise<Array<{ bundleId: string; name: string }>>;
   configure(settings: ContextSettings): Promise<void>;

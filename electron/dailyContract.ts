@@ -14,8 +14,9 @@ export const memorySchema = z.object({
 export type Memory = z.infer<typeof memorySchema>;
 export const edgeSchema = z.object({ from: z.string().uuid(), to: z.string().uuid(), relation: z.enum(["relates-to", "belongs-to", "decided-in", "assigned-to", "contradicts", "supports"]) }).strict();
 export type MemoryEdge = z.infer<typeof edgeSchema>;
-export const taskSchema = z.object({ title: z.string().trim().min(1).max(300), details: z.string().max(6000), status: z.enum(["suggested", "todo", "done", "dismissed"]), dueAt: z.string().datetime().nullable(), memoryIds: z.array(z.string().uuid()).max(30), remindedAt: z.string().datetime().nullable().default(null) }).strict();
-export type DailyTask = z.infer<typeof taskSchema>;
+export { taskSchema } from "./dailyTaskContract";
+import type { DailyTask } from "./dailyTaskContract";
+export type { DailyTask } from "./dailyTaskContract";
 export const segmentSchema = z.object({ id: z.string().max(100), start: z.number().nonnegative(), end: z.number().nonnegative(), channel: z.enum(["microphone", "system"]), text: z.string().max(12000) }).strict();
 export type TranscriptSegment = z.infer<typeof segmentSchema>;
 export const meetingSchema = z.object({

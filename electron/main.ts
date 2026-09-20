@@ -1,3 +1,4 @@
+import { TodayStickyWindow } from "./TodayStickyWindow";
 import { initializeWorkspaceApp } from "./workspaceMain"
 import { CompanionRuntime } from "./companionRuntime"
 import { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut } from "electron"
@@ -41,6 +42,9 @@ export class AppState {
   private remoteShutdown: (() => Promise<void>) | null = null
   private remoteInputKillSwitch: (() => void) | null = null
   public companion: CompanionRuntime | null = null
+  public sticky: TodayStickyWindow | null = null
+  private restoreSticky = false
+  private restoreAssistant = true
   public openWorkspace: (() => void) | null = null
   private tray: Tray | null = null
 
@@ -157,6 +161,16 @@ export class AppState {
       this.screenshotHelper.getExtraScreenshotQueue().length
     )
     this.windowHelper.toggleMainWindow()
+  }
+
+  public toggleQuipWindows(): void {
+    if (this.isVisible() || this.sticky?.isVisible()) {
+      this.restoreAssistant = this.isVisible(); this.restoreSticky = this.sticky?.isVisible() ?? false;
+      this.hideMainWindow(); this.sticky?.hide();
+    } else {
+      if (this.restoreAssistant) this.showMainWindow();
+      if (this.restoreSticky) this.sticky?.show();
+    }
   }
 
   public setWindowDimensions(width: number, height: number): void {
@@ -332,6 +346,7 @@ export class AppState {
         }
       },
       { label: 'Saved work and documents', click: () => this.openWorkspace?.() },
+      { label: 'Show Today sticky note', click: () => this.sticky?.show() },
       { label: 'Stop / take over', click: () => this.abortAutopilot() },
       {
         label: 'Toggle Window',
@@ -401,11 +416,12 @@ async function initializeApp() {
   if (!app.requestSingleInstanceLock()) { app.quit(); return }
   await app.whenReady()
   const appState = AppState.getInstance()
-  const workspace = await initializeWorkspaceApp({ overlay: () => appState.getMainWindow(), toggleOverlay: () => appState.toggleMainWindow() })
+  appState.sticky = new TodayStickyWindow()
+  const workspace = await initializeWorkspaceApp({ extraWindows: () => { const window = appState.sticky?.getWindow(); return window ? [window] : []; }, overlay: () => appState.getMainWindow(), toggleOverlay: () => appState.toggleMainWindow() })
   if (!workspace) throw new Error("Workspace service could not start")
   appState.openWorkspace = workspace.showWorkspace
   const bridge = initializeIpcHandlers(appState)
-  appState.companion = new CompanionRuntime(workspace.service, appState.processingHelper.getLLMHelper(), workspace.windows, bridge)
+  appState.companion = new CompanionRuntime(workspace.service, appState.processingHelper.getLLMHelper(), workspace.windows, bridge, () => appState.showMainWindow(), appState.sticky)
   await appState.companion.initialize()
   watchDisplayTopology()
   appState.createWindow()
@@ -420,6 +436,7 @@ async function initializeApp() {
     event.preventDefault(); quitting = true
     void (async () => {
       globalShortcut.unregisterAll()
+      appState.sticky?.close()
       await appState.companion?.dispose()
       appState.closeTeachingOverlay()
       await appState.shutdownRemote()

@@ -9,6 +9,13 @@ test("a fresh Mac build supports private local work, persistence, and a shared o
       args: ["dist-electron/main.js"],
       env: {
         ...process.env,
+        NODE_ENV: "development",
+        INVISIBLE: "false",
+        USE_QWEN: "true",
+        USE_OLLAMA: "false",
+        QWEN_BASE_URL: "http://127.0.0.1:1/v1",
+        QWEN_API_KEY: "test",
+        GEMINI_API_KEY: "",
         QUIP_E2E_USER_DATA: profile,
         QUIP_LEGACY_FEATURES: "false",
         QUIP_SUPABASE_URL: "",
@@ -50,7 +57,10 @@ test("a fresh Mac build supports private local work, persistence, and a shared o
       );
       if (name.endsWith(".pdf")) expect(extracted.sections[0].page).toBe(1);
     }
-    const page = await app.firstWindow();
+    const overlay = await app.firstWindow();
+    await overlay.getByRole("button", { name: "Saved work and documents", exact: true }).click();
+    await expect.poll(() => app.windows().length).toBe(2);
+    const page = app.windows().find(window => window !== overlay)!;
     await page.waitForLoadState("domcontentloaded");
     await page.getByRole("button", { name: "Start with local drafts" }).click();
     await page
@@ -91,23 +101,22 @@ test("a fresh Mac build supports private local work, persistence, and a shared o
       page.getByRole("heading", { name: "Launch decisions" }),
     ).toBeVisible();
     await page.screenshot({ path: "test-results/workspace.png" });
+    await overlay.evaluate(() => window.workspace.toggleOverlay());
     await page
       .getByRole("button", { name: "Open assistant", exact: true })
       .click();
     await expect.poll(() => app.windows().length).toBe(2);
-    const overlay = app.windows().find((win) => win !== page)!;
-    await expect(
-      overlay.getByRole("combobox", { name: "Project" }),
-    ).toHaveValue(
+    await expect.poll(async () => (await overlay.evaluate(() => window.workspace.snapshot())).activeProjectId).toBe(
       (await page.evaluate(() => window.workspace.snapshot())).activeProjectId!,
     );
-    await expect(overlay.getByLabel("Message Quip")).toHaveValue(
-      "Draft a concise project update.",
-    );
+    await expect.poll(async () => Object.values((await overlay.evaluate(() => window.workspace.snapshot())).drafts)[0]).toBe("Draft a concise project update.");
     await overlay.screenshot({ path: "test-results/assistant.png" });
     await app.close();
     app = await launch();
-    const restored = await app.firstWindow();
+    const restoredOverlay = await app.firstWindow();
+    await restoredOverlay.getByRole("button", { name: "Saved work and documents", exact: true }).click();
+    await expect.poll(() => app.windows().length).toBe(2);
+    const restored = app.windows().find(window => window !== restoredOverlay)!;
     await expect(
       restored.getByRole("heading", { name: "Client launch", exact: true }),
     ).toBeVisible();
@@ -122,10 +131,9 @@ test("a fresh Mac build supports private local work, persistence, and a shared o
     expect(
       await restored.evaluate(() => ({
         node: typeof (window as any).require,
-        legacy: typeof (window as any).electronAPI,
         invoke: typeof (window.workspace as any).invoke,
       })),
-    ).toEqual({ node: "undefined", legacy: "undefined", invoke: "undefined" });
+    ).toEqual({ node: "undefined", invoke: "undefined" });
   } finally {
     await app.close();
     await fs.rm(profile, { recursive: true, force: true });

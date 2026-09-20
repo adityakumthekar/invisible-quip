@@ -78,8 +78,11 @@ export class WorkspaceService {
   snapshot() {
     return structuredClone(this.state);
   }
+  private listeners = new Set<() => void>();
+  onChange(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private emit() {
     this.notify(this.snapshot());
+    this.listeners.forEach(listener => listener());
   }
   private cacheKey() {
     return `workspace-${this.state.account?.id || "local"}`;

@@ -1,3 +1,4 @@
+import TodaySticky from "./today/TodaySticky"
 import CompanionOverlay from "./companion/CompanionOverlay"
 import WorkspaceApp from "./workspace/WorkspaceApp"
 import { ToastProvider } from "./components/ui/toast"
@@ -164,6 +165,7 @@ const MainApp: React.FC = () => {
 }
 
 const App: React.FC = () => {
+  if (new URLSearchParams(window.location.search).get("view") === "today-sticky") return <TodaySticky />
   if (new URLSearchParams(window.location.search).get("view") === "workspace") return <WorkspaceApp compact={false} />
   const route = new URLSearchParams(window.location.search).get("view")
   return route === "teaching-overlay" ? <TeachingTargetOverlay /> : <MainApp />

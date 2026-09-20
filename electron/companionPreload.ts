@@ -2,6 +2,12 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { CompanionAPI } from "./companionContract";
 const call = (method: string, ...args: unknown[]) => ipcRenderer.invoke(`companion:${method}`, ...args);
 const api: CompanionAPI = {
+  pinToday: () => call("pinToday"),
+  onOpenToday: callback => { const listener = () => callback(); ipcRenderer.on("companion:openToday", listener); return () => { ipcRenderer.removeListener("companion:openToday", listener); }; },
+  dailySnapshot: () => call("dailySnapshot"), changeTask: value => call("changeTask", value),
+  configureDaily: value => call("configureDaily", value), refreshDaily: () => call("refreshDaily"), helpWithTask: id => call("helpWithTask", id),
+  onTaskHelp: callback => { const listener = () => callback(); ipcRenderer.on("companion:taskHelp", listener); return () => { ipcRenderer.removeListener("companion:taskHelp", listener); }; },
+  onDailyChange: callback => { const listener = (_event: unknown, value: any) => callback(value); ipcRenderer.on("companion:dailyChanged", listener); return () => { ipcRenderer.removeListener("companion:dailyChanged", listener); }; },
   snapshot: () => call("snapshot"), listApps: () => call("listApps"),
   configure: value => call("configure", value), observe: () => call("observe"), forget: () => call("forget"),
   generate: task => call("generate", task), cancel: () => call("cancel"),

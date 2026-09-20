@@ -16,6 +16,14 @@ export class WorkspaceStore {
       return null;
     }
   }
+  async getItemStrict(key: string): Promise<string | null> {
+    await this.writes;
+    try { return safeStorage.decryptString(await fs.readFile(this.file(key))); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
   setItem(key: string, value: string): Promise<void> {
     const operation = this.writes.then(async () => {
       if (!safeStorage.isEncryptionAvailable())
