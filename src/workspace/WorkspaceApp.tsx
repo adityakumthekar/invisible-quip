@@ -1,3 +1,4 @@
+import TodayView from "../today/TodayView";
 import React, {
   createContext,
   useContext,
@@ -233,6 +234,7 @@ export default function WorkspaceApp({
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false);
+  const [destination, setDestination] = useState<"projects" | "today">("projects");
   const [draft, setDraft] = useState(""),
     [search, setSearch] = useState(""),
     [tab, setTab] = useState<"chat" | "sources" | "saved">("chat");
@@ -468,6 +470,7 @@ export default function WorkspaceApp({
               </span>
               quip<span className="qw-beta">BETA</span>
             </div>
+            <button className={`qw-project-link ${destination === "today" ? "active" : ""}`} aria-pressed={destination === "today"} onClick={() => setDestination("today")}>Today</button>
             <button className="qw-new-project" onClick={openNewProject}>
               <Plus size={17} /> New project
             </button>
@@ -492,10 +495,11 @@ export default function WorkspaceApp({
                 .map((p) => (
                   <button
                     key={p.id}
-                    className={`qw-project-link ${p.id === project?.id ? "active" : ""}`}
+                    className={`qw-project-link ${destination === "projects" && p.id === project?.id ? "active" : ""}`}
                     onClick={() =>
                       void run(async () => {
                         await api().select(p.id, null);
+                        setDestination("projects");
                         setTab("chat");
                       })
                     }
@@ -525,7 +529,8 @@ export default function WorkspaceApp({
                       onClick={() =>
                         void run(async () => {
                           await api().select(c.projectId, c.id);
-                          setTab("chat");
+                          setDestination("projects");
+                        setTab("chat");
                         })
                       }
                     >
@@ -606,7 +611,7 @@ export default function WorkspaceApp({
               <>
                 <span className="qw-breadcrumb">
                   Workspace <ChevronRight size={13} />{" "}
-                  <strong>{project?.name || "Welcome"}</strong>
+                  <strong>{destination === "today" ? "Today" : project?.name || "Welcome"}</strong>
                 </span>
                 <div className="qw-top-actions">
                   {!state.online ? (
@@ -662,7 +667,7 @@ export default function WorkspaceApp({
               )}
             </div>
           )}
-          {!project ? (
+          {destination === "today" ? <div className="qw-today"><TodayView /></div> : !project ? (
             <section className="qw-empty-workspace">
               <span className="qw-hero-icon">
                 <Sparkles size={30} />
@@ -1193,6 +1198,7 @@ export default function WorkspaceApp({
                 e.preventDefault();
                 void run(async () => {
                   await api().saveProject(projectEditor);
+                  setDestination("projects");
                   setProjectEditor(null);
                   setTab("chat");
                 });

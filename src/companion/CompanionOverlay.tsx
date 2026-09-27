@@ -1,5 +1,6 @@
+import TodayView from "../today/TodayView";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, ChevronDown, GripVertical, Library, Settings, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, ListTodo, ChevronDown, GripVertical, Library, Settings, Sparkles, Square, X } from "lucide-react";
 import type { AgentRun, CompanionSnapshot, ContextSettings, Responsibility, StandingAuthority } from "../../electron/companionContract";
 import { desktopActions } from "../../electron/companionContract";
 import { beginWindowDrag, endWindowDrag } from "../lib/windowDrag";
@@ -75,7 +76,7 @@ export default function CompanionOverlay({ onTools }: { onTools: () => void }) {
   const [error, setError] = useState("");
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("quip-companion-collapsed") === "true");
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"work" | "tasks" | "context" | "settings">("work");
+  const [tab, setTab] = useState<"today" | "work" | "tasks" | "context" | "settings">("work");
   const [prompt, setPrompt] = useState(() => localStorage.getItem("quip-companion-draft") || "");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -84,7 +85,9 @@ export default function CompanionOverlay({ onTools }: { onTools: () => void }) {
     run(async () => { setState(await window.companion.snapshot()); });
     const unsubscribe = window.companion.onChange(setState);
     const ask = window.electronAPI.onAskAiHotkey(() => { setCollapsed(false); setOpen(true); setTab("work"); requestAnimationFrame(() => promptRef.current?.focus()); });
-    return () => { unsubscribe(); ask(); };
+    const taskHelp = window.companion.onTaskHelp(() => { setCollapsed(false); setOpen(true); setTab("work"); setSelectedId(null); });
+    const openToday = window.companion.onOpenToday(() => { setCollapsed(false); setOpen(true); setTab("today"); });
+    return () => { unsubscribe(); ask(); taskHelp(); openToday(); };
   }, []);
   useEffect(() => { localStorage.setItem("quip-companion-collapsed", String(collapsed)); }, [collapsed]);
   useEffect(() => { localStorage.setItem("quip-companion-draft", prompt); }, [prompt]);
@@ -102,12 +105,12 @@ export default function CompanionOverlay({ onTools }: { onTools: () => void }) {
     <div className="glass-bar qc-bar hit-region">
       <button className="qc-grip" aria-label="Move Quip" onPointerDown={event => { if (event.button === 0) { event.currentTarget.setPointerCapture(event.pointerId); beginWindowDrag(); } }} onPointerUp={endWindowDrag} onLostPointerCapture={endWindowDrag}><GripVertical size={15} /></button>
       <button className="qc-mark" aria-label="Open Quip assistant" onClick={show}>q<span className={active ? "qc-dot qc-working" : state?.cue ? "qc-dot" : ""} /></button>
-      {!collapsed && <><button className="qc-ask" onClick={() => { setOpen(!open); setTab("work"); }}>Ask Quip <span>⌘↵</span></button><button title="Saved work and documents" aria-label="Saved work and documents" onClick={() => run(() => window.workspace.openWorkspace())}><Library size={17} /></button><button aria-label="Assistant settings" onClick={() => { setTab("settings"); setOpen(true); }}><Settings size={17} /></button><button aria-label="Collapse Quip" onClick={() => setCollapsed(true)}><ChevronDown size={17} /></button></>}
+      {!collapsed && <><button className="qc-ask" onClick={() => { setOpen(!open); setTab("work"); }}>Ask Quip <span>⌘↵</span></button><button aria-label="Open Today" onClick={() => { setCollapsed(false); setOpen(true); setTab("today"); }}><ListTodo size={17} /></button><button title="Saved work and documents" aria-label="Saved work and documents" onClick={() => run(() => window.workspace.openWorkspace())}><Library size={17} /></button><button aria-label="Assistant settings" onClick={() => { setTab("settings"); setOpen(true); }}><Settings size={17} /></button><button aria-label="Collapse Quip" onClick={() => setCollapsed(true)}><ChevronDown size={17} /></button></>}
       {active && <button className="qc-stop" onClick={() => run(() => window.companion.stopRun())}><Square size={12} />Stop / take over</button>}
     </div>
     {!collapsed && !open && state?.cue && <div className="glass-panel-dark qc-cue hit-region"><button onClick={() => generate(state.cue!.task)}><Sparkles size={14} />{state.cue.title}</button><button aria-label="Dismiss suggestion" onClick={() => run(() => window.companion.dismissCue())}><X size={14} /></button></div>}
     {!collapsed && open && <div className="glass-panel-dark qc-panel hit-region">
-      <nav aria-label="Assistant panels">{(["work", "tasks", "context", "settings"] as const).map(name => <button aria-pressed={tab === name} key={name} onClick={() => setTab(name)}>{name === "work" ? "Your work" : name[0].toUpperCase() + name.slice(1)}</button>)}<button className="qc-close" aria-label="Close assistant panel" onClick={() => setOpen(false)}><X size={16} /></button></nav>
+      <nav aria-label="Assistant panels">{(["today", "work", "tasks", "context", "settings"] as const).map(name => <button aria-pressed={tab === name} key={name} onClick={() => setTab(name)}>{name === "work" ? "Your work" : name === "tasks" ? "Delegated tasks" : name[0].toUpperCase() + name.slice(1)}</button>)}<button className="qc-close" aria-label="Close assistant panel" onClick={() => setOpen(false)}><X size={16} /></button></nav>
       {(error || state?.error) && <p className="qc-error" role="alert">{error || state?.error}</p>}
       {!state ? <p role="status">Connecting to your desktop assistant…</p> : <div className="qc-scroll">
         {tab === "work" && <>
@@ -119,6 +122,7 @@ export default function CompanionOverlay({ onTools }: { onTools: () => void }) {
           {selected && <><DynamicSurfaceView key={selected.id} surface={selected} run={run} /><button className="qc-remove" onClick={() => run(async () => { await window.companion.removeSurface(selected.id); setSelectedId(null); })}>Remove this interface</button></>}
           {!selected && state.settings.enabled && <div className="qc-examples"><p>One companion. A different tool for each task.</p>{["Compare the options I’m researching", "Help me draft a reply from this context", "Turn what I’m learning into a practice checklist"].map(task => <button key={task} onClick={() => generate(task)}>{task}<span>↗</span></button>)}</div>}
         </>}
+        {tab === "today" && <TodayView />}
         {tab === "context" && <ContextPanel state={state} apps={apps} run={run} />}
         {tab === "tasks" && <TasksPanel state={state} apps={apps} run={run} />}
         {tab === "settings" && <><div className="qc-form"><h2>Make Quip yours</h2><p>Provider, appearance, audio and phone controls.</p><div className="qc-actions"><button onClick={onTools}>Open audio and teaching tools</button><button onClick={() => run(() => window.workspace.openWorkspace())}>Documents and account</button></div></div><SettingsPanel /></>}

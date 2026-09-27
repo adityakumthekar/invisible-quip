@@ -3,7 +3,7 @@ import { build } from "esbuild";
 import sharp from "sharp";
 import "./build-service-config.mjs";
 await sharp("build/icon.svg").png().toFile("build/icon.png");
-for (const name of ["preload", "workspacePreload"])
+for (const name of ["preload", "workspacePreload", "todayStickyPreload"])
   await build({
     entryPoints: [`electron/${name}.ts`],
     bundle: true,

@@ -27,6 +27,7 @@ import type { AttachmentPreview, ExtractedSection } from "./workspaceContract";
 export interface WorkspaceHost {
   overlay: () => BrowserWindow | null;
   toggleOverlay: () => void;
+  extraWindows?: () => BrowserWindow[];
 }
 export async function initializeWorkspaceApp(host?: WorkspaceHost) {
   if (!app.isPackaged && process.env.QUIP_E2E_USER_DATA)
@@ -41,7 +42,7 @@ export async function initializeWorkspaceApp(host?: WorkspaceHost) {
     tray: Tray | null = null,
     quitting = false;
   const windows = () =>
-    [workspace, host?.overlay() ?? overlay].filter(
+    [workspace, host?.overlay() ?? overlay, ...(host?.extraWindows?.() ?? [])].filter(
       (win): win is BrowserWindow => !!win && !win.isDestroyed(),
     );
   const resource = app.isPackaged

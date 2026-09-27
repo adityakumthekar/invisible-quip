@@ -26,6 +26,16 @@ No API key is needed to reach onboarding. Use **Start with local drafts** to try
 
 `Cmd+Shift+Space` or `Cmd+B` toggles the assistant. The tray menu opens the full workspace. Screen capture runs only after an explicit action and requires the macOS Screen Recording permission.
 
+## Today
+
+Open **Today** from the floating assistant or the workspace sidebar. Add tasks, set up to three goals, and choose a top three by moving accepted tasks up or down. Today, Suggested, Later, and Completed share one encrypted, account-isolated list on this Mac. Unfinished tasks carry forward; a planned day never changes a deadline. Only you mark tasks complete.
+
+Use **Pin as sticky note** to keep a compact, draggable Today checklist above your other apps. Add tasks, tick them off, or undo completion directly in the note. **Esc** hides the note; **Cmd+B** hides/restores the assistant and sticky note together. It shares Quip’s capture-exclusion setting, but some macOS screen-sharing tools can still capture protected windows. Check your sharing preview. The note’s Privacy control shows the current setting; `INVISIBLE=false` is intentionally capturable for debugging.
+
+**Suggest tasks from my activity** is off initially. When enabled, Quip reviews visible text from your allowed desktop apps, recent Quip messages, and saved notes using your selected AI provider. Cloud providers receive relevant text excerpts; local Ollama keeps inference on your Mac. Each suggestion explains why it matters and shows its supporting context. Accept, edit, defer, or dismiss it. **Help with this** opens the assistant to prepare useful work.
+
+Background review checks changed content at most every fifteen minutes, up to twenty-four times per local day. **Refresh suggestions** requests an immediate review. Pending excerpts expire after seven days; task evidence stays with its task. Pausing context pauses activity review. Excluding an app, removing a source, or clearing work memory removes related evidence while preserving accepted task text. Inference pauses for foreground requests, locked or sleeping sessions, and keeps queued work for retries. Manual lists remain usable without an AI connection. Email/calendar connections, notifications, time blocking, and task cloud sync are not included.
+
 ## Cloud and distribution
 
 Follow [Deployment](docs/DEPLOYMENT.md) for Supabase migration/functions, OTP email configuration, Gemini, Paddle sandbox verification, Apple signing/notarization, and release CI. See [Beta evaluation](docs/beta-evaluation.md) for the invited-user validation plan.

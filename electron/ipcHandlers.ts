@@ -1365,6 +1365,7 @@ export function initializeIpcHandlers(appState: AppState) {
   handle("switch-to-ollama", async (_, model?: string, url?: string) => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
+      appState.companion?.daily.cancel();
       await llmHelper.switchToOllama(model, url);
       // Persisted only after the switch succeeds, so a failed one is never
       // remembered and re-applied at the next launch.
@@ -1381,6 +1382,7 @@ export function initializeIpcHandlers(appState: AppState) {
     async (_, baseUrl?: string, model?: string, apiKey?: string) => {
       try {
         const llmHelper = appState.processingHelper.getLLMHelper()
+        appState.companion?.daily.cancel();
         await llmHelper.switchToQwen(baseUrl, model, apiKey)
         await persistLlmChoice("qwen", { qwen: { baseUrl, model, apiKey } })
         return { success: true }
@@ -1394,6 +1396,7 @@ export function initializeIpcHandlers(appState: AppState) {
   handle("switch-to-gemini", async (_, apiKey?: string) => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
+      appState.companion?.daily.cancel();
       await llmHelper.switchToGemini(apiKey);
       await persistLlmChoice("gemini", { gemini: { apiKey } })
       return { success: true };
