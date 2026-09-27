@@ -20,6 +20,7 @@ import { closeSystemAudio, openSystemAudio } from "../lib/systemAudio"
 import { createLevelMonitor, type LevelMonitor } from "../lib/audioLevel"
 import { getBarCollapsed, setBarCollapsed } from "../lib/collapsedBar"
 import { streamChat } from "../lib/chatStream"
+import { useLiveListen } from "../hooks/useLiveListen"
 import {
   createMessage,
   toHistory,
@@ -211,7 +212,18 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const sendPrompt = async (
     prompt: string,
-    opts?: { silentUser?: boolean; useScreen?: boolean; persona?: string }
+    opts?: {
+      silentUser?: boolean
+      useScreen?: boolean
+      persona?: string
+      /**
+       * Provenance overrides for callers that aren't the user typing. Live
+       * Listen sends the interviewer's transcribed question, which has to
+       * render as "Them · voice" and carry that label into history.
+       */
+      source?: ChatSource
+      speaker?: ChatMessage["speaker"]
+    }
   ) => {
     if (!prompt.trim()) return
     const withScreen = opts?.useScreen ?? includeScreen
@@ -223,13 +235,14 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
     // A silent prompt (the ⌘↵ screen glance) still gets a user turn, just with
     // no body — the header alone says "Screen", which beats an orphan answer.
-    const source: ChatSource = withScreen ? "screen" : "typed"
+    const source: ChatSource = opts?.source ?? (withScreen ? "screen" : "typed")
     setChatMessages((msgs) => [
       ...msgs,
       createMessage({
         role: "user",
         text: opts?.silentUser ? "" : prompt,
-        source
+        source,
+        speaker: opts?.speaker
       }),
       // The empty placeholder the stream fills in.
       createMessage({ role: "gemini", text: "", source })
@@ -237,6 +250,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setChatLoading(true)
     openPanels()
     const epoch = chatEpochRef.current
+    // Supersede whatever is still streaming. replaceLastMessage always writes
+    // into msgs[len-1], so an un-aborted predecessor would spend its remaining
+    // tokens on the placeholder that belongs to this question. Harmless while
+    // every caller was a keypress; routine once Live Listen fires on its own.
+    chatAbortRef.current?.abort()
     const controller = new AbortController()
     chatAbortRef.current = controller
     try {
@@ -619,7 +637,46 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       reader.readAsDataURL(blob)
     })
 
+  // Live Listen. Everything imperative about it — the audio graph, the VAD, the
+  // settle timers — lives in the hook; what stays here is the wiring to the
+  // chat path, which is the whole point of the design: a question the
+  // interviewer asked out loud takes exactly the same route as one the user
+  // typed, so streaming, history, persona and cancellation all come for free.
+  const live = useLiveListen({
+    hasConsent: () => systemAudioConsentRef.current,
+    onQuestion: (text) =>
+      sendPrompt(text, {
+        // Renders as "Them · voice", and toHistory labels it "Interviewer:".
+        source: "voice",
+        speaker: "them",
+        // Never attach the screen: this fires on its own, and a silent capture
+        // the user didn't ask for is a different feature with different consent.
+        useScreen: false
+      }),
+    onNotice: (text) =>
+      setChatMessages((msgs) => [
+        ...msgs,
+        createMessage({ role: "gemini", text, source: "system" })
+      ])
+  })
+
+  const liveArmedRef = useRef(false)
+  liveArmedRef.current = live.state.armed
+
+  useEffect(() => {
+    if (live.state.error) {
+      showToast("Live listening stopped", live.state.error, "error")
+    }
+  }, [live.state.error])
+
   const handleRecordClick = async () => {
+    // While Live is armed the hotkey means "answer what they've said so far".
+    // Starting a mic clip here would open a second capture of a call the app is
+    // already listening to.
+    if (liveArmedRef.current) {
+      live.answerNow()
+      return
+    }
     if (!isRecording) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -967,6 +1024,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             remoteConnections={remote.count}
             remoteInputEnabled={remote.inputEnabled}
             collapseDisabledReason={collapseDisabledReason}
+            liveArmed={live.state.armed}
+            livePhase={live.phase}
+            liveStream={live.stream}
+            onLiveClick={live.toggle}
             onToggleCollapsed={toggleCollapsed}
             onAskAi={handleAskAi}
             onNewChat={handleNewChat}

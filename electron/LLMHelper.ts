@@ -221,6 +221,27 @@ export class LLMHelper {
     maxOutputTokens: 3072
   }
 
+  /**
+   * Temperature 0 and a tight cap: this is a machine writing words down, not a
+   * model with an opinion. 512 tokens is far past what maxUtteranceMs of speech
+   * can produce, so the cap can never truncate a real question.
+   */
+  private static readonly TRANSCRIBE_GENERATION_CONFIG = {
+    temperature: 0,
+    candidateCount: 1,
+    maxOutputTokens: 512
+  }
+
+  /**
+   * The "(no speech)" marker is matched by normalizeTranscript() in
+   * src/lib/questionGate.ts — reword the rest freely, but it has to survive.
+   */
+  private static readonly TRANSCRIBE_PROMPT =
+    "Transcribe the attached audio verbatim. Output only the words that were " +
+    "spoken: no speaker labels, no timestamps, no commentary, no quotation " +
+    "marks. Do not answer, summarise, translate, or explain anything you hear. " +
+    "If there is no intelligible speech, output exactly: (no speech)"
+
   private model: GenerativeModel | null = null
   /**
    * The SDK pins API_VERSION to "v1" with no override in 0.2.1. v1 is documented
@@ -660,6 +681,42 @@ ANSWER: your answer`
     } catch (error) {
       console.error("Error analyzing audio from base64:", error);
       throw error;
+    }
+  }
+
+  /**
+   * Live Listen's stage one, and deliberately *not* a chat request: no history,
+   * no persona, no output contract. Every one of those layers is a way for a
+   * transcriber to start answering the question instead of writing it down.
+   *
+   * It is also the only thing between the interviewer finishing a sentence and
+   * the first token of the answer, so the whole budget here is about a second.
+   * Stage two is the ordinary streaming chat path — which is what keeps this
+   * feature small, since the answering side needed no new code at all.
+   */
+  public async transcribeAudio(data: string, mimeType: string) {
+    if (this.useOllama || !this.model) {
+      throw new Error(
+        "Live Listen needs Gemini — Ollama's /api/generate takes no audio input."
+      )
+    }
+    try {
+      const result = await this.model.generateContent({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: LLMHelper.TRANSCRIBE_PROMPT },
+              { inlineData: { data, mimeType } }
+            ]
+          }
+        ],
+        generationConfig: LLMHelper.TRANSCRIBE_GENERATION_CONFIG
+      })
+      return { text: result.response.text().trim(), timestamp: Date.now() }
+    } catch (error) {
+      console.error("Error transcribing audio:", error)
+      throw error
     }
   }
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react"
 import {
   ChevronsRight,
+  Ear,
   GraduationCap,
   Eye,
   LayoutGrid,
@@ -11,6 +12,7 @@ import {
   Smartphone,
   Sparkles
 } from "lucide-react"
+import type { LivePhase } from "../../lib/liveListenSession"
 import { cn } from "../../lib/utils"
 import { SHORTCUTS } from "../../lib/shortcuts"
 import {
@@ -19,8 +21,22 @@ import {
   isClickNotDrag,
   type ScreenPoint
 } from "../../lib/windowDrag"
-import MicWaveform from "./MicWaveform"
+import MicWaveform, { LevelBars } from "./MicWaveform"
 import ShortcutsTooltip from "./ShortcutsTooltip"
+
+/**
+ * What Live is doing right now. The button label stays "Live" in every state —
+ * the window is auto-sized to this bar's content, so a label that changes width
+ * makes the whole overlay twitch on every utterance.
+ */
+const LIVE_PHASE_TITLE: Record<LivePhase, string> = {
+  off: "Live — listen to the call and answer automatically",
+  listening: "Live — listening for a question",
+  speaking: "Live — hearing them now",
+  transcribing: "Live — writing down what they asked",
+  answering: "Live — answering",
+  error: "Live — stopped"
+}
 
 /**
  * "Connected" and "can type here" are very different facts about this machine,
@@ -53,6 +69,11 @@ interface ControlBarProps {
   remoteInputEnabled: boolean
   /** Non-null disables the collapse control and explains why in its tooltip. */
   collapseDisabledReason?: string | null
+  /** Live Listen: continuous capture of the other party, armed by the user. */
+  liveArmed: boolean
+  livePhase: LivePhase
+  liveStream?: MediaStream | null
+  onLiveClick: () => void
   onToggleCollapsed: () => void
   onAskAi: () => void
   onNewChat: () => void
@@ -78,6 +99,10 @@ const ControlBar: React.FC<ControlBarProps> = ({
   teachingOpen,
   collapsed,
   collapseDisabledReason,
+  liveArmed,
+  livePhase,
+  liveStream,
+  onLiveClick,
   onToggleCollapsed,
   onAskAi,
   onNewChat,
@@ -210,6 +235,25 @@ const ControlBar: React.FC<ControlBarProps> = ({
           />
         )}
 
+        {liveArmed && liveStream && (
+          <div className="no-drag flex items-center gap-2 px-2">
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                livePhase === "speaking"
+                  ? "bg-red-400 animate-pulse"
+                  : livePhase === "listening"
+                    ? "bg-glass-accent/70"
+                    : "bg-glass-accent animate-pulse"
+              )}
+            />
+            <span className="text-[10px] glass-subtle">Them</span>
+            {/* watchForSilence is what catches a Multi-Output the user forgot
+                to select — the bars go red without costing a question. */}
+            <LevelBars stream={liveStream} width={48} watchForSilence />
+          </div>
+        )}
+
         <button
           type="button"
           className={cn("icon-btn no-drag", panelsOpen && "active")}
@@ -276,12 +320,30 @@ const ControlBar: React.FC<ControlBarProps> = ({
             isRecording && "active text-glass-danger"
           )}
           onClick={onRecordClick}
-          title={isRecording ? "Stop recording" : "Record voice"}
+          title={
+            liveArmed
+              ? "Answer what they've said so far (⌥M)"
+              : isRecording
+                ? "Stop recording"
+                : "Record voice"
+          }
         >
           <Mic className="w-3.5 h-3.5" strokeWidth={1.75} />
-          <span>{isRecording ? "Stop" : "Record"}</span>
+          <span>{liveArmed ? "Answer" : isRecording ? "Stop" : "Record"}</span>
           <span className="kbd">⌥</span>
           <span className="kbd">M</span>
+        </button>
+
+        <button
+          type="button"
+          className={cn("icon-btn no-drag", liveArmed && "active")}
+          onClick={onLiveClick}
+          title={LIVE_PHASE_TITLE[livePhase]}
+          aria-label={LIVE_PHASE_TITLE[livePhase]}
+          aria-pressed={liveArmed}
+        >
+          <Ear className="w-3.5 h-3.5" strokeWidth={1.75} />
+          <span>Live</span>
         </button>
 
         {screenshots.length > 0 && (
