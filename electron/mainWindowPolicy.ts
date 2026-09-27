@@ -20,8 +20,9 @@ export function createMainWindowOptions(
     minWidth: 300,
     minHeight: 200,
     webPreferences: {
-      nodeIntegration: true,
+      nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       preload: preloadPath
     },
     show: false,

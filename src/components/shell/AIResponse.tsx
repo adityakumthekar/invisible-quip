@@ -272,7 +272,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
     anchorToTop()
   }
 
-  const lastAssistant = [...messages].reverse().find((m) => m.role === "gemini")
+  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")
   const hasContent = messages.length > 0 || loading
 
   // Copying an answer is nearly always about the code; the raw markdown would

@@ -241,7 +241,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         source
       }),
       // The empty placeholder the stream fills in.
-      createMessage({ role: "gemini", text: "", source })
+      createMessage({ role: "assistant", text: "", source })
     ])
     setChatLoading(true)
     setChatStreaming(true)
@@ -291,7 +291,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     // is Quip reporting on itself, not the model saying something.
     setChatMessages((msgs) => [
       ...msgs,
-      createMessage({ role: "gemini", text: "Stopped.", source: "system" })
+      createMessage({ role: "assistant", text: "Stopped.", source: "system" })
     ])
   }
 
@@ -742,7 +742,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             setChatMessages((msgs) => [
               ...msgs,
               createMessage({
-                role: "gemini",
+                role: "assistant",
                 text: "System audio captured nothing this clip. Check that your macOS Output is set to the Multi-Output device.",
                 source: "system"
               })
@@ -793,7 +793,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                 ...msgs,
                 ...spoken,
                 createMessage({
-                  role: "gemini",
+                  role: "assistant",
                   text: result.text,
                   source: "voice"
                 })
@@ -811,7 +811,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                   durationSec: clipSeconds
                 }),
                 createMessage({
-                  role: "gemini",
+                  role: "assistant",
                   text: "Audio analysis failed.",
                   source: "voice"
                 })
@@ -922,7 +922,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       setChatMessages((msgs) => [
         ...msgs,
         createMessage({ role: "user", text: "", source: "screen" }),
-        createMessage({ role: "gemini", text: "", source: "screen" })
+        createMessage({ role: "assistant", text: "", source: "screen" })
       ])
       // Refresh the thumbnail strip alongside the model call rather than in
       // front of it — it fetches multi-megabyte previews over IPC.
@@ -967,7 +967,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setChatMessages((msgs) => [
       ...msgs,
       createMessage({
-        role: "gemini",
+        role: "assistant",
         text: `Switched to ${model}.`,
         source: "system"
       })

@@ -15,8 +15,8 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true
   },
-  // Both browser bundles: the overlay (src) and the phone client (phone).
+  // Both browser bundles: the overlay (src) and the phone client (remote-app).
   // They share the pure modules under src/lib.
-  "include": ["src", "phone"],
+  "include": ["src", "remote-app"],
   "exclude": ["src/**/*.test.ts"]
 }

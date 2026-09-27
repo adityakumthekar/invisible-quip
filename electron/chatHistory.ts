@@ -1,5 +1,5 @@
 export interface ChatTurn {
-  role: "user" | "gemini"
+  role: "user" | "assistant"
   text: string
 }
 
@@ -69,7 +69,7 @@ function recentWindow(
 /** Trimming can leave an answer at the front with nothing it answers. */
 function dropLeadingAnswers(turns: ChatTurn[]): ChatTurn[] {
   let start = 0
-  while (start < turns.length && turns[start].role === "gemini") start += 1
+  while (start < turns.length && turns[start].role === "assistant") start += 1
   return turns.slice(start)
 }
 
@@ -106,7 +106,7 @@ export function toGeminiHistory(turns: ChatTurn[]): GeminiContent[] {
   // withinBudget already strips a leading answer after the anchor; this covers
   // the un-anchored case, where the window can still open on one.
   return dropLeadingAnswers(withinBudget(turns, GEMINI_BUDGET)).map((turn) => ({
-    role: turn.role === "gemini" ? ("model" as const) : ("user" as const),
+    role: turn.role === "assistant" ? ("model" as const) : ("user" as const),
     parts: [{ text: turn.text }]
   }))
 }
@@ -114,6 +114,6 @@ export function toGeminiHistory(turns: ChatTurn[]): GeminiContent[] {
 /** Ollama takes a single prompt string, so its history has to be inlined. */
 export function flattenHistory(turns: ChatTurn[]): string {
   return withinBudget(turns, OLLAMA_BUDGET)
-    .map((t) => `${t.role === "gemini" ? "Assistant" : "User"}: ${t.text}`)
+    .map((t) => `${t.role === "assistant" ? "Assistant" : "User"}: ${t.text}`)
     .join("\n")
 }

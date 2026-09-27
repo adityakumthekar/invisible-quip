@@ -4,7 +4,7 @@ import sharp from "sharp"
 const generateContentStream = vi.fn()
 const generateContent = vi.fn()
 
-vi.mock("@google/generative-ai", () => ({
+vi.mock("./geminiAdapter", () => ({
   GoogleGenerativeAI: class {
     getGenerativeModel() {
       return { generateContentStream, generateContent }
@@ -89,7 +89,7 @@ describe("LLMHelper streaming", () => {
       undefined,
       [
         { role: "user", text: "write an LRU cache in python" },
-        { role: "gemini", text: "class LRUCache: ..." }
+        { role: "assistant", text: "class LRUCache: ..." }
       ]
     )
 

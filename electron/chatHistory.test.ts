@@ -8,18 +8,18 @@ import {
   toGeminiHistory
 } from "./chatHistory"
 
-const turn = (role: "user" | "gemini", text: string) => ({ role, text })
+const turn = (role: "user" | "assistant", text: string) => ({ role, text })
 
 /** A session that blows the budget several times over: n exchanges of code-sized answers. */
 const longSession = (exchanges: number) =>
   Array.from({ length: exchanges }, (_, i) => [
     turn("user", `question ${i}`),
-    turn("gemini", `answer ${i} `.padEnd(2000, "x"))
+    turn("assistant", `answer ${i} `.padEnd(2000, "x"))
   ]).flat()
 
 describe("toGeminiHistory", () => {
   it("maps the assistant role to Gemini's 'model'", () => {
-    expect(toGeminiHistory([turn("user", "q"), turn("gemini", "a")])).toEqual([
+    expect(toGeminiHistory([turn("user", "q"), turn("assistant", "a")])).toEqual([
       { role: "user", parts: [{ text: "q" }] },
       { role: "model", parts: [{ text: "a" }] }
     ])
@@ -27,7 +27,7 @@ describe("toGeminiHistory", () => {
 
   it("drops leading model turns, which open a malformed conversation", () => {
     const out = toGeminiHistory([
-      turn("gemini", "orphan answer"),
+      turn("assistant", "orphan answer"),
       turn("user", "q")
     ])
     expect(out).toEqual([{ role: "user", parts: [{ text: "q" }] }])
@@ -35,7 +35,7 @@ describe("toGeminiHistory", () => {
 
   it("keeps the most recent turns when over the turn cap", () => {
     const many = Array.from({ length: HISTORY_MAX_TURNS + 6 }, (_, i) =>
-      turn(i % 2 === 0 ? "user" : "gemini", `m${i}`)
+      turn(i % 2 === 0 ? "user" : "assistant", `m${i}`)
     )
     const out = toGeminiHistory(many)
     expect(out.length).toBeLessThanOrEqual(HISTORY_MAX_TURNS)
@@ -46,7 +46,7 @@ describe("toGeminiHistory", () => {
     const big = "x".repeat(HISTORY_MAX_CHARS)
     const out = toGeminiHistory([
       turn("user", big),
-      turn("gemini", big),
+      turn("assistant", big),
       turn("user", "latest")
     ])
     const chars = out.reduce((n, c) => n + c.parts[0].text.length, 0)
@@ -90,7 +90,7 @@ describe("the anchored opening turn", () => {
   it("does not repeat the opening turn when it still fits on its own", () => {
     const short = [
       turn("user", "reverse a linked list"),
-      turn("gemini", "iterative, O(n)"),
+      turn("assistant", "iterative, O(n)"),
       turn("user", "now do it recursively")
     ]
     expect(toGeminiHistory(short).map((c) => c.parts[0].text)).toEqual([
@@ -109,7 +109,7 @@ describe("the anchored opening turn", () => {
 
 describe("flattenHistory", () => {
   it("labels each turn for models that take one prompt string", () => {
-    expect(flattenHistory([turn("user", "q"), turn("gemini", "a")])).toBe(
+    expect(flattenHistory([turn("user", "q"), turn("assistant", "a")])).toBe(
       "User: q\nAssistant: a"
     )
   })

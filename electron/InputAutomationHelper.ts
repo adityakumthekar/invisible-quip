@@ -125,7 +125,8 @@ export class InputAutomationHelper {
 
   constructor(
     private readonly load: NutLoader = defaultLoader,
-    private readonly sleep: Sleep = defaultSleep
+    private readonly sleep: Sleep = defaultSleep,
+    private readonly check: () => void = () => {}
   ) {}
 
   private nut(): NutBinding {
@@ -174,20 +175,26 @@ export class InputAutomationHelper {
 
   /** Move the cursor to `point` (rounded to whole pixels) and left-click. */
   public async clickAt(point: InputPoint): Promise<void> {
+    this.check()
     const nut = this.nut()
     await this.moveTo(nut, point)
+    this.check()
     await nut.mouse.leftClick()
   }
 
   public async doubleClickAt(point: InputPoint): Promise<void> {
+    this.check()
     const nut = this.nut()
     await this.moveTo(nut, point)
+    this.check()
     await nut.mouse.doubleClick(this.enumValue(nut.Button, "LEFT", "button"))
   }
 
   public async rightClickAt(point: InputPoint): Promise<void> {
+    this.check()
     const nut = this.nut()
     await this.moveTo(nut, point)
+    this.check()
     await nut.mouse.rightClick()
   }
 
@@ -197,8 +204,10 @@ export class InputAutomationHelper {
     direction: ScrollDirection,
     amount: number
   ): Promise<void> {
+    this.check()
     const nut = this.nut()
     await this.moveTo(nut, point)
+    this.check()
 
     const steps = Math.max(1, Math.round(amount))
     switch (direction) {
@@ -219,6 +228,7 @@ export class InputAutomationHelper {
 
   /** Press and hold a modifier chain, then release it in the same order. */
   public async pressKey(combo: string): Promise<void> {
+    this.check()
     const nut = this.nut()
     const keys = keyComboToKeyNames(combo).map((name) =>
       this.enumValue(nut.Key, name, "key")
@@ -230,13 +240,16 @@ export class InputAutomationHelper {
 
   /** Press at `from`, move to `to`, release. */
   public async dragTo(from: InputPoint, to: InputPoint): Promise<void> {
+    this.check()
     const nut = this.nut()
     await this.moveTo(nut, from)
+    this.check()
     await nut.mouse.drag([this.point(nut, from), this.point(nut, to)])
   }
 
   /** Type `text` into whatever currently has keyboard focus. */
   public async typeText(text: string): Promise<void> {
+    this.check()
     const nut = this.nut()
     await nut.keyboard.type(text)
   }
