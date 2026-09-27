@@ -14,6 +14,7 @@ import {
   describeLoopStop,
   evaluateLoopContinuation,
   isRepeatOfPreviousStep,
+  type AutonomyLevel,
   type AutopilotProvider,
   type LoopDecision,
   type RepeatComparableStep
@@ -38,6 +39,8 @@ export interface AutopilotUpdate {
   /** Actions actuated so far this run. */
   stepIndex: number
   maxSteps: number
+  /** The safety envelope this run is under; fixed for its whole duration. */
+  autonomy: AutonomyLevel
   result?: TeachingResult
   /** Why we paused; populated only in "awaiting-confirmation". */
   reasons?: string[]
@@ -58,6 +61,8 @@ export interface AutopilotDependencies {
   session: AutopilotSession
   /** Read at the start of each run, so a mid-run provider switch can't apply. */
   getProvider: () => AutopilotProvider
+  /** Same contract: a run's safety envelope can't be widened while it runs. */
+  getAutonomy: () => AutonomyLevel
   /** Show the highlight for a pending step. */
   showTarget: (step: TeachingStepResult) => void
   /** Hide the highlight — always called before capturing or actuating. */
@@ -67,6 +72,8 @@ export interface AutopilotDependencies {
   /** Which app owns the screen; null when unknown. */
   getFrontmostApp: FrontmostAppProbe
   /** False on platforms with no probe, so "unknown" isn't treated as a red flag. */
+  authorizeStep?: (step: TeachingStepResult) => Promise<boolean>
+  beforeAction?: (step: TeachingStepResult) => Promise<void>
   appProbeSupported: boolean
 }
 
@@ -117,6 +124,7 @@ export class AutopilotCoordinator {
   private goal = ""
   private stepIndex = 0
   private provider: AutopilotProvider = "gemini"
+  private autonomy: AutonomyLevel = "guarded"
   private options: ResolvedOptions = { ...DEFAULTS }
   private pendingDecision: ((answer: Decision) => void) | null = null
 
@@ -152,6 +160,7 @@ export class AutopilotCoordinator {
     const wasRunning = this.running
     this.runId += 1
     this.running = false
+    this.dependencies.session.stop()
     this.settleDecision("stop")
     this.dependencies.session.stop()
     this.dependencies.clearTarget()
@@ -163,6 +172,7 @@ export class AutopilotCoordinator {
         goal: this.goal,
         stepIndex: this.stepIndex,
         maxSteps: this.options.maxSteps,
+        autonomy: this.autonomy,
         stopReason: "Stopped."
       })
     }
@@ -186,6 +196,7 @@ export class AutopilotCoordinator {
     this.goal = goal
     this.stepIndex = 0
     this.provider = provider
+    this.autonomy = this.dependencies.getAutonomy()
     this.options = {
       maxSteps: Math.round(positiveNumber(options.maxSteps, DEFAULTS.maxSteps)),
       settleMs: positiveNumber(options.settleMs, DEFAULTS.settleMs),
@@ -252,8 +263,13 @@ export class AutopilotCoordinator {
         return
       }
 
-      const verdict = classifyStepRisk(step, {
+      let scoped = false
+      try { scoped = await this.dependencies.authorizeStep?.(step) ?? false }
+      catch (error) { this.fail(runId, error); return }
+      if (!this.isCurrent(runId)) return
+      const verdict = scoped ? { requiresConfirmation: false, reasons: [] } : classifyStepRisk(step, {
         provider: this.provider,
+        autonomy: this.autonomy,
         targetApp,
         appProbeSupported: this.dependencies.appProbeSupported
       })
@@ -284,6 +300,9 @@ export class AutopilotCoordinator {
         }
       }
 
+      try { await this.dependencies.beforeAction?.(step) }
+      catch (error) { if (this.isCurrent(runId)) this.fail(runId, error); return }
+      if (!this.isCurrent(runId)) return
       this.emit(runId, { phase: "acting", result: step })
 
       // Never actuate under our own highlight, and never let it reach the next
@@ -398,6 +417,7 @@ export class AutopilotCoordinator {
       // re-running the action rules would ask the same question forever.
       const appReasons = classifyAppRisk(step, {
         provider: this.provider,
+        autonomy: this.autonomy,
         targetApp: currentApp,
         appProbeSupported: this.dependencies.appProbeSupported
       })
@@ -437,6 +457,7 @@ export class AutopilotCoordinator {
     result: TeachingResult
   ): void {
     this.running = false
+    this.dependencies.session.stop()
     this.settleDecision("stop")
     this.dependencies.clearTarget()
 
@@ -453,6 +474,7 @@ export class AutopilotCoordinator {
       goal: this.goal,
       stepIndex: this.stepIndex,
       maxSteps: this.options.maxSteps,
+      autonomy: this.autonomy,
       result,
       stopReason: describeLoopStop(decision)
     })
@@ -464,6 +486,7 @@ export class AutopilotCoordinator {
     decision: Extract<LoopDecision, "stop-errors"> | null = null
   ): void {
     this.running = false
+    this.dependencies.session.stop()
     this.settleDecision("stop")
     this.dependencies.clearTarget()
 
@@ -473,6 +496,7 @@ export class AutopilotCoordinator {
       goal: this.goal,
       stepIndex: this.stepIndex,
       maxSteps: this.options.maxSteps,
+      autonomy: this.autonomy,
       error: error instanceof Error ? error.message : String(error),
       ...(decision ? { stopReason: describeLoopStop(decision) } : {})
     })
@@ -480,7 +504,10 @@ export class AutopilotCoordinator {
 
   private emit(
     runId: number,
-    update: Omit<AutopilotUpdate, "runId" | "goal" | "stepIndex" | "maxSteps">
+    update: Omit<
+      AutopilotUpdate,
+      "runId" | "goal" | "stepIndex" | "maxSteps" | "autonomy"
+    >
   ): void {
     if (!this.isCurrent(runId)) {
       return
@@ -490,6 +517,7 @@ export class AutopilotCoordinator {
       goal: this.goal,
       stepIndex: this.stepIndex,
       maxSteps: this.options.maxSteps,
+      autonomy: this.autonomy,
       ...update
     })
   }

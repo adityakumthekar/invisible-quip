@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import {
   ChevronsRight,
   GraduationCap,
@@ -21,6 +21,18 @@ import {
 } from "../../lib/windowDrag"
 import MicWaveform from "./MicWaveform"
 import ShortcutsTooltip from "./ShortcutsTooltip"
+
+/** How long an armed Quit stays armed before disarming itself. */
+const QUIT_CONFIRM_MS = 3000
+
+/**
+ * Groups the bar's controls by what they do, so the row reads as four clusters
+ * rather than ten equal buttons: ask/teach, session, chrome, and quit on its
+ * own. Rendered as a hairline between groups.
+ */
+const Divider: React.FC = () => (
+  <div className="mx-0.5 h-4 w-px bg-glass-line" aria-hidden />
+)
 
 /**
  * "Connected" and "can type here" are very different facts about this machine,
@@ -107,6 +119,25 @@ const ControlBar: React.FC<ControlBarProps> = ({
   // the tail of a drag (don't). See isClickNotDrag for why these are screen and
   // not client coordinates.
   const pressPointRef = useRef<ScreenPoint | null>(null)
+
+  // Quit sits in a bar you drag around by its edge, one cluster away from
+  // Collapse, and it ends a session with no undo. It arms on the first click
+  // and only fires on the second.
+  const [quitArmed, setQuitArmed] = useState(false)
+  const quitTimer = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => () => clearTimeout(quitTimer.current), [])
+
+  const onQuitClick = () => {
+    if (quitArmed) {
+      clearTimeout(quitTimer.current)
+      window.electronAPI.quitApp()
+      return
+    }
+    setQuitArmed(true)
+    clearTimeout(quitTimer.current)
+    quitTimer.current = setTimeout(() => setQuitArmed(false), QUIT_CONFIRM_MS)
+  }
 
   const onGripPointerDown = (event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return
@@ -210,11 +241,21 @@ const ControlBar: React.FC<ControlBarProps> = ({
           />
         )}
 
+        {/* The labelling rule, stated once so it stops being decided per
+            button: a control carries a text label if it is one of the app's
+            primary verbs (Ask AI, Teach Me, Show/Hide, Record), and a .kbd
+            chip if it has a global shortcut. Everything else is icon-only.
+            Labels are not free — the window is sized to this bar's content, so
+            each one widens the overlay permanently — which is exactly why the
+            rule has to be a rule. */}
+
+        {/* — Ask & teach — */}
         <button
           type="button"
           className={cn("icon-btn no-drag", panelsOpen && "active")}
           onClick={onAskAi}
           title="Ask AI"
+          aria-pressed={panelsOpen}
         >
           <Sparkles className="w-3.5 h-3.5" strokeWidth={1.75} />
           <span>Ask AI</span>
@@ -222,8 +263,6 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <span className="kbd">↵</span>
         </button>
 
-        {/* Icon only: the window is sized to this bar's content, so every text
-            label widens the overlay. ⌘N is documented in the shortcuts tooltip. */}
         <button
           type="button"
           className="icon-btn no-drag"
@@ -251,10 +290,15 @@ const ControlBar: React.FC<ControlBarProps> = ({
           className={cn("icon-btn no-drag", quickOpen && "active")}
           onClick={onToggleQuick}
           title="Quick actions"
+          aria-label="Quick actions"
+          aria-pressed={quickOpen}
         >
           <LayoutGrid className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
 
+        <Divider />
+
+        {/* — Session — */}
         <button
           type="button"
           className="icon-btn no-drag"
@@ -267,8 +311,6 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <span className="kbd">B</span>
         </button>
 
-        <div className="mx-0.5 h-4 w-px bg-glass-line" />
-
         <button
           type="button"
           className={cn(
@@ -277,6 +319,7 @@ const ControlBar: React.FC<ControlBarProps> = ({
           )}
           onClick={onRecordClick}
           title={isRecording ? "Stop recording" : "Record voice"}
+          aria-pressed={isRecording}
         >
           <Mic className="w-3.5 h-3.5" strokeWidth={1.75} />
           <span>{isRecording ? "Stop" : "Record"}</span>
@@ -295,11 +338,16 @@ const ControlBar: React.FC<ControlBarProps> = ({
           </button>
         )}
 
+        <Divider />
+
+        {/* — Chrome — */}
         <button
           type="button"
           className={cn("icon-btn no-drag", modelsOpen && "active")}
           onClick={onToggleModels}
           title="Settings"
+          aria-label="Settings"
+          aria-pressed={modelsOpen}
         >
           <Settings2 className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
@@ -309,8 +357,6 @@ const ControlBar: React.FC<ControlBarProps> = ({
           onTooltipVisibilityChange={onTooltipVisibilityChange}
         />
 
-        {/* Icon only, like New chat above: the window is sized to this bar, so a
-            text label here would widen the overlay permanently. */}
         <button
           type="button"
           className="icon-btn no-drag"
@@ -323,13 +369,24 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <ChevronsRight className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
 
+        <Divider />
+
+        {/* Quit is alone past its own divider, and arms before it fires. It
+            used to sit flush against Collapse — a button you reach for often —
+            with no confirmation and no undo. */}
         <button
           type="button"
-          className="icon-btn no-drag text-glass-danger opacity-80 hover:opacity-100"
-          onClick={() => window.electronAPI.quitApp()}
-          title="Quit"
+          className={cn(
+            "icon-btn no-drag text-glass-danger",
+            quitArmed ? "active opacity-100" : "opacity-80 hover:opacity-100"
+          )}
+          onClick={onQuitClick}
+          onBlur={() => setQuitArmed(false)}
+          title={quitArmed ? "Click again to quit Quip" : "Quit"}
+          aria-label={quitArmed ? "Confirm quit" : "Quit"}
         >
           <LogOut className="w-3.5 h-3.5" strokeWidth={1.75} />
+          {quitArmed && <span>Sure?</span>}
         </button>
       </div>
     </div>

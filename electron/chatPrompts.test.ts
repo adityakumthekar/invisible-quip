@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const generateContentStream = vi.fn()
 const generateContent = vi.fn()
 
-vi.mock("@google/generative-ai", () => ({
+vi.mock("./geminiAdapter", () => ({
   GoogleGenerativeAI: class {
     getGenerativeModel() {
       return { generateContentStream, generateContent }

@@ -8,6 +8,13 @@ import {
   isAutopilotBusy,
   type AutopilotSessionState
 } from "../../lib/autopilotSession"
+import { describeAutonomyLevel, type AutonomyLevel } from "../../lib/autopilot"
+
+const AUTONOMY_LABELS: Record<AutonomyLevel, string> = {
+  guarded: "Guarded",
+  balanced: "Balanced",
+  handsoff: "Hands-off"
+}
 
 export interface AutopilotConsentState {
   status: AutopilotConsent | null
@@ -43,7 +50,7 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
 
   if (consent.error) {
     return (
-      <p className="mt-4 text-[12.5px] leading-relaxed glass-text" role="alert">
+      <p className="mt-4 text-body leading-relaxed glass-text" role="alert">
         {consent.error}
       </p>
     )
@@ -51,7 +58,7 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
 
   if (!consent.status) {
     return (
-      <p className="mt-4 text-[11px] glass-muted" role="status">
+      <p className="mt-4 text-meta glass-muted" role="status">
         Checking autopilot status…
       </p>
     )
@@ -67,14 +74,14 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
             className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon"
             strokeWidth={1.75}
           />
-          <p className="text-[11.5px] leading-relaxed glass-text">
+          <p className="text-label leading-relaxed glass-text">
             {consent.status.text}
           </p>
         </div>
         <button
           type="button"
           onClick={onAcceptConsent}
-          className="glass-action rounded-lg px-3 py-2 text-[11px]"
+          className="glass-action rounded-nested px-3 py-2 text-meta"
         >
           I understand — enable autopilot
         </button>
@@ -94,14 +101,14 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
         >
           <label
             htmlFor="autopilot-goal"
-            className="block text-[12px] glass-text"
+            className="block text-body glass-text"
           >
             What should Quip do?
           </label>
           <div className="flex gap-2">
             <input
               id="autopilot-goal"
-              className="glass-control min-w-0 flex-1 rounded-lg px-3 py-2 text-[12px]"
+              className="glass-control min-w-0 flex-1 rounded-nested px-3 py-2 text-body"
               value={session.goal}
               onChange={(event) => onGoalChange(event.target.value)}
               placeholder="For example, open my calendar and go to next week"
@@ -111,7 +118,7 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
             <button
               type="submit"
               disabled={!session.goal.trim()}
-              className="glass-action flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+              className="glass-action flex items-center gap-1.5 rounded-nested px-3 py-2 text-meta disabled:opacity-40"
             >
               <Play className="w-3.5 h-3.5" strokeWidth={1.75} />
               Run
@@ -123,28 +130,40 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
       {(busy || session.update) && (
         <div aria-live="polite">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] uppercase tracking-wide glass-muted">
+            <p className="text-meta uppercase tracking-wide glass-muted">
               {describeAutopilotPhase(session.phase)}
             </p>
-            {progress && (
-              <p className="text-[11px] glass-muted tabular-nums">{progress}</p>
-            )}
+            <div className="flex items-center gap-2">
+              {/* Which safety envelope this run is under — fixed when it
+                  started, so it can differ from what Settings shows now. */}
+              {session.update?.autonomy && (
+                <p
+                  className="text-meta glass-subtle"
+                  title={describeAutonomyLevel(session.update.autonomy)}
+                >
+                  {AUTONOMY_LABELS[session.update.autonomy]}
+                </p>
+              )}
+              {progress && (
+                <p className="text-meta glass-muted tabular-nums">{progress}</p>
+              )}
+            </div>
           </div>
 
           {session.update?.result?.instruction && (
-            <p className="mt-2 text-[13px] leading-relaxed glass-heading">
+            <p className="mt-2 text-title leading-relaxed glass-heading">
               {session.update.result.instruction}
             </p>
           )}
 
           {session.update?.stopReason && (
-            <p className="mt-2 text-[11.5px] glass-text">
+            <p className="mt-2 text-label glass-text">
               {session.update.stopReason}
             </p>
           )}
 
           {session.error && (
-            <p className="mt-2 text-[11.5px] glass-text" role="alert">
+            <p className="mt-2 text-label glass-text" role="alert">
               {session.error}
             </p>
           )}
@@ -153,15 +172,15 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
 
       {pending && (
         <div
-          className="rounded-lg bg-glass-soft px-2.5 py-2"
+          className="rounded-nested bg-glass-soft px-2.5 py-2"
           role="alert"
           aria-live="assertive"
         >
-          <p className="text-[11px] glass-heading">{pendingAction}</p>
+          <p className="text-meta glass-heading">{pendingAction}</p>
           {pending.reasons && pending.reasons.length > 0 && (
             <ul className="mt-1.5 space-y-1">
               {pending.reasons.map((reason) => (
-                <li key={reason} className="text-[11px] glass-muted">
+                <li key={reason} className="text-meta glass-muted">
                   · {reason}
                 </li>
               ))}
@@ -171,7 +190,7 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
             <button
               type="button"
               onClick={onConfirm}
-              className="glass-action flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px]"
+              className="glass-action flex items-center gap-1.5 rounded-nested px-3 py-2 text-meta"
             >
               <Check className="w-3.5 h-3.5" strokeWidth={1.75} />
               Approve
@@ -179,13 +198,13 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
             <button
               type="button"
               onClick={onReject}
-              className="glass-control flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] glass-text"
+              className="glass-control flex items-center gap-1.5 rounded-nested px-3 py-2 text-meta glass-text"
             >
               <SkipForward className="w-3.5 h-3.5" strokeWidth={1.75} />
               Skip
             </button>
           </div>
-          <p className="mt-1.5 text-[11px] glass-muted">
+          <p className="mt-1.5 text-meta glass-muted">
             ⌘/Ctrl+⇧+Enter to approve · ⌘/Ctrl+⇧+Backspace to stop
           </p>
         </div>
@@ -195,7 +214,7 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
         <button
           type="button"
           onClick={onStop}
-          className="glass-control flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] glass-text"
+          className="glass-control flex items-center gap-1.5 rounded-nested px-3 py-2 text-meta glass-text"
         >
           <Square className="w-3 h-3" strokeWidth={1.75} />
           Stop

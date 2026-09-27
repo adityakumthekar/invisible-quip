@@ -2,6 +2,7 @@ import React, { useState, useEffect, useReducer, useRef } from "react"
 import { useQuery } from "react-query"
 import {
   Toast,
+  ToastClose,
   ToastTitle,
   ToastDescription,
   ToastVariant,
@@ -89,6 +90,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   // than paying for tokens nobody will read.
   const chatAbortRef = useRef<AbortController | null>(null)
   const [chatLoading, setChatLoading] = useState(false)
+  // True for the whole lifetime of a request. chatLoading is not a substitute:
+  // it drops the instant the first token lands, so a stop control keyed off it
+  // would disappear exactly when the answer starts going wrong.
+  const [chatStreaming, setChatStreaming] = useState(false)
   const [panelsOpen, setPanelsOpen] = useState(false)
   // Tracked here only for the panel width — the prompt itself lives in main.
   const [mode, setActiveMode] = useState(getMode)
@@ -118,7 +123,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const handleAskAiRef = useRef<() => void>(() => {})
   const handleRecordClickRef = useRef<() => void>(() => {})
   const handleNewChatRef = useRef<() => void>(() => {})
-  const [privacyStatus, setPrivacyStatus] = useState<PrivacyGateStatus | null>(null)
+  const [privacyStatus, setPrivacyStatus] = useState<PrivacyGateStatus | null>(
+    null
+  )
   const [privacyChecking, setPrivacyChecking] = useState(false)
   const [privacyError, setPrivacyError] = useState<string | null>(null)
 
@@ -159,9 +166,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [currentModel, setCurrentModel] = useState<{
-    provider: "ollama" | "gemini"
+    provider: "gemini" | "qwen"
     model: string
-  }>({ provider: "gemini", model: "gemini-3.5-flash" })
+  }>({ provider: "gemini", model: "gemini-3.6-flash" })
 
   const { data: screenshots = [], refetch } = useQuery<
     Array<{ path: string; preview: string }>,
@@ -215,7 +222,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   ) => {
     if (!prompt.trim()) return
     const withScreen = opts?.useScreen ?? includeScreen
-    const channel = withScreen ? "chat-with-screen-stream" : "gemini-chat-stream"
+    const channel = withScreen
+      ? "chat-with-screen-stream"
+      : "gemini-chat-stream"
 
     // Snapshot before the append below — the turn being sent and its empty
     // placeholder must not appear in the history that accompanies it.
@@ -232,9 +241,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         source
       }),
       // The empty placeholder the stream fills in.
-      createMessage({ role: "gemini", text: "", source })
+      createMessage({ role: "assistant", text: "", source })
     ])
     setChatLoading(true)
+    setChatStreaming(true)
     openPanels()
     const epoch = chatEpochRef.current
     const controller = new AbortController()
@@ -260,8 +270,29 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       replaceLastMessage("Error: " + String(err))
     } finally {
       if (chatAbortRef.current === controller) chatAbortRef.current = null
-      if (epoch === chatEpochRef.current) setChatLoading(false)
+      if (epoch === chatEpochRef.current) {
+        setChatLoading(false)
+        setChatStreaming(false)
+      }
     }
+  }
+
+  // Halt the answer in flight without touching the transcript. ⌘N also aborts,
+  // but it throws the whole conversation away with it — which is the wrong
+  // trade when one answer goes wrong 20 minutes into a session. Whatever the
+  // model had already streamed stays on screen; only the tail is cut.
+  const stopChat = () => {
+    if (!chatAbortRef.current) return
+    chatAbortRef.current.abort()
+    chatAbortRef.current = null
+    setChatLoading(false)
+    setChatStreaming(false)
+    // "system" renders as a centred caption, not an assistant turn — stopping
+    // is Quip reporting on itself, not the model saying something.
+    setChatMessages((msgs) => [
+      ...msgs,
+      createMessage({ role: "assistant", text: "Stopped.", source: "system" })
+    ])
   }
 
   // Chat-only reset, from the bar button and ⌘N. Deliberately narrower than
@@ -275,6 +306,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setChatMessages([])
     setChatInput("")
     setChatLoading(false)
+    // The aborted request's own `finally` won't clear this — it's guarded on
+    // the epoch we just bumped.
+    setChatStreaming(false)
     setQuickOpen(false)
     // Fired from the hotkey the window may be hidden or the panel closed, and
     // an invisible reset is indistinguishable from a dead keybinding.
@@ -331,7 +365,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       setPrivacyError(null)
     } catch (error) {
       setPrivacyError(
-        "Couldn't check privacy status. " + String((error as Error)?.message ?? error)
+        "Couldn't check privacy status. " +
+          String((error as Error)?.message ?? error)
       )
     }
   }
@@ -343,7 +378,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       setPrivacyError(null)
     } catch (error) {
       setPrivacyError(
-        "Couldn't save acknowledgement. " + String((error as Error)?.message ?? error)
+        "Couldn't save acknowledgement. " +
+          String((error as Error)?.message ?? error)
       )
     }
   }
@@ -355,7 +391,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       await refreshPrivacyStatus()
     } catch (error) {
       setPrivacyError(
-        "Privacy check failed to run. " + String((error as Error)?.message ?? error)
+        "Privacy check failed to run. " +
+          String((error as Error)?.message ?? error)
       )
     } finally {
       setPrivacyChecking(false)
@@ -412,7 +449,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setTeachingOpen(false)
     // teach-stop halts an autopilot run too — both modes share one session.
     void window.electronAPI.teachStop().catch(() => {
-      showToast("Teaching stopped", "The teaching overlay was cleared.", "neutral")
+      showToast(
+        "Teaching stopped",
+        "The teaching overlay was cleared.",
+        "neutral"
+      )
     })
   }
 
@@ -445,7 +486,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const acceptAutopilotConsent = async () => {
     try {
-      setAutopilotConsent(await window.electronAPI.autopilotAcknowledgeConsent())
+      setAutopilotConsent(
+        await window.electronAPI.autopilotAcknowledgeConsent()
+      )
       setAutopilotConsentError(null)
     } catch (error) {
       setAutopilotConsentError(
@@ -699,7 +742,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             setChatMessages((msgs) => [
               ...msgs,
               createMessage({
-                role: "gemini",
+                role: "assistant",
                 text: "System audio captured nothing this clip. Check that your macOS Output is set to the Multi-Output device.",
                 source: "system"
               })
@@ -750,7 +793,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                 ...msgs,
                 ...spoken,
                 createMessage({
-                  role: "gemini",
+                  role: "assistant",
                   text: result.text,
                   source: "voice"
                 })
@@ -768,7 +811,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                   durationSec: clipSeconds
                 }),
                 createMessage({
-                  role: "gemini",
+                  role: "assistant",
                   text: "Audio analysis failed.",
                   source: "voice"
                 })
@@ -815,7 +858,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     const loadCurrentModel = async () => {
       try {
         const config = await window.electronAPI.getCurrentLlmConfig()
-        setCurrentModel({ provider: config.provider, model: config.model })
+        const provider = config.provider === "qwen" ? "qwen" : "gemini"
+        setCurrentModel({ provider, model: config.model })
       } catch (error) {
         console.error("Error loading current model config:", error)
       }
@@ -872,12 +916,13 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
       openPanels()
       setChatLoading(true)
+      setChatStreaming(true)
       // Bodyless user turn first, or the analysis reads as an answer to a
       // question nobody asked.
       setChatMessages((msgs) => [
         ...msgs,
         createMessage({ role: "user", text: "", source: "screen" }),
-        createMessage({ role: "gemini", text: "", source: "screen" })
+        createMessage({ role: "assistant", text: "", source: "screen" })
       ])
       // Refresh the thumbnail strip alongside the model call rather than in
       // front of it — it fetches multi-megabyte previews over IPC.
@@ -904,7 +949,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         replaceLastMessage("Error: " + String(err))
       } finally {
         if (chatAbortRef.current === controller) chatAbortRef.current = null
-        if (epoch === chatEpochRef.current) setChatLoading(false)
+        if (epoch === chatEpochRef.current) {
+          setChatLoading(false)
+          setChatStreaming(false)
+        }
       }
     })
     return () => {
@@ -912,14 +960,14 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }, [refetch])
 
-  const handleModelChange = (provider: "ollama" | "gemini", model: string) => {
+  const handleModelChange = (provider: "gemini" | "qwen", model: string) => {
     setCurrentModel({ provider, model })
     // A notice from the app, not an answer — "system" renders it as a centred
     // caption instead of an assistant turn.
     setChatMessages((msgs) => [
       ...msgs,
       createMessage({
-        role: "gemini",
+        role: "assistant",
         text: `Switched to ${model}.`,
         source: "system"
       })
@@ -927,21 +975,20 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   }
 
   const modelLabel =
-    currentModel.provider === "ollama"
-      ? currentModel.model
-      : "Gemini 3.5 Flash"
+    currentModel.provider === "qwen" ? currentModel.model : "Gemini 3.6 Flash"
 
   return (
-    <div
-      ref={contentRef}
-      className="select-none relative w-full"
-    >
+    <div ref={contentRef} className="select-none relative w-full">
       {/* Bottom padding is load-bearing: the window is sized to this element's
           scrollHeight, and box-shadows don't contribute to layout, so anything
           the surfaces cast beyond this padding is clipped off at the
           transparent window edge. Keep pb >= the largest shadow reach
-          (offset + blur/2) in index.css. */}
-      <div className="px-3 pt-2 pb-8 space-y-3">
+          (offset + blur/2) in index.css.
+          That reach is now 1px — the surfaces dropped their drop shadows for a
+          zero-offset contact ring — so this is pb-1 rather than the pb-8 that
+          the old 0 10px 28px layer required. If a blurred shadow ever comes
+          back, this has to grow with it. */}
+      <div className="px-3 pt-2 pb-1 space-y-3">
         <Toast
           open={toastOpen}
           onOpenChange={setToastOpen}
@@ -950,52 +997,63 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         >
           <ToastTitle>{toastMessage.title}</ToastTitle>
           <ToastDescription>{toastMessage.description}</ToastDescription>
+          {/* Written and exported since the component was added, never once
+              mounted — until now a toast could only time out. */}
+          <ToastClose />
         </Toast>
 
-        <div className="flex items-start gap-2">
-          <ControlBar
-            screenshots={screenshots}
-            isRecording={isRecording}
-            recordingSeconds={recordingSeconds}
-            micStream={micStream}
-            systemStream={systemStream}
-            panelsOpen={panelsOpen}
-            modelsOpen={isSettingsOpen}
-            quickOpen={quickOpen}
-            teachingOpen={teachingOpen}
-            collapsed={collapsed}
-            remoteConnections={remote.count}
-            remoteInputEnabled={remote.inputEnabled}
-            collapseDisabledReason={collapseDisabledReason}
-            onToggleCollapsed={toggleCollapsed}
-            onAskAi={handleAskAi}
-            onNewChat={handleNewChat}
-            onTeachMe={toggleTeaching}
-            onSolve={handleSolve}
-            onToggleModels={() => setIsSettingsOpen((v) => !v)}
-            onToggleQuick={() => setQuickOpen((v) => !v)}
-            onRecordClick={() => void handleRecordClick()}
-            onTooltipVisibilityChange={(visible, height) => {
-              setIsTooltipVisible(visible)
-              setTooltipHeight(height)
+        {/* Everything stacks under the bar. QuickActions and SettingsPanel
+            used to render *beside* it in a flex row, which grew the overlay
+            300–336px sideways across the desktop while Teach Me and the chat
+            panel grew it downwards — the same kind of object behaving two
+            different ways depending on which one you opened. */}
+        <ControlBar
+          screenshots={screenshots}
+          isRecording={isRecording}
+          recordingSeconds={recordingSeconds}
+          micStream={micStream}
+          systemStream={systemStream}
+          remoteConnections={remote.count}
+          remoteInputEnabled={remote.inputEnabled}
+          panelsOpen={panelsOpen}
+          modelsOpen={isSettingsOpen}
+          quickOpen={quickOpen}
+          teachingOpen={teachingOpen}
+          collapsed={collapsed}
+          collapseDisabledReason={collapseDisabledReason}
+          onToggleCollapsed={toggleCollapsed}
+          onAskAi={handleAskAi}
+          onNewChat={handleNewChat}
+          onTeachMe={toggleTeaching}
+          onSolve={handleSolve}
+          onToggleModels={() => setIsSettingsOpen((v) => !v)}
+          onToggleQuick={() => setQuickOpen((v) => !v)}
+          onRecordClick={() => void handleRecordClick()}
+          onTooltipVisibilityChange={(visible, height) => {
+            setIsTooltipVisible(visible)
+            setTooltipHeight(height)
+          }}
+        />
+
+        {!collapsed && quickOpen && <QuickActions onRun={runQuickAction} />}
+
+        {!collapsed && isSettingsOpen && (
+          <SettingsPanel
+            onModelChange={handleModelChange}
+            onOpenChat={() => {
+              setIsSettingsOpen(false)
+              openPanels()
+            }}
+            onModeChange={(nextMode) => {
+              setActiveMode(nextMode)
+              showToast(
+                "Mode changed",
+                `Now using ${nextMode.label} mode`,
+                "neutral"
+              )
             }}
           />
-          {!collapsed && quickOpen && <QuickActions onRun={runQuickAction} />}
-          {!collapsed && isSettingsOpen && (
-            <SettingsPanel
-              onModelChange={handleModelChange}
-              onOpenChat={openPanels}
-              onModeChange={(nextMode) => {
-                setActiveMode(nextMode)
-                showToast(
-                  "Mode changed",
-                  `Now using ${nextMode.label} mode`,
-                  "neutral"
-                )
-              }}
-            />
-          )}
-        </div>
+        )}
 
         {!collapsed && teachingOpen && (
           <TeachingPanel
@@ -1052,11 +1110,13 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             <AIResponse
               messages={chatMessages}
               loading={chatLoading}
+              streaming={chatStreaming}
               modelLabel={modelLabel}
               input={chatInput}
               includeScreen={includeScreen}
               onInputChange={setChatInput}
               onSend={() => void handleChatSend()}
+              onStop={stopChat}
               onToggleIncludeScreen={() => setIncludeScreen((v) => !v)}
               onClose={() => setPanelsOpen(false)}
             />

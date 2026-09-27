@@ -1,0 +1,7 @@
+project_id = "quip"
+[functions.workspace]
+verify_jwt = false
+[functions.paddle-webhook]
+verify_jwt = false
+[functions.reconcile-billing]
+verify_jwt = false

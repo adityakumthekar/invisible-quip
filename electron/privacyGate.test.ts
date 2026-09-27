@@ -9,6 +9,7 @@ function makeStatus(overrides: Partial<PrivacyGateStatus> = {}): PrivacyGateStat
     acknowledgementVersion: 1,
     preflightPassed: true,
     lastPreflightResult: null,
+    visibleMode: false,
     ...overrides
   }
 }
@@ -49,5 +50,44 @@ describe("evaluatePrivacyGate", () => {
       })
     )
     expect(decision).toEqual({ canStart: false, blockingReason: "preflight" })
+  })
+})
+
+describe("evaluatePrivacyGate in visible mode (INVISIBLE=false)", () => {
+  it("allows starting without a preflight, because the check can never pass", () => {
+    const decision = evaluatePrivacyGate(
+      makeStatus({ visibleMode: true, preflightPassed: false, lastPreflightResult: null })
+    )
+    expect(decision).toEqual({ canStart: true, warning: "visible-mode" })
+  })
+
+  it("allows starting even after the debug-mode preflight failure was recorded", () => {
+    const decision = evaluatePrivacyGate(
+      makeStatus({
+        visibleMode: true,
+        preflightPassed: false,
+        lastPreflightResult: {
+          status: "fail",
+          reason: "capturable for debugging",
+          remediation: "set INVISIBLE=true",
+          debugMode: true
+        }
+      })
+    )
+    expect(decision).toEqual({ canStart: true, warning: "visible-mode" })
+  })
+
+  it("still warns when a preflight somehow passed, since the warning tracks the env var", () => {
+    const decision = evaluatePrivacyGate(
+      makeStatus({ visibleMode: true, preflightPassed: true })
+    )
+    expect(decision).toEqual({ canStart: true, warning: "visible-mode" })
+  })
+
+  it("does not bypass the one-time acknowledgement", () => {
+    const decision = evaluatePrivacyGate(
+      makeStatus({ visibleMode: true, acknowledged: false, preflightPassed: false })
+    )
+    expect(decision).toEqual({ canStart: false, blockingReason: "acknowledgement" })
   })
 })

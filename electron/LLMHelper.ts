@@ -1,9 +1,4 @@
-import {
-  GoogleGenerativeAI,
-  GenerativeModel,
-  GenerateContentRequest,
-  Part
-} from "@google/generative-ai"
+import { GoogleGenerativeAI, type GenerativeModel, type GenerateContentRequest, type Part } from "./geminiAdapter"
 import fs from "fs"
 import sharp from "sharp"
 import {
@@ -13,6 +8,17 @@ import {
 } from "./teaching"
 import { parseAudioAnswer, parseTranscriptTurns } from "./audioAnswer"
 import { ChatTurn, flattenHistory, toGeminiHistory } from "./chatHistory"
+import {
+  fitToVisionGrid,
+  ImageSize,
+  isTargetWithinImage,
+  readVisionMaxPixels
+} from "./visionImage"
+import {
+  budgetMaxTokens,
+  estimateMessagesTokens,
+  promptCrowdsContext
+} from "./openAIBudget"
 
 /**
  * How a model expresses target coordinates. Gemini is trained on a normalized
@@ -238,29 +244,359 @@ export class LLMHelper {
   private useOllama: boolean = false
   private ollamaModel: string = "llama3.2"
   private ollamaUrl: string = "http://localhost:11434"
+  private useQwen: boolean = false
+  private qwenBaseUrl: string =
+    process.env.QWEN_BASE_URL || "http://localhost:8000/v1"
+  private qwenModel: string = process.env.QWEN_MODEL || "Qwen/Qwen3-VL-4B-Instruct"
+  private qwenApiKey: string = process.env.QWEN_API_KEY || "EMPTY"
+  // The context window the server actually serves, learned from /v1/models.
+  // Keyed by URL+model so switchToQwen invalidates it for free rather than
+  // needing its own reset — pointing at a different server is the one case
+  // where a stale limit would silently mis-size every request.
+  private qwenMaxModelLen: number | null = null
+  private qwenMaxModelLenKey: string = ""
   // gemini-2.0-flash was shut down June 1, 2026. 3.6 Flash (GA 2026-07-21) is
   // the pick for autopilot: it scores 83% on OSWorld-Verified against 78.4% for
   // 3.5 Flash, and screen grounding is the weakest link in a run.
   // Override with GEMINI_MODEL.
   private geminiModel: string = process.env.GEMINI_MODEL || "gemini-3.6-flash"
 
-  constructor(apiKey?: string, useOllama: boolean = false, ollamaModel?: string, ollamaUrl?: string) {
+  constructor(
+    apiKey?: string,
+    useOllama: boolean = false,
+    ollamaModel?: string,
+    ollamaUrl?: string,
+    useQwen: boolean = false,
+    qwenBaseUrl?: string,
+    qwenModel?: string,
+    qwenApiKey?: string
+  ) {
     this.useOllama = useOllama
-    
+    this.useQwen = useQwen && !useOllama
+
     if (useOllama) {
       this.ollamaUrl = ollamaUrl || "http://localhost:11434"
       this.ollamaModel = ollamaModel || "gemma:latest" // Default fallback
       console.log(`[LLMHelper] Using Ollama with model: ${this.ollamaModel}`)
-      
+
       // Auto-detect and use first available model if specified model doesn't exist
       this.initializeOllamaModel()
+    } else if (this.useQwen) {
+      if (qwenBaseUrl) this.qwenBaseUrl = this.normalizeOpenAIBaseUrl(qwenBaseUrl)
+      if (qwenModel) this.qwenModel = qwenModel
+      if (qwenApiKey) this.qwenApiKey = qwenApiKey
+      console.log(
+        `[LLMHelper] Using Qwen (OpenAI-compatible) ${this.qwenModel} at ${this.qwenBaseUrl}`
+      )
     } else if (apiKey) {
       const genAI = new GoogleGenerativeAI(apiKey)
       this.model = genAI.getGenerativeModel({ model: this.geminiModel })
       console.log(`[LLMHelper] Using Google Gemini (${this.geminiModel})`)
-    } else {
-      throw new Error("Either provide Gemini API key or enable Ollama mode")
     }
+  }
+
+  private normalizeOpenAIBaseUrl(url: string): string {
+    const trimmed = url.trim().replace(/\/+$/, "")
+    return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`
+  }
+
+  private openAIHeaders(): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${this.qwenApiKey || "EMPTY"}`
+    }
+  }
+
+  /** Richer message when TCP/DNS fails before any HTTP status from vLLM. */
+  private formatQwenConnectError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error)
+    const cause =
+      error instanceof Error && error.cause instanceof Error
+        ? error.cause.message
+        : error instanceof Error && error.cause != null
+          ? String(error.cause)
+          : ""
+    const detail = [message, cause].filter(Boolean).join(" — ")
+    const hint =
+      "Host may be reachable (Tailscale/SSH) while the vLLM API on :8000 is down — check `docker ps` / `docker logs vllm` on redrob until GET /v1/models returns JSON."
+    return `Failed to connect to Qwen at ${this.qwenBaseUrl}: ${detail}. ${hint}`
+  }
+
+  /**
+   * Pull `max_model_len` out of a /v1/models payload and cache it, so the one
+   * request the Settings picker already makes also teaches us the context size.
+   */
+  private cacheQwenMaxModelLen(data: unknown, baseUrl: string): void {
+    const entries = (data as { data?: Array<Record<string, unknown>> })?.data
+    if (!Array.isArray(entries)) return
+
+    const match = entries.find((entry) => entry?.id === this.qwenModel)
+    const advertised = Number(match?.max_model_len)
+    if (Number.isFinite(advertised) && advertised > 0) {
+      this.qwenMaxModelLen = advertised
+      this.qwenMaxModelLenKey = `${baseUrl}::${this.qwenModel}`
+    }
+  }
+
+  /**
+   * The server's context window, or null if we could not find out.
+   *
+   * Never throws: a failure here must not stand in for the real connection
+   * error the actual request is about to raise. Null simply means "don't clamp".
+   */
+  private async getQwenMaxModelLen(): Promise<number | null> {
+    // Escape hatch for OpenAI-compatible servers that omit the field.
+    const override = Number(process.env.QWEN_MAX_MODEL_LEN)
+    if (Number.isFinite(override) && override > 0) return override
+
+    const key = `${this.qwenBaseUrl}::${this.qwenModel}`
+    if (this.qwenMaxModelLenKey === key) return this.qwenMaxModelLen
+
+    try {
+      const response = await fetch(`${this.qwenBaseUrl}/models`, {
+        headers: this.openAIHeaders()
+      })
+      if (response.ok) {
+        this.cacheQwenMaxModelLen(await response.json(), this.qwenBaseUrl)
+      }
+    } catch (error) {
+      console.error("[LLMHelper] Could not read max_model_len:", error)
+    }
+
+    // Remember the miss too, so an endpoint without the field is not re-probed
+    // before every message.
+    if (this.qwenMaxModelLenKey !== key) {
+      this.qwenMaxModelLenKey = key
+      this.qwenMaxModelLen = null
+    }
+    return this.qwenMaxModelLen
+  }
+
+  /**
+   * Chat-sized data URL for the OpenAI-compatible path, with the size it came
+   * out at — the server prices an image by its dimensions, and the data URL
+   * alone does not tell us those. Teaching does not use this: it needs the
+   * grid-aligned resize in generateTeachingStepWithQwen so the coordinates it
+   * gets back mean something.
+   */
+  private async imageToDataUrl(
+    image: string | Buffer
+  ): Promise<{ url: string; size: ImageSize }> {
+    const { part, size } = await this.toChatImagePart(image)
+    return {
+      url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
+      size
+    }
+  }
+
+  private toOpenAIHistory(history: ChatTurn[]): {
+    role: "user" | "assistant"
+    content: string
+  }[] {
+    return history.map((turn) => ({
+      role: turn.role === "user" ? ("user" as const) : ("assistant" as const),
+      content: turn.text
+    }))
+  }
+
+  /**
+   * How many output tokens this request may ask for.
+   *
+   * Sits in front of both senders so every Qwen call site is covered at once:
+   * teaching, image analysis, chat, and the connection test. Without it we sent
+   * caps chosen for Gemini — 8192 for teaching, 2048 elsewhere — which a server
+   * running `--max-model-len 4096` rejects outright, with the screenshot alone
+   * costing ~2000 of those tokens.
+   */
+  private async budgetQwenOutput(
+    messages: Array<{ content: unknown }>,
+    options: { maxTokens?: number; imageSizes?: ImageSize[] }
+  ): Promise<number> {
+    const maxModelLen = await this.getQwenMaxModelLen()
+    const promptTokens = estimateMessagesTokens(messages, options.imageSizes)
+
+    if (promptCrowdsContext(promptTokens, maxModelLen)) {
+      console.warn(
+        `[LLMHelper] Prompt is ~${promptTokens} tokens against a ` +
+          `${maxModelLen}-token context at ${this.qwenBaseUrl}; the reply may be ` +
+          "cut short. Restart vLLM with a larger --max-model-len for long sessions."
+      )
+    }
+
+    return budgetMaxTokens({
+      maxModelLen,
+      promptTokens,
+      requestedMaxTokens: options.maxTokens ?? 2048
+    })
+  }
+
+  /**
+   * OpenAI-compatible chat completions (vLLM / Qwen3-VL).
+   * `content` may be a string or multimodal parts.
+   */
+  private async callOpenAI(
+    userContent:
+      | string
+      | Array<
+          | { type: "text"; text: string }
+          | { type: "image_url"; image_url: { url: string } }
+        >,
+    options: {
+      temperature?: number
+      maxTokens?: number
+      json?: boolean
+      history?: ChatTurn[]
+      system?: string
+      /**
+       * Dimensions of the images in `userContent`, in order. Passed alongside
+       * rather than on the parts themselves because those go straight onto the
+       * wire — an extra field would leak into the request body.
+       */
+      imageSizes?: ImageSize[]
+    } = {}
+  ): Promise<string> {
+    const messages: Array<{
+      role: "system" | "user" | "assistant"
+      content: unknown
+    }> = []
+    const system = options.system ?? this.systemPrompt
+    if (system) {
+      messages.push({ role: "system", content: system })
+    }
+    if (options.history?.length) {
+      messages.push(...this.toOpenAIHistory(options.history))
+    }
+    messages.push({ role: "user", content: userContent })
+
+    const maxTokens = await this.budgetQwenOutput(messages, options)
+
+    let response: Response
+    try {
+      response = await fetch(`${this.qwenBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers: this.openAIHeaders(),
+        body: JSON.stringify({
+          model: this.qwenModel,
+          messages,
+          temperature: options.temperature ?? 0.4,
+          max_tokens: maxTokens,
+          ...(options.json ? { response_format: { type: "json_object" } } : {})
+        })
+      })
+    } catch (error) {
+      throw new Error(this.formatQwenConnectError(error))
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "")
+      throw new Error(
+        `Qwen API error: ${response.status} ${response.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`
+      )
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string | null } }>
+    }
+    const text = data.choices?.[0]?.message?.content
+    if (typeof text !== "string") {
+      throw new Error("Qwen returned an empty response")
+    }
+    return text
+  }
+
+  private async callOpenAIStream(
+    userContent:
+      | string
+      | Array<
+          | { type: "text"; text: string }
+          | { type: "image_url"; image_url: { url: string } }
+        >,
+    onChunk: (delta: string) => void,
+    options: {
+      temperature?: number
+      maxTokens?: number
+      history?: ChatTurn[]
+      system?: string
+      signal?: AbortSignal
+      imageSizes?: ImageSize[]
+    } = {}
+  ): Promise<string> {
+    const messages: Array<{
+      role: "system" | "user" | "assistant"
+      content: unknown
+    }> = []
+    const system = options.system ?? this.systemPrompt
+    if (system) {
+      messages.push({ role: "system", content: system })
+    }
+    if (options.history?.length) {
+      messages.push(...this.toOpenAIHistory(options.history))
+    }
+    messages.push({ role: "user", content: userContent })
+
+    const maxTokens = await this.budgetQwenOutput(messages, options)
+
+    let response: Response
+    try {
+      response = await fetch(`${this.qwenBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers: this.openAIHeaders(),
+        body: JSON.stringify({
+          model: this.qwenModel,
+          messages,
+          temperature: options.temperature ?? 0.4,
+          max_tokens: maxTokens,
+          stream: true
+        }),
+        signal: options.signal
+      })
+    } catch (error) {
+      throw new Error(this.formatQwenConnectError(error))
+    }
+
+    if (!response.ok || !response.body) {
+      const body = await response.text().catch(() => "")
+      throw new Error(
+        `Qwen API error: ${response.status} ${response.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`
+      )
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let text = ""
+
+    const handleLine = (line: string) => {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith("data:")) return
+      const payload = trimmed.slice(5).trim()
+      if (!payload || payload === "[DONE]") return
+      let parsed: any
+      try {
+        parsed = JSON.parse(payload)
+      } catch {
+        return
+      }
+      const delta = parsed.choices?.[0]?.delta?.content
+      if (typeof delta !== "string" || !delta) return
+      text += delta
+      onChunk(delta)
+    }
+
+    while (true) {
+      if (options.signal?.aborted) {
+        await reader.cancel().catch(() => {})
+        break
+      }
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+      for (const line of lines) handleLine(line)
+    }
+    if (buffer.trim()) handleLine(buffer)
+    return text
   }
 
   /**
@@ -292,12 +628,17 @@ export class LLMHelper {
         withoutEnlargement: true
       })
       .jpeg({ quality: 80 })
-      .toBuffer()
+      // Trust what sharp actually produced, never what we asked for — the same
+      // rule the teaching path follows, and what the token budget prices.
+      .toBuffer({ resolveWithObject: true })
     return {
-      inlineData: {
-        data: jpeg.toString("base64"),
-        mimeType: "image/jpeg"
-      }
+      part: {
+        inlineData: {
+          data: jpeg.data.toString("base64"),
+          mimeType: "image/jpeg"
+        }
+      },
+      size: { width: jpeg.info.width, height: jpeg.info.height }
     }
   }
 
@@ -315,8 +656,16 @@ export class LLMHelper {
    * field, so both providers get the same layering instead of Ollama getting a
    * bare message.
    */
-  private ollamaSystem(persona?: string): string {
+  private plainSystem(persona?: string): string {
     return `${this.personaBlock(persona)}${RESPONSE_FORMAT}`
+  }
+
+  /**
+   * User-turn text for the OpenAI-compatible path. Mirrors buildChatRequest's
+   * legacy join minus the persona, which rides in the system message instead.
+   */
+  private openAIUserText(message: string, preamble?: string): string {
+    return [preamble, message].filter((b) => b && b.length > 0).join("\n\n")
   }
 
   private async callOllama(
@@ -701,8 +1050,10 @@ ANSWER: your answer`
     persona?: string
     generationConfig?: object
     legacy?: boolean
+    responseFormat?: string
   }): ChatRequest {
     const { message, preamble, imageParts = [], history = [], persona } = opts
+    const responseFormat = opts.responseFormat ?? RESPONSE_FORMAT
     const generationConfig =
       opts.generationConfig ?? LLMHelper.CHAT_GENERATION_CONFIG
 
@@ -710,7 +1061,7 @@ ANSWER: your answer`
       blocks.filter((b) => b && b.length > 0).join("\n\n")
 
     if (opts.legacy || !this.systemInstructionSupported) {
-      const text = `${this.personaBlock(persona)}${preamble ? `\n\n${preamble}` : ""}${RESPONSE_FORMAT}${message ? `\n\nUser: ${message}` : ""}`
+      const text = `${this.personaBlock(persona)}${preamble ? `\n\n${preamble}` : ""}${responseFormat}${message ? `\n\nUser: ${message}` : ""}`
       return {
         contents: [
           ...toGeminiHistory(history),
@@ -723,7 +1074,7 @@ ANSWER: your answer`
     return {
       systemInstruction: {
         role: "user",
-        parts: [{ text: `${this.personaBlock(persona)}${RESPONSE_FORMAT}` }]
+        parts: [{ text: `${this.personaBlock(persona)}${responseFormat}` }]
       },
       contents: [
         ...toGeminiHistory(history),
@@ -836,7 +1187,25 @@ ANSWER: your answer`
 
   public async analyzeImageFile(imagePath: string) {
     try {
-      const imagePart = await this.toChatImagePart(imagePath)
+      if (this.useQwen) {
+        const image = await this.imageToDataUrl(imagePath)
+        const text = await this.callOpenAI(
+          [
+            {
+              type: "text",
+              text: this.openAIUserText("", LLMHelper.IMAGE_PREAMBLE)
+            },
+            { type: "image_url", image_url: { url: image.url } }
+          ],
+          {
+            temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+            system: this.plainSystem(),
+            imageSizes: [image.size]
+          }
+        )
+        return { text, timestamp: Date.now() }
+      }
+      const { part: imagePart } = await this.toChatImagePart(imagePath)
       const text = await this.generateChatContent((legacy) =>
         this.buildChatRequest({
           message: "",
@@ -857,7 +1226,26 @@ ANSWER: your answer`
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<string> {
-    const imagePart = await this.toChatImagePart(imagePath)
+    if (this.useQwen) {
+      const image = await this.imageToDataUrl(imagePath)
+      return this.callOpenAIStream(
+        [
+          {
+            type: "text",
+            text: this.openAIUserText("", LLMHelper.IMAGE_PREAMBLE)
+          },
+          { type: "image_url", image_url: { url: image.url } }
+        ],
+        onChunk,
+        {
+          temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+          system: this.plainSystem(),
+          imageSizes: [image.size],
+          signal
+        }
+      )
+    }
+    const { part: imagePart } = await this.toChatImagePart(imagePath)
     return this.consumeGeminiStream(
       (legacy) =>
         this.buildChatRequest({
@@ -885,7 +1273,13 @@ ANSWER: your answer`
   public async chatWithGemini(message: string): Promise<string> {
     try {
       if (this.useOllama) {
-        return this.callOllama(message, { system: this.ollamaSystem() })
+        return this.callOllama(message, { system: this.plainSystem() })
+      }
+      if (this.useQwen) {
+        return this.callOpenAI(message, {
+          temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+          system: this.plainSystem()
+        })
       }
       return this.generateChatContent((legacy) =>
         this.buildChatRequest({ message, legacy })
@@ -913,14 +1307,36 @@ ANSWER: your answer`
       return this.callOllamaStream(
         prior ? `${prior}\n\nUser: ${message}` : message,
         onChunk,
-        { signal, system: this.ollamaSystem(persona) }
+        { signal, system: this.plainSystem(persona) }
       )
+    }
+    if (this.useQwen) {
+      return this.callOpenAIStream(message, onChunk, {
+        temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+        system: this.plainSystem(persona),
+        history,
+        signal
+      })
     }
     return this.consumeGeminiStream(
       (legacy) => this.buildChatRequest({ message, history, persona, legacy }),
       onChunk,
       signal
     )
+  }
+
+  /** Companion tasks own their output contract; interview/chat formatting must not override it. */
+  public async companionAnswer(message: string, images: Buffer[], system: string, signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted()
+    if (this.useOllama) {
+      return this.callOllamaStream(message, () => {}, { system: this.personaBlock(system), temperature: 0.2, images: images.map(image => image.toString("base64")), signal })
+    }
+    if (this.useQwen) {
+      const encoded = await Promise.all(images.map(image => this.imageToDataUrl(image)))
+      return this.callOpenAIStream([{ type: "text", text: message }, ...encoded.map(image => ({ type: "image_url" as const, image_url: { url: image.url } }))], () => {}, { system: this.personaBlock(system), temperature: 0.2, maxTokens: 4096, imageSizes: encoded.map(image => image.size), signal })
+    }
+    const imageParts = await Promise.all(images.map(async image => (await this.toChatImagePart(image)).part))
+    return this.consumeGeminiStream(legacy => this.buildChatRequest({ message, imageParts, persona: system, responseFormat: "", generationConfig: { temperature: 0.2, maxOutputTokens: 4096 }, legacy }), () => {}, signal)
   }
 
   public async chat(message: string): Promise<string> {
@@ -935,9 +1351,33 @@ ANSWER: your answer`
       // ponytail: most Ollama models are text-only — fall back to a text reply.
       // The system layer still rides along; it used to be dropped entirely here.
       if (this.useOllama) {
-        return this.callOllama(message, { system: this.ollamaSystem() })
+        return this.callOllama(message, { system: this.plainSystem() })
       }
-      const imageParts = await Promise.all(images.map((i) => this.toChatImagePart(i)));
+      if (this.useQwen) {
+        const encoded = await Promise.all(
+          images.map((i) => this.imageToDataUrl(i))
+        )
+        return this.callOpenAI(
+          [
+            {
+              type: "text",
+              text: this.openAIUserText(message, LLMHelper.SCREEN_PREAMBLE)
+            },
+            ...encoded.map(
+              (image) =>
+                ({ type: "image_url", image_url: { url: image.url } }) as const
+            )
+          ],
+          {
+            temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+            system: this.plainSystem(),
+            imageSizes: encoded.map((image) => image.size)
+          }
+        )
+      }
+      const imageParts = await Promise.all(
+        images.map(async (i) => (await this.toChatImagePart(i)).part)
+      )
       return this.generateChatContent((legacy) =>
         this.buildChatRequest({
           message,
@@ -967,11 +1407,36 @@ ANSWER: your answer`
       return this.callOllamaStream(
         prior ? `${prior}\n\nUser: ${message}` : message,
         onChunk,
-        { signal, system: this.ollamaSystem(persona) }
+        { signal, system: this.plainSystem(persona) }
+      )
+    }
+    if (this.useQwen) {
+      const encoded = await Promise.all(
+        images.map((i) => this.imageToDataUrl(i))
+      )
+      return this.callOpenAIStream(
+        [
+          {
+            type: "text",
+            text: this.openAIUserText(message, LLMHelper.SCREEN_PREAMBLE)
+          },
+          ...encoded.map(
+            (image) =>
+              ({ type: "image_url", image_url: { url: image.url } }) as const
+          )
+        ],
+        onChunk,
+        {
+          temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+          system: this.plainSystem(persona),
+          imageSizes: encoded.map((image) => image.size),
+          history,
+          signal
+        }
       )
     }
     const imageParts = await Promise.all(
-      images.map((i) => this.toChatImagePart(i))
+      images.map(async (i) => (await this.toChatImagePart(i)).part)
     )
     // History is text-only: past screenshots are not re-uploaded, so a
     // follow-up reasons over what was said about a screen, not the screen.
@@ -998,6 +1463,14 @@ ANSWER: your answer`
   ): Promise<TeachingStepResponse> {
     if (this.useOllama) {
       return this.generateTeachingStepWithOllama(
+        goal,
+        history,
+        screenshotPath,
+        imageSize
+      )
+    }
+    if (this.useQwen) {
+      return this.generateTeachingStepWithQwen(
         goal,
         history,
         screenshotPath,
@@ -1097,8 +1570,119 @@ ANSWER: your answer`
     )
   }
 
+  private async generateTeachingStepWithQwen(
+    goal: string,
+    history: string[],
+    screenshotPath: string,
+    imageSize: { width: number; height: number }
+  ): Promise<TeachingStepResponse> {
+    // Resize to the model's own patch grid before sending, so the image the
+    // server's smart_resize would produce is the image we already sent — that
+    // makes "absolute pixels" unambiguous whichever frame the model answers in.
+    // See visionImage.ts for why this matters more than it looks.
+    const requested = fitToVisionGrid(imageSize, {
+      maxPixels: readVisionMaxPixels()
+    })
+    const resized = await sharp(screenshotPath)
+      .resize(requested.width, requested.height, { fit: "fill" })
+      .png()
+      .toBuffer({ resolveWithObject: true })
+
+    // Trust what sharp actually produced, never what we asked for.
+    const sentSize = { width: resized.info.width, height: resized.info.height }
+    const dataUrl = `data:image/png;base64,${resized.data.toString("base64")}`
+
+    const raw = await this.callOpenAI(
+      [
+        {
+          type: "text",
+          text: buildTeachingPrompt(goal, history, sentSize, "pixels")
+        },
+        { type: "image_url", image_url: { url: dataUrl } }
+      ],
+      {
+        temperature: 0,
+        // Not TEACHING_MAX_OUTPUT_TOKENS: that knob budgets Gemini's invisible
+        // thinking tokens, which is why it is 8192 there. Qwen3-VL-Instruct does
+        // not think out loud and emits ~200 tokens of JSON, so 8192 bought
+        // nothing and exceeded the whole context of a 4096-token server.
+        maxTokens: Number(process.env.TEACHING_QWEN_MAX_OUTPUT_TOKENS) || 1024,
+        json: true,
+        system: "",
+        // Exact, not estimated — we resized this image ourselves just above.
+        imageSizes: [sentSize]
+      }
+    )
+
+    if (!raw.trim()) {
+      throw new Error(
+        `Qwen model "${this.qwenModel}" returned an empty teaching response.`
+      )
+    }
+
+    const parsed = parseTeachingModelText(raw)
+
+    // A target centred off-image means the model answered in some other
+    // coordinate frame. Downstream this would be silently clamped to a screen
+    // edge and clicked with full confidence, so fail and let the loop retry.
+    if (parsed.state === "step" && !isTargetWithinImage(parsed.target, sentSize)) {
+      throw new Error(
+        `Qwen returned a target outside the ${sentSize.width}x${sentSize.height} ` +
+          `image (${Math.round(parsed.target.x)}, ${Math.round(parsed.target.y)}).`
+      )
+    }
+
+    return normalizeTeachingStep(parsed, sentSize, "pixels")
+  }
+
   public isUsingOllama(): boolean {
     return this.useOllama;
+  }
+
+  public isUsingQwen(): boolean {
+    return this.useQwen
+  }
+
+  /**
+   * Models the vLLM endpoint is actually serving, for the Settings picker.
+   *
+   * Takes the URL as an argument rather than reading `this.qwenBaseUrl` so the
+   * panel can list what's on a server before committing to it — the point is to
+   * catch a wrong model id at Apply rather than at the first message. Returns
+   * an empty list on any failure: an endpoint without /models should fall back
+   * to typing the id, not show an error.
+   */
+  public async listQwenModels(
+    baseUrl?: string,
+    apiKey?: string
+  ): Promise<string[]> {
+    const url = baseUrl
+      ? this.normalizeOpenAIBaseUrl(baseUrl)
+      : this.qwenBaseUrl
+
+    try {
+      const response = await fetch(`${url}/models`, {
+        headers: {
+          Authorization: `Bearer ${apiKey || this.qwenApiKey || "EMPTY"}`
+        }
+      })
+      if (!response.ok) {
+        return []
+      }
+
+      const data = (await response.json()) as {
+        data?: Array<{ id?: unknown }>
+      }
+      // Same payload carries max_model_len; learn it here rather than paying
+      // for a second round trip on the first message.
+      this.cacheQwenMaxModelLen(data, url)
+      return (data.data ?? [])
+        .map((entry) => entry?.id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    } catch (error) {
+      console.error("[LLMHelper] Could not list Qwen models:", error)
+      return []
+    }
   }
 
   public async getOllamaModels(): Promise<string[]> {
@@ -1116,16 +1700,25 @@ ANSWER: your answer`
     }
   }
 
-  public getCurrentProvider(): "ollama" | "gemini" {
-    return this.useOllama ? "ollama" : "gemini";
+  public getCurrentProvider(): "ollama" | "gemini" | "qwen" {
+    if (this.useOllama) return "ollama"
+    if (this.useQwen) return "qwen"
+    return "gemini"
   }
 
   public getCurrentModel(): string {
-    return this.useOllama ? this.ollamaModel : this.geminiModel;
+    if (this.useOllama) return this.ollamaModel
+    if (this.useQwen) return this.qwenModel
+    return this.geminiModel
+  }
+
+  public getQwenBaseUrl(): string {
+    return this.qwenBaseUrl
   }
 
   public async switchToOllama(model?: string, url?: string): Promise<void> {
     this.useOllama = true;
+    this.useQwen = false
     if (url) this.ollamaUrl = url;
     
     if (model) {
@@ -1136,6 +1729,21 @@ ANSWER: your answer`
     }
     
     console.log(`[LLMHelper] Switched to Ollama: ${this.ollamaModel} at ${this.ollamaUrl}`);
+  }
+
+  public async switchToQwen(
+    baseUrl?: string,
+    model?: string,
+    apiKey?: string
+  ): Promise<void> {
+    this.useOllama = false
+    this.useQwen = true
+    if (baseUrl) this.qwenBaseUrl = this.normalizeOpenAIBaseUrl(baseUrl)
+    if (model) this.qwenModel = model
+    if (apiKey) this.qwenApiKey = apiKey
+    console.log(
+      `[LLMHelper] Switched to Qwen: ${this.qwenModel} at ${this.qwenBaseUrl}`
+    )
   }
 
   public async switchToGemini(apiKey?: string): Promise<void> {
@@ -1149,6 +1757,7 @@ ANSWER: your answer`
     }
     
     this.useOllama = false;
+    this.useQwen = false
     console.log(`[LLMHelper] Switched to Gemini (${this.geminiModel})`);
   }
 
@@ -1162,20 +1771,36 @@ ANSWER: your answer`
         // Test with a simple prompt
         await this.callOllama("Hello");
         return { success: true };
-      } else {
-        if (!this.model) {
-          return { success: false, error: "No Gemini model configured" };
-        }
-        // Test with a simple prompt
-        const result = await this.model.generateContent("Hello");
-        const response = await result.response;
-        const text = response.text(); // Ensure the response is valid
-        if (text) {
-          return { success: true };
-        } else {
-          return { success: false, error: "Empty response from Gemini" };
-        }
       }
+      if (this.useQwen) {
+        let modelsRes: Response
+        try {
+          modelsRes = await fetch(`${this.qwenBaseUrl}/models`, {
+            headers: this.openAIHeaders()
+          })
+        } catch (error) {
+          return { success: false, error: this.formatQwenConnectError(error) }
+        }
+        if (!modelsRes.ok) {
+          return {
+            success: false,
+            error: `Qwen not available at ${this.qwenBaseUrl} (${modelsRes.status})`
+          }
+        }
+        await this.callOpenAI("Hello", { temperature: 0, maxTokens: 16 })
+        return { success: true }
+      }
+      if (!this.model) {
+        return { success: false, error: "No Gemini model configured" };
+      }
+      // Test with a simple prompt
+      const result = await this.model.generateContent("Hello");
+      const response = await result.response;
+      const text = response.text(); // Ensure the response is valid
+      if (text) {
+        return { success: true };
+      }
+      return { success: false, error: "Empty response from Gemini" };
     } catch (error) {
       return {
         success: false,

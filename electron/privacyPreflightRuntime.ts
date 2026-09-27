@@ -12,11 +12,7 @@ import {
   type Rect
 } from "./privacyPreflightMarker"
 import { createPrivacyPreflightWindowOptions } from "./privacyPreflightWindowPolicy"
-
-/** Read at call-time — .env is loaded in main.ts after this module is imported. */
-function isInvisibleMode(): boolean {
-  return process.env.INVISIBLE !== "false"
-}
+import { isInvisibleMode } from "./invisibleMode"
 
 /** Time to let the compositor paint the marker window before capturing. */
 const PAINT_DELAY_MS = 150

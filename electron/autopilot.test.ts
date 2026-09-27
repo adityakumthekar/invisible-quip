@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { AutopilotCoordinator, type AutopilotUpdate } from "./autopilot"
+import type { AutonomyLevel } from "./autopilotPolicy"
 import type { FrontmostApp } from "./frontmostApp"
 import type { TeachingResult, TeachingStepResult } from "./teaching"
 
@@ -49,6 +50,8 @@ interface HarnessOptions {
   /** Frontmost app per probe call; the last entry sticks once exhausted. */
   apps?: (FrontmostApp | null)[]
   appProbeSupported?: boolean
+  /** Defaults to the strictest level, so existing cases keep their old bar. */
+  autonomy?: AutonomyLevel
 }
 
 function makeHarness(script: Scripted[], options: HarnessOptions = {}) {
@@ -93,6 +96,7 @@ function makeHarness(script: Scripted[], options: HarnessOptions = {}) {
   const coordinator = new AutopilotCoordinator({
     session,
     getProvider: () => "gemini",
+    getAutonomy: () => options.autonomy ?? "guarded",
     showTarget,
     clearTarget,
     emit: (update) => updates.push({ ...update }),
@@ -328,7 +332,55 @@ describe("AutopilotCoordinator", () => {
     expect(harness.last().stepIndex).toBe(0)
   })
 
-  it("applies the stricter local-provider bar", async () => {
+  it("actuates a plain type step without asking at balanced", async () => {
+    const harness = makeHarness(
+      [
+        step({
+          action: "type",
+          text: "weather",
+          instruction: "Enter the search term.",
+          label: "Search"
+        }),
+        complete
+      ],
+      { autonomy: "balanced" }
+    )
+
+    await harness.coordinator.start("goal", "qwen")
+
+    expect(harness.session.actuatePending).toHaveBeenCalledTimes(1)
+    expect(harness.phases()).not.toContain("awaiting-confirmation")
+    expect(harness.last().autonomy).toBe("balanced")
+  })
+
+  it("still stops at balanced for an irreversible step", async () => {
+    const harness = makeHarness(
+      [
+        step({
+          action: "type",
+          text: "delete my account",
+          instruction: "Enter the confirmation text."
+        }),
+        complete
+      ],
+      { autonomy: "balanced" }
+    )
+
+    const run = harness.coordinator.start("goal", "qwen")
+    await vi.waitFor(() =>
+      expect(harness.coordinator.isAwaitingConfirmation()).toBe(true)
+    )
+
+    const pause = harness.updates.find(
+      (update) => update.phase === "awaiting-confirmation"
+    )
+    expect(pause?.reasons?.join(" ")).toMatch(/delete/i)
+
+    harness.coordinator.confirm()
+    await run
+  })
+
+  it("applies the stricter local-provider bar at guarded", async () => {
     const harness = makeHarness([step({ action: "double-click" }), complete])
 
     const run = harness.coordinator.start("goal", "ollama")

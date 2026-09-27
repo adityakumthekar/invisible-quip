@@ -2,13 +2,13 @@ import React, { useEffect, useRef, useState } from "react"
 import {
   Cloud,
   Cpu,
-  Download,
-  Home,
   Info,
   Keyboard,
   Palette,
-  RefreshCw,
   Headphones,
+  RefreshCw,
+  Server,
+  ShieldCheck,
   Smartphone,
   User,
   Wand2
@@ -24,12 +24,57 @@ import {
 } from "../../lib/glassTheme"
 import { MODES, getModeId, setMode, type Mode } from "../../lib/modes"
 import { SHORTCUTS } from "../../lib/shortcuts"
+import type { AutonomyLevel } from "../../lib/autopilot"
 import { PROFILE_MAX_CHARS, getProfile, setProfile } from "../../lib/userProfile"
 import RemotePanel from "./RemotePanel"
 import SystemAudioPanel from "./SystemAudioPanel"
 
+type ProviderId = "gemini" | "qwen"
+
+/**
+ * ipcRenderer.invoke wraps a main-process throw as
+ * "Error invoking remote method 'x': Error: <the actual message>". Only the
+ * tail is worth showing next to a control the user just clicked.
+ */
+function unwrapIpcError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(
+    /^Error invoking remote method '[^']*':\s*(Error:\s*)?/,
+    ""
+  )
+}
+
+/**
+ * How much autopilot may do before asking. Copy is deliberately concrete about
+ * what each level gives up — "hands-off" in particular removes the gates that
+ * stop a run inside a terminal or System Settings.
+ */
+const AUTONOMY_OPTIONS: {
+  id: AutonomyLevel
+  label: string
+  detail: string
+}[] = [
+  {
+    id: "guarded",
+    label: "Guarded",
+    detail: "Asks before anything but clicking and scrolling."
+  },
+  {
+    id: "balanced",
+    label: "Balanced",
+    detail:
+      "Types and clicks on its own. Asks before sending, deleting, paying, or typing a credential — and in terminals, system settings, and messaging apps."
+  },
+  {
+    id: "handsoff",
+    label: "Hands-off",
+    detail:
+      "As Balanced, but keeps going in terminals, system settings, and messaging apps too."
+  }
+]
+
 interface SettingsPanelProps {
-  onModelChange?: (provider: "ollama" | "gemini", model: string) => void
+  onModelChange?: (provider: ProviderId, model: string) => void
   onOpenChat?: () => void
   // The whole mode, not just its label: the shell sizes the answer panel from
   // it (see Mode.panelWidth).
@@ -40,27 +85,37 @@ type Tab =
   | "modes"
   | "profile"
   | "provider"
+  | "autopilot"
   | "remote"
   | "audio"
   | "appearance"
   | "keybinds"
   | "about"
 
+type Status = "idle" | "working" | "ok" | "err"
+
 /**
- * Offered when no installed local model can read screenshots. Qwen3-VL is
- * GUI-tuned — it grounds interface elements to absolute coordinates, which is
- * the whole job here, and matches the pixel-space prompt the Ollama path uses.
- *
- * The 4B build (~3.3GB) rather than 8B (~6.1GB): a run is up to 25 sequential
- * vision calls, and on fanless Apple Silicon the larger model roughly doubles
- * per-step latency for a modest grounding gain.
+ * Outcome had no colour at all — "Ready" and a connection failure rendered in
+ * the same grey, truncated to 150px, next to the button that had just run.
  */
-const RECOMMENDED_VISION_MODEL = "qwen3-vl:4b"
+const STATUS_TONE: Record<Status, string> = {
+  idle: "glass-subtle",
+  working: "glass-subtle",
+  ok: "text-glass-success",
+  err: "text-glass-danger"
+}
+
+const DEFAULT_QWEN_BASE_URL = "http://localhost:8000/v1"
+const DEFAULT_QWEN_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "modes", label: "Modes", icon: Wand2 },
   { id: "profile", label: "Profile", icon: User },
   { id: "provider", label: "Provider", icon: Cpu },
+  // Autonomy decides whether Quip will act inside a terminal without asking.
+  // It used to live at the bottom of the Provider tab, under the vLLM base URL
+  // and the API key — a safety control filed under hardware config.
+  { id: "autopilot", label: "Autopilot", icon: ShieldCheck },
   { id: "remote", label: "Remote", icon: Smartphone },
   { id: "audio", label: "Audio", icon: Headphones },
   { id: "appearance", label: "Appearance", icon: Palette },
@@ -75,32 +130,26 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 }) => {
   const [tab, setTab] = useState<Tab>("modes")
 
-  // Provider state (ported from ModelsPopover)
-  const [selectedProvider, setSelectedProvider] = useState<"ollama" | "gemini">(
-    "gemini"
-  )
-  const [availableOllamaModels, setAvailableOllamaModels] = useState<string[]>(
-    []
-  )
-  const [selectedOllamaModel, setSelectedOllamaModel] = useState("")
-  const [visionByModel, setVisionByModel] = useState<Record<string, boolean>>({})
-  const [pullProgress, setPullProgress] = useState<{
-    status: string
-    percent?: number
-  } | null>(null)
-  const [pullError, setPullError] = useState("")
-  const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434")
+  const [selectedProvider, setSelectedProvider] = useState<ProviderId>("gemini")
+  const [qwenBaseUrl, setQwenBaseUrl] = useState(DEFAULT_QWEN_BASE_URL)
+  const [qwenModel, setQwenModel] = useState(DEFAULT_QWEN_MODEL)
+  const [qwenApiKey, setQwenApiKey] = useState("EMPTY")
+  const [qwenModelOptions, setQwenModelOptions] = useState<string[]>([])
   const [geminiApiKey, setGeminiApiKey] = useState("")
+  const [autonomy, setAutonomy] = useState<AutonomyLevel>("balanced")
+  const [autonomyError, setAutonomyError] = useState("")
   const [currentLabel, setCurrentLabel] = useState("")
-  const [status, setStatus] = useState<"idle" | "working" | "ok" | "err">("idle")
+  const [status, setStatus] = useState<"idle" | "working" | "ok" | "err">(
+    "idle"
+  )
   const [errorMessage, setErrorMessage] = useState("")
 
   // Appearance
   const [glassTheme, setSelectedGlassTheme] = useState<GlassTheme>(() =>
     getGlassTheme()
   )
-  const [glassStrength, setSelectedGlassStrength] = useState<GlassStrength>(() =>
-    getGlassStrength()
+  const [glassStrength, setSelectedGlassStrength] = useState<GlassStrength>(
+    () => getGlassStrength()
   )
 
   // Modes
@@ -110,80 +159,73 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [profile, setProfileText] = useState<string>(() => getProfile())
   const profileTimer = useRef<ReturnType<typeof setTimeout>>()
 
-  const hasVisionModel = Object.values(visionByModel).some(Boolean)
-
   useEffect(() => {
     void loadConfig()
+    void loadAutonomy()
   }, [])
 
   const loadConfig = async () => {
     try {
       const config = await window.electronAPI.getCurrentLlmConfig()
-      setSelectedProvider(config.provider)
-      setCurrentLabel(`${config.provider} · ${config.model}`)
-      if (config.isOllama) {
-        setSelectedOllamaModel(config.model)
-        await loadOllamaModels()
+      const provider: ProviderId =
+        config.provider === "qwen" ? "qwen" : "gemini"
+      setSelectedProvider(provider)
+      setCurrentLabel(`${provider} · ${config.model}`)
+      if (config.isQwen || config.provider === "qwen") {
+        setQwenModel(config.model || DEFAULT_QWEN_MODEL)
+        if (config.qwenBaseUrl) {
+          setQwenBaseUrl(config.qwenBaseUrl)
+          void refreshQwenModels(config.qwenBaseUrl)
+        }
       }
     } catch (e) {
       console.error(e)
     }
   }
 
-  const loadOllamaModels = async () => {
+  const loadAutonomy = async () => {
     try {
-      const models = await window.electronAPI.getAvailableOllamaModels()
-      setAvailableOllamaModels(models)
-      if (models.length > 0 && !selectedOllamaModel) {
-        setSelectedOllamaModel(models[0])
-      }
-
-      // Teach Me and autopilot both need a model that can read screenshots, so
-      // surface that per model rather than letting a run fail later.
-      const entries = await Promise.all(
-        models.map(async (model) => {
-          try {
-            const { vision } =
-              await window.electronAPI.getOllamaModelCapabilities(model)
-            return [model, vision] as const
-          } catch {
-            return [model, false] as const
-          }
-        })
-      )
-      setVisionByModel(Object.fromEntries(entries))
-    } catch {
-      setAvailableOllamaModels([])
-      setVisionByModel({})
+      const current = await window.electronAPI.autopilotGetAutonomy()
+      setAutonomy(current.level)
+    } catch (e) {
+      console.error(e)
     }
   }
 
-  const installVisionModel = async () => {
-    setPullError("")
-    setPullProgress({ status: "starting", percent: 0 })
-    const unsubscribe = window.electronAPI.onOllamaPullProgress((progress) => {
-      const percent =
-        progress.total && progress.completed
-          ? Math.round((progress.completed / progress.total) * 100)
-          : undefined
-      setPullProgress({ status: progress.status, percent })
-    })
-
+  const changeAutonomy = async (level: AutonomyLevel) => {
+    // Optimistic, then reconciled: main rejects a change while a run is in
+    // flight, and the error is the only way the user learns why.
+    const previous = autonomy
+    setAutonomy(level)
+    setAutonomyError("")
     try {
-      const result = await window.electronAPI.pullOllamaModel(
-        RECOMMENDED_VISION_MODEL
+      const saved = await window.electronAPI.autopilotSetAutonomy(level)
+      setAutonomy(saved.level)
+    } catch (e) {
+      setAutonomy(previous)
+      setAutonomyError(unwrapIpcError(e))
+    }
+  }
+
+  /**
+   * Ask the endpoint what it serves. An empty list is the normal answer for a
+   * server without /models, and leaves the free-text field in place.
+   */
+  const refreshQwenModels = async (baseUrl: string) => {
+    if (!baseUrl.trim()) return
+    try {
+      const models = await window.electronAPI.listQwenModels(
+        baseUrl,
+        qwenApiKey || "EMPTY"
       )
-      if (!result.success) {
-        setPullError(result.error ?? "The download failed.")
-        return
+      setQwenModelOptions(models)
+      // Only adopt the server's answer when what's selected isn't on offer.
+      if (models.length > 0 && !models.includes(qwenModel)) {
+        setQwenModel(models[0])
       }
-      await loadOllamaModels()
-      setSelectedOllamaModel(RECOMMENDED_VISION_MODEL)
-    } catch (error) {
-      setPullError(String((error as Error)?.message ?? error))
-    } finally {
-      unsubscribe && unsubscribe()
-      setPullProgress(null)
+    } catch (e) {
+      console.error(e)
+      setQwenModelOptions([])
     }
   }
 
@@ -192,10 +234,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setStatus("working")
       setErrorMessage("")
       let result
-      if (selectedProvider === "ollama") {
-        result = await window.electronAPI.switchToOllama(
-          selectedOllamaModel,
-          ollamaUrl
+      if (selectedProvider === "qwen") {
+        result = await window.electronAPI.switchToQwen(
+          qwenBaseUrl,
+          qwenModel,
+          qwenApiKey || "EMPTY"
         )
       } else {
         result = await window.electronAPI.switchToGemini(
@@ -207,7 +250,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         setStatus("ok")
         onModelChange?.(
           selectedProvider,
-          selectedProvider === "ollama" ? selectedOllamaModel : "gemini-3.5-flash"
+          selectedProvider === "qwen" ? qwenModel : "gemini-3.6-flash"
         )
         onOpenChat?.()
       } else {
@@ -257,17 +300,27 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   return (
     <div className="glass-panel-dark panel-enter w-[336px] p-3 no-drag">
-      {/* Tab strip */}
-      <div className="flex items-center gap-0.5 rounded-lg bg-glass-soft border border-glass p-0.5">
+      {/* Tab strip. Icon-only to keep the panel at 336px, which is exactly why
+          the open section's name is spelled out underneath — before, `title`
+          was the only place any of these six words appeared. */}
+      <div
+        role="tablist"
+        aria-label="Settings sections"
+        className="flex items-center gap-0.5 rounded-nested bg-glass-soft border border-glass p-0.5"
+      >
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
+            role="tab"
+            id={`settings-tab-${id}`}
+            aria-controls="settings-tabpanel"
+            aria-selected={tab === id}
+            aria-label={label}
             title={label}
             onClick={() => setTab(id)}
-            aria-pressed={tab === id}
             className={cn(
-              "flex-1 flex items-center justify-center rounded-md py-1.5 transition-colors",
+              "flex-1 flex items-center justify-center rounded-inner py-1.5 transition-colors",
               tab === id
                 ? "glass-action"
                 : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
@@ -278,12 +331,38 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         ))}
       </div>
 
-      <div className="pt-3 space-y-3">
+      <div className="flex items-baseline justify-between gap-2 pt-3">
+        <p className="text-meta uppercase tracking-wide glass-muted">
+          {TABS.find((t) => t.id === tab)?.label}
+        </p>
+        {tab === "provider" && (
+          <span
+            role={status === "err" ? "alert" : "status"}
+            title={status === "err" ? errorMessage : undefined}
+            className={cn(
+              "text-meta truncate max-w-[170px]",
+              STATUS_TONE[status]
+            )}
+          >
+            {status === "working"
+              ? "Working…"
+              : status === "ok"
+                ? "Ready"
+                : status === "err"
+                  ? errorMessage
+                  : currentLabel}
+          </span>
+        )}
+      </div>
+
+      <div
+        id="settings-tabpanel"
+        role="tabpanel"
+        aria-labelledby={`settings-tab-${tab}`}
+        className="pt-2 space-y-3"
+      >
         {tab === "modes" && (
           <>
-            <p className="text-[11px] uppercase tracking-wide glass-muted">
-              Mode
-            </p>
             <div className="grid grid-cols-1 gap-1">
               {ungrouped.map((m) => (
                 <ModeRow
@@ -296,7 +375,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </div>
             {groups.map((g) => (
               <div key={g} className="space-y-1">
-                <p className="text-[11px] glass-subtle">{g}</p>
+                <p className="text-meta glass-subtle">{g}</p>
                 {MODES.filter((m) => m.group === g).map((m) => (
                   <ModeRow
                     key={m.id}
@@ -307,7 +386,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 ))}
               </div>
             ))}
-            <p className="text-[11px] glass-subtle leading-relaxed">
+            <p className="text-meta glass-subtle leading-relaxed">
               A mode changes how the assistant responds. It applies to your next
               message.
             </p>
@@ -340,26 +419,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
         {tab === "provider" && (
           <>
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] uppercase tracking-wide glass-muted">
-                AI provider
-              </p>
-              <span className="text-[11px] glass-subtle truncate max-w-[150px]">
-                {status === "working"
-                  ? "Working…"
-                  : status === "ok"
-                    ? "Ready"
-                    : status === "err"
-                      ? errorMessage
-                      : currentLabel}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-glass-soft border border-glass">
+            <div className="grid grid-cols-2 gap-1 p-0.5 rounded-nested bg-glass-soft border border-glass">
               <button
                 type="button"
                 onClick={() => setSelectedProvider("gemini")}
                 className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
+                  "flex items-center justify-center gap-1.5 rounded-inner py-1.5 text-meta transition-colors",
                   selectedProvider === "gemini"
                     ? "glass-action"
                     : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
@@ -370,22 +435,22 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setSelectedProvider("ollama")}
+                onClick={() => setSelectedProvider("qwen")}
                 className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
-                  selectedProvider === "ollama"
+                  "flex items-center justify-center gap-1.5 rounded-inner py-1.5 text-meta transition-colors",
+                  selectedProvider === "qwen"
                     ? "glass-action"
                     : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
                 )}
               >
-                <Home className="w-3 h-3" strokeWidth={1.75} />
-                Ollama
+                <Server className="w-3 h-3" strokeWidth={1.75} />
+                Qwen
               </button>
             </div>
 
             {selectedProvider === "gemini" ? (
               <div className="space-y-1.5">
-                <label className="text-[11px] uppercase tracking-wide glass-muted">
+                <label className="text-meta uppercase tracking-wide glass-muted">
                   API key
                 </label>
                 <input
@@ -393,98 +458,81 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   placeholder="Optional if already set"
                   value={geminiApiKey}
                   onChange={(e) => setGeminiApiKey(e.target.value)}
-                  className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
+                  className="glass-control w-full rounded-nested px-3 py-2 text-body"
                 />
               </div>
             ) : (
               <div className="space-y-2.5">
                 <div className="space-y-1.5">
-                  <label className="text-[11px] uppercase tracking-wide glass-muted">
-                    Ollama URL
+                  <label className="text-meta uppercase tracking-wide glass-muted">
+                    vLLM base URL
                   </label>
                   <input
                     type="url"
-                    value={ollamaUrl}
-                    onChange={(e) => setOllamaUrl(e.target.value)}
-                    className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
+                    value={qwenBaseUrl}
+                    onChange={(e) => setQwenBaseUrl(e.target.value)}
+                    onBlur={(e) => void refreshQwenModels(e.target.value)}
+                    placeholder={DEFAULT_QWEN_BASE_URL}
+                    className="glass-control w-full rounded-nested px-3 py-2 text-body"
                   />
                 </div>
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-[11px] uppercase tracking-wide glass-muted">
+                    <label
+                      htmlFor="qwen-model"
+                      className="text-meta uppercase tracking-wide glass-muted"
+                    >
                       Model
                     </label>
                     <button
                       type="button"
-                      onClick={() => void loadOllamaModels()}
-                      className="p-1 rounded glass-icon hover:text-glass-heading"
-                      title="Refresh"
+                      onClick={() => void refreshQwenModels(qwenBaseUrl)}
+                      className="text-meta glass-subtle hover:text-glass-heading"
                     >
-                      <RefreshCw className="w-3 h-3" strokeWidth={1.75} />
+                      Refresh
                     </button>
                   </div>
-                  {availableOllamaModels.length > 0 ? (
+                  {/* A server without /models answers with nothing; typing the
+                      id by hand stays possible in that case. */}
+                  {qwenModelOptions.length > 0 ? (
                     <select
-                      value={selectedOllamaModel}
-                      onChange={(e) => setSelectedOllamaModel(e.target.value)}
-                      className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
+                      id="qwen-model"
+                      value={qwenModel}
+                      onChange={(e) => setQwenModel(e.target.value)}
+                      className="glass-control w-full rounded-nested px-3 py-2 text-body"
                     >
-                      {availableOllamaModels.map((m) => (
-                        <option key={m} value={m} className="bg-neutral-900">
-                          {m}
-                          {visionByModel[m] ? " · sees screen" : ""}
+                      {qwenModelOptions.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
                         </option>
                       ))}
                     </select>
                   ) : (
-                    <p className="text-[11px] glass-muted">
-                      No local models found. Start Ollama and pull a model.
-                    </p>
+                    <input
+                      id="qwen-model"
+                      type="text"
+                      value={qwenModel}
+                      onChange={(e) => setQwenModel(e.target.value)}
+                      placeholder={DEFAULT_QWEN_MODEL}
+                      className="glass-control w-full rounded-nested px-3 py-2 text-body"
+                    />
                   )}
-
-                  {selectedOllamaModel &&
-                    visionByModel[selectedOllamaModel] === false && (
-                      <p className="text-[11px] glass-muted">
-                        This model can’t read screenshots, so Teach Me and
-                        autopilot won’t work with it.
-                      </p>
-                    )}
-
-                  {!hasVisionModel && !pullProgress && (
-                    <button
-                      type="button"
-                      onClick={() => void installVisionModel()}
-                      className="glass-action flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[11px]"
-                    >
-                      <Download className="w-3 h-3" strokeWidth={1.75} />
-                      Install {RECOMMENDED_VISION_MODEL}
-                    </button>
-                  )}
-
-                  {pullProgress && (
-                    <div className="space-y-1" role="status">
-                      <div className="flex items-center justify-between text-[11px] glass-muted">
-                        <span>{pullProgress.status}</span>
-                        {pullProgress.percent !== undefined && (
-                          <span className="tabular-nums">
-                            {pullProgress.percent}%
-                          </span>
-                        )}
-                      </div>
-                      <div className="h-1 w-full overflow-hidden rounded-full bg-glass-soft">
-                        <div
-                          className="h-full rounded-full bg-white/60 transition-[width]"
-                          style={{ width: `${pullProgress.percent ?? 0}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {pullError && (
-                    <p className="text-[11px] glass-text" role="alert">
-                      {pullError}
-                    </p>
-                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-meta uppercase tracking-wide glass-muted">
+                    API key
+                  </label>
+                  <input
+                    type="password"
+                    value={qwenApiKey}
+                    onChange={(e) => setQwenApiKey(e.target.value)}
+                    placeholder="EMPTY"
+                    className="glass-control w-full rounded-nested px-3 py-2 text-body"
+                  />
+                  <p className="text-meta glass-subtle leading-relaxed">
+                    Remote Qwen3-VL via OpenAI-compatible vLLM. Sees the screen
+                    for chat, Teach Me, and autopilot.
+                  </p>
                 </div>
               </div>
             )}
@@ -494,7 +542,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 type="button"
                 onClick={() => void apply()}
                 disabled={status === "working"}
-                className="glass-action flex-1 min-h-7 rounded-lg py-2 text-[11px] font-medium disabled:opacity-50"
+                className="glass-action flex-1 min-h-7 rounded-nested py-2 text-meta font-medium disabled:opacity-50"
               >
                 Apply
               </button>
@@ -502,7 +550,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 type="button"
                 onClick={() => void test()}
                 disabled={status === "working"}
-                className="glass-control min-h-7 rounded-lg px-3 py-2 text-[11px] hover:bg-glass-hover disabled:opacity-50"
+                title="Send a probe request to the selected provider"
+                className="glass-control min-h-7 rounded-nested px-3 py-2 text-meta hover:bg-glass-hover disabled:opacity-50"
               >
                 Test
               </button>
@@ -510,17 +559,58 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </>
         )}
 
+        {tab === "autopilot" && (
+          <>
+            <div className="space-y-2">
+              <p className="text-meta glass-subtle leading-relaxed">
+                How much autopilot may do before it stops and asks you.
+              </p>
+              <div className="space-y-1">
+                {AUTONOMY_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => void changeAutonomy(option.id)}
+                    aria-pressed={autonomy === option.id}
+                    className={cn(
+                      "w-full rounded-nested px-3 py-2 text-left transition-colors",
+                      autonomy === option.id
+                        ? "glass-action"
+                        : "glass-control hover:bg-glass-hover"
+                    )}
+                  >
+                    <span className="block text-label font-medium">
+                      {option.label}
+                    </span>
+                    <span className="mt-0.5 block text-meta leading-relaxed glass-subtle">
+                      {option.detail}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {autonomyError && (
+                <p
+                  className="text-meta leading-relaxed text-glass-danger"
+                  role="alert"
+                >
+                  {autonomyError}
+                </p>
+              )}
+            </div>
+          </>
+        )}
+
         {tab === "appearance" && (
           <>
             <div className="flex items-center justify-between">
-              <label className="text-[11px] uppercase tracking-wide glass-muted">
+              <label className="text-meta uppercase tracking-wide glass-muted">
                 Theme
               </label>
-              <span className="text-[11px] glass-subtle capitalize">
+              <span className="text-meta glass-subtle capitalize">
                 {glassTheme === "royal" ? "Royal blue" : glassTheme}
               </span>
             </div>
-            <div className="grid grid-cols-3 gap-1 rounded-lg bg-glass-soft p-0.5 border border-glass">
+            <div className="grid grid-cols-3 gap-1 rounded-nested bg-glass-soft p-0.5 border border-glass">
               {(
                 [
                   ["neutral", "Neutral"],
@@ -537,7 +627,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   }}
                   aria-pressed={glassTheme === theme}
                   className={cn(
-                    "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
+                    "flex items-center justify-center gap-1.5 rounded-inner py-1.5 text-meta transition-colors",
                     glassTheme === theme
                       ? "glass-action"
                       : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
@@ -549,10 +639,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               ))}
             </div>
             <div className="space-y-1.5">
-              <label className="text-[11px] uppercase tracking-wide glass-muted">
+              <label className="text-meta uppercase tracking-wide glass-muted">
                 Glass strength
               </label>
-              <div className="grid grid-cols-3 gap-1 rounded-lg bg-glass-soft p-0.5 border border-glass">
+              <div className="grid grid-cols-3 gap-1 rounded-nested bg-glass-soft p-0.5 border border-glass">
                 {(
                   [
                     ["clear", "Clear"],
@@ -569,7 +659,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     }}
                     aria-pressed={glassStrength === strength}
                     className={cn(
-                      "min-h-7 rounded-md px-1.5 text-[11px] transition-colors",
+                      "min-h-7 rounded-inner px-1.5 text-meta transition-colors",
                       glassStrength === strength
                         ? "glass-action"
                         : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
@@ -590,7 +680,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 key={s.action}
                 className="flex items-center justify-between gap-3"
               >
-                <span className="text-[11px] glass-muted">{s.action}</span>
+                <span className="text-meta glass-muted">{s.action}</span>
                 <span className="flex gap-1">
                   {s.keys.map((k, i) => (
                     <span key={i} className="kbd">
@@ -608,8 +698,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {tab === "audio" && <SystemAudioPanel />}
 
         {tab === "about" && (
-          <div className="space-y-2 text-[11px] glass-muted">
-            <p className="text-[13px] font-semibold glass-heading">Quip</p>
+          <div className="space-y-2 text-meta glass-muted">
+            <p className="text-title font-semibold glass-heading">Quip</p>
             <p className="leading-relaxed">
               An invisible, always-on-top AI assistant — real-time answers,
               screenshot analysis, and audio insights.
@@ -637,7 +727,7 @@ const ModeRow: React.FC<{
     onClick={onClick}
     aria-pressed={active}
     className={cn(
-      "w-full text-left rounded-lg px-3 py-2 text-[12px] transition-colors",
+      "w-full text-left rounded-nested px-3 py-2 text-body transition-colors",
       active
         ? "glass-action"
         : "glass-control glass-muted hover:bg-glass-hover hover:text-glass-heading"

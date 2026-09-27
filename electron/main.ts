@@ -1,4 +1,7 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage } from "electron"
+import { TodayStickyWindow } from "./TodayStickyWindow";
+import { initializeWorkspaceApp } from "./workspaceMain"
+import { CompanionRuntime } from "./companionRuntime"
+import { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut } from "electron"
 import type { WebContents } from "electron"
 import dotenv from "dotenv"
 import path from "node:path"
@@ -19,11 +22,8 @@ export interface AutopilotControls {
   isRunning: () => boolean
 }
 
-// In a packaged app the cwd isn't the project root, so load the bundled .env
-// from Contents/Resources (see build.extraResources). In dev, use the default.
-dotenv.config(
-  app.isPackaged ? { path: path.join(process.resourcesPath, ".env") } : undefined
-)
+// Only development reads local environment files; releases contain public service config.
+if (!app.isPackaged) dotenv.config()
 
 // INVISIBLE=false disables stealth so the window appears in screenshots (debugging)
 function isInvisibleMode(): boolean {
@@ -41,6 +41,11 @@ export class AppState {
   private autopilot: AutopilotControls | null = null
   private remoteShutdown: (() => Promise<void>) | null = null
   private remoteInputKillSwitch: (() => void) | null = null
+  public companion: CompanionRuntime | null = null
+  public sticky: TodayStickyWindow | null = null
+  private restoreSticky = false
+  private restoreAssistant = true
+  public openWorkspace: (() => void) | null = null
   private tray: Tray | null = null
 
   // View management
@@ -158,6 +163,16 @@ export class AppState {
     this.windowHelper.toggleMainWindow()
   }
 
+  public toggleQuipWindows(): void {
+    if (this.isVisible() || this.sticky?.isVisible()) {
+      this.restoreAssistant = this.isVisible(); this.restoreSticky = this.sticky?.isVisible() ?? false;
+      this.hideMainWindow(); this.sticky?.hide();
+    } else {
+      if (this.restoreAssistant) this.showMainWindow();
+      if (this.restoreSticky) this.sticky?.show();
+    }
+  }
+
   public setWindowDimensions(width: number, height: number): void {
     this.windowHelper.setWindowDimensions(width, height)
   }
@@ -270,6 +285,7 @@ export class AppState {
   }
 
   public abortAutopilot(): void {
+    if (this.companion) { void this.companion.tasks.stop(); return }
     this.autopilot?.stop()
   }
 
@@ -329,6 +345,9 @@ export class AppState {
           this.showMainWindow()
         }
       },
+      { label: 'Saved work and documents', click: () => this.openWorkspace?.() },
+      { label: 'Show Today sticky note', click: () => this.sticky?.show() },
+      { label: 'Stop / take over', click: () => this.abortAutopilot() },
       {
         label: 'Toggle Window',
         click: () => {
@@ -391,62 +410,39 @@ export class AppState {
   }
 }
 
-// Application initialization
+// One desktop controller and one workspace service are shared by both surfaces.
 async function initializeApp() {
+  if (!app.isPackaged && process.env.QUIP_E2E_USER_DATA) app.setPath("userData", process.env.QUIP_E2E_USER_DATA)
+  if (!app.requestSingleInstanceLock()) { app.quit(); return }
+  await app.whenReady()
   const appState = AppState.getInstance()
-
-  // Initialize IPC handlers before window creation
-  initializeIpcHandlers(appState)
-
-  app.whenReady().then(() => {
-    console.log("App is ready")
-    // Log the monitor layout up front and keep it current — teaching capture
-    // targeting depends on it.
-    watchDisplayTopology()
-    appState.createWindow()
-    appState.createTray()
-    // Register global shortcuts using ShortcutsHelper
-    appState.shortcutsHelper.registerGlobalShortcuts()
-  })
-
-  app.on("activate", () => {
-    console.log("App activated")
-    if (appState.getMainWindow() === null) {
-      appState.createWindow()
-    }
-  })
-
-  // Quit when all windows are closed, except on macOS
-  app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") {
-      app.quit()
-    }
-  })
-
-  // Wipe screenshot files before actually quitting. before-quit fires
-  // synchronously and won't wait for promises, so we preventDefault, run the
-  // async cleanup, then re-invoke app.quit() — the isQuitting guard lets that
-  // second call fall through to the real quit instead of looping.
-  let isQuitting = false
-  app.on("before-quit", (event) => {
-    if (isQuitting) return
-    event.preventDefault()
-    isQuitting = true
-    ;(async () => {
+  appState.sticky = new TodayStickyWindow()
+  const workspace = await initializeWorkspaceApp({ extraWindows: () => { const window = appState.sticky?.getWindow(); return window ? [window] : []; }, overlay: () => appState.getMainWindow(), toggleOverlay: () => appState.toggleMainWindow() })
+  if (!workspace) throw new Error("Workspace service could not start")
+  appState.openWorkspace = workspace.showWorkspace
+  const bridge = initializeIpcHandlers(appState)
+  appState.companion = new CompanionRuntime(workspace.service, appState.processingHelper.getLLMHelper(), workspace.windows, bridge, () => appState.showMainWindow(), appState.sticky)
+  await appState.companion.initialize()
+  watchDisplayTopology()
+  appState.createWindow()
+  appState.createTray()
+  appState.shortcutsHelper.registerGlobalShortcuts()
+  app.on("activate", () => appState.showMainWindow())
+  app.on("second-instance", () => appState.showMainWindow())
+  app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit() })
+  let quitting = false
+  app.on("before-quit", event => {
+    if (quitting) return
+    event.preventDefault(); quitting = true
+    void (async () => {
+      globalShortcut.unregisterAll()
+      appState.sticky?.close()
+      await appState.companion?.dispose()
       appState.closeTeachingOverlay()
       await appState.shutdownRemote()
       await appState.deleteAllScreenshotFiles()
-      app.quit()
-    })()
+    })().catch(error => console.error("Quip shutdown:", error.message)).finally(() => app.quit())
   })
-
-  if (isInvisibleMode()) {
-    app.dock?.hide() // Hide dock icon in stealth mode
-  } else {
-    console.log("[App] INVISIBLE=false — window will appear in screenshots/dock")
-  }
-  app.commandLine.appendSwitch("disable-background-timer-throttling")
+  if (isInvisibleMode()) app.dock?.hide()
 }
-
-// Start the application
-initializeApp().catch(console.error)
+initializeApp().catch(error => { console.error("Quip startup failed:", error.message); app.quit() })

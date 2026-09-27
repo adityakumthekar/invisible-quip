@@ -42,20 +42,32 @@ module.exports = {
           control: "var(--glass-control-border)"
         }
       },
-      animation: {
-        in: "in 0.2s ease-out",
-        out: "out 0.2s ease-in"
+      /* The type scale, surfaced the same way the colours are. The overlay had
+         seven sizes inside a 3px range (11 / 11.5 / 12 / 12.5 / 13 / xs / sm),
+         several of them half a pixel apart — differences no reader perceives
+         but which guaranteed no two components agreed. Four steps plus the key
+         cap. Line heights ride along so callers stop setting them by hand. */
+      fontSize: {
+        title: ["var(--fs-title)", { lineHeight: "1.45" }],
+        body: ["var(--fs-body)", { lineHeight: "1.6" }],
+        label: ["var(--fs-label)", { lineHeight: "1.35" }],
+        meta: ["var(--fs-meta)", { lineHeight: "1.45" }],
+        kbd: ["var(--fs-kbd)", { lineHeight: "1" }]
       },
-      keyframes: {
-        in: {
-          "0%": { transform: "translateY(100%)", opacity: 0 },
-          "100%": { transform: "translateY(0)", opacity: 1 }
-        },
-        out: {
-          "0%": { transform: "translateY(0)", opacity: 1 },
-          "100%": { transform: "translateY(100%)", opacity: 0 }
-        }
-      }
+      /* Concentric radii. `surface` is a panel, `nested` a control inside one,
+         `inner` a segment inside a control. Tailwind's own rounded-lg (8px)
+         inside an 16px panel is the mismatch these replace. */
+      borderRadius: {
+        surface: "var(--r-surface)",
+        nested: "var(--r-nested)",
+        inner: "var(--r-inner)"
+      },
+      /* The `animate-in` / `animate-out` utilities that used to be defined here
+         existed only to prop up the toast's `animate-in fade-in
+         slide-in-from-bottom`, which came from tailwindcss-animate — a package
+         this project has never depended on, so the other two classes emitted
+         nothing. The toast now animates from real keyframes in index.css,
+         keyed off Radix's data-state, and nothing else referenced these. */
     }
   },
   plugins: []

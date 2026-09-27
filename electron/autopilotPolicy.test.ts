@@ -5,7 +5,10 @@ import {
   describeLoopStop,
   evaluateLoopContinuation,
   findDangerTerms,
+  findSecretIndicators,
+  isDestructiveKeyCombo,
   isRepeatOfPreviousStep,
+  parseAutonomyLevel,
   type LoopState,
   type RepeatComparableStep,
   type RiskAssessableStep
@@ -218,6 +221,206 @@ describe("classifyStepRisk", () => {
     expect(verdict.reasons).toHaveLength(2)
     expect(verdict.reasons[0]).toMatch(/terminal/i)
     expect(verdict.reasons[1]).toMatch(/type/i)
+  })
+})
+
+describe("parseAutonomyLevel", () => {
+  it("accepts the three levels and rejects everything else", () => {
+    for (const level of ["guarded", "balanced", "handsoff"] as const) {
+      expect(parseAutonomyLevel(level)).toBe(level)
+    }
+    for (const value of ["", "off", "GUARDED", null, undefined, 2, {}]) {
+      expect(parseAutonomyLevel(value)).toBeNull()
+    }
+  })
+})
+
+describe("isDestructiveKeyCombo", () => {
+  it("is true only for a modified delete", () => {
+    for (const key of ["cmd+delete", "shift+delete", "cmd+shift+backspace"]) {
+      expect(isDestructiveKeyCombo(key)).toBe(true)
+    }
+  })
+
+  it("leaves the keys automation actually needs alone", () => {
+    for (const key of [
+      "enter",
+      "return",
+      "tab",
+      "escape",
+      "cmd+a",
+      "cmd+v",
+      "down",
+      // A bare delete edits text; it takes a modifier to reach a filesystem.
+      "delete",
+      "backspace"
+    ]) {
+      expect(isDestructiveKeyCombo(key)).toBe(false)
+    }
+    expect(isDestructiveKeyCombo(undefined)).toBe(false)
+  })
+})
+
+describe("findSecretIndicators", () => {
+  const typing = (text: string, instruction = "Fill the field."): RiskAssessableStep => ({
+    action: "type",
+    risk: "safe",
+    instruction,
+    text
+  })
+
+  it("spots tokens, keys, and card numbers", () => {
+    expect(findSecretIndicators(typing("sk-abcdefghijklmnop0123"))).toContain(
+      "an API key"
+    )
+    expect(
+      findSecretIndicators(typing("ghp_abcdefghijklmnop0123456789"))
+    ).toContain("a GitHub token")
+    expect(findSecretIndicators(typing("AKIAIOSFODNN7EXAMPLE"))).toContain(
+      "an AWS access key"
+    )
+    // Luhn-valid test number.
+    expect(findSecretIndicators(typing("4242 4242 4242 4242"))).toContain(
+      "a card number"
+    )
+  })
+
+  it("ignores digit runs that fail Luhn", () => {
+    expect(findSecretIndicators(typing("4242 4242 4242 4243"))).toEqual([])
+    expect(findSecretIndicators(typing("call me on 12345678901234"))).toEqual([])
+  })
+
+  it("falls back to the field description", () => {
+    expect(
+      findSecretIndicators(typing("hunter2", "Type the password."))
+    ).toEqual(["a credential field"])
+  })
+
+  it("only applies to typing, and never echoes the value", () => {
+    expect(
+      findSecretIndicators({
+        action: "click",
+        risk: "safe",
+        instruction: "Click the password box."
+      })
+    ).toEqual([])
+
+    const verdict = classifyStepRisk(typing("sk-abcdefghijklmnop0123"), {
+      provider: "qwen",
+      autonomy: "handsoff"
+    })
+    expect(verdict.requiresConfirmation).toBe(true)
+    expect(verdict.reasons.join(" ")).not.toContain("sk-abcdefghijklmnop0123")
+  })
+})
+
+describe("autonomy levels", () => {
+  const typeStep: RiskAssessableStep = {
+    action: "type",
+    risk: "safe",
+    instruction: "Enter the search term.",
+    label: "Search",
+    text: "weather"
+  }
+  const terminal = { bundleId: "com.apple.Terminal", name: "Terminal" }
+
+  it("defaults to guarded when no level is given", () => {
+    expect(
+      classifyStepRisk(typeStep, { provider: "qwen" }).requiresConfirmation
+    ).toBe(true)
+    expect(
+      classifyStepRisk(typeStep, { provider: "qwen", autonomy: "guarded" })
+        .requiresConfirmation
+    ).toBe(true)
+  })
+
+  it("lets ordinary typing and clicking run at balanced", () => {
+    for (const action of ["type", "click", "double-click", "drag", "right-click"] as const) {
+      expect(
+        classifyStepRisk(
+          { ...typeStep, action },
+          { provider: "qwen", autonomy: "balanced" }
+        ).requiresConfirmation
+      ).toBe(false)
+    }
+  })
+
+  it("still stops for irreversible content at balanced", () => {
+    const verdict = classifyStepRisk(
+      { ...typeStep, text: "please delete everything" },
+      { provider: "qwen", autonomy: "balanced" }
+    )
+    expect(verdict.requiresConfirmation).toBe(true)
+    expect(verdict.reasons.join(" ")).toMatch(/delete/i)
+  })
+
+  it("stops for a destructive key combo at every level", () => {
+    for (const autonomy of ["guarded", "balanced", "handsoff"] as const) {
+      const verdict = classifyStepRisk(
+        {
+          action: "key",
+          risk: "safe",
+          instruction: "Press the shortcut.",
+          key: "cmd+delete"
+        },
+        { provider: "qwen", autonomy }
+      )
+      expect(verdict.requiresConfirmation).toBe(true)
+      expect(verdict.reasons.join(" ")).toMatch(/cmd\+delete/)
+    }
+  })
+
+  it("lets a plain Enter through at balanced", () => {
+    expect(
+      classifyStepRisk(
+        {
+          action: "key",
+          risk: "safe",
+          instruction: "Press Enter to run the search.",
+          key: "enter"
+        },
+        { provider: "qwen", autonomy: "balanced" }
+      ).requiresConfirmation
+    ).toBe(false)
+  })
+
+  it("keeps the app gates at balanced and drops them at handsoff", () => {
+    const context = { targetApp: terminal, appProbeSupported: true }
+    expect(
+      classifyStepRisk(safeClick, {
+        ...context,
+        provider: "qwen",
+        autonomy: "balanced"
+      }).requiresConfirmation
+    ).toBe(true)
+    expect(
+      classifyStepRisk(safeClick, {
+        ...context,
+        provider: "qwen",
+        autonomy: "handsoff"
+      }).requiresConfirmation
+    ).toBe(false)
+  })
+
+  it("never lets the model's own flag be overridden by a loose level", () => {
+    expect(
+      classifyStepRisk(
+        { ...typeStep, risk: "confirm" },
+        { provider: "qwen", autonomy: "handsoff" }
+      ).requiresConfirmation
+    ).toBe(true)
+  })
+
+  it("no longer treats remote Qwen as a low-grounding local model", () => {
+    const doubleClick = { ...safeClick, action: "double-click" as const }
+    expect(
+      classifyStepRisk(doubleClick, { provider: "qwen", autonomy: "guarded" })
+        .requiresConfirmation
+    ).toBe(false)
+    expect(
+      classifyStepRisk(doubleClick, { provider: "ollama", autonomy: "guarded" })
+        .requiresConfirmation
+    ).toBe(true)
   })
 })
 

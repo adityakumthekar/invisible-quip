@@ -11,15 +11,22 @@
     "apk": "bash scripts/build-apk.sh",
     "preview": "vite preview",
     "postinstall": "cross-env SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm rebuild sharp",
-    "electron:dev": "tsc -p electron/tsconfig.json && cross-env NODE_ENV=development electron .",
-    "electron:build": "tsc -p electron/tsconfig.json && cross-env NODE_ENV=production electron .",
+    "electron:dev": "npm run build:electron && cross-env NODE_ENV=development electron .",
+    "electron:build": "npm run build:electron && cross-env NODE_ENV=production electron .",
     "app:dev": "concurrently \"npm run dev -- --port 5180\" \"wait-on http://localhost:5180 && npm run electron:dev\"",
-    "app:build": "npm run build && tsc -p electron/tsconfig.json && electron-builder",
+    "app:build": "npm run build && npm run build:electron && electron-builder",
     "watch": "tsc -p electron/tsconfig.json --watch",
     "start": "npm run app:dev",
     "dist": "npm run app:build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:electron": "tsc -p electron/tsconfig.json && node scripts/bundle-electron.mjs",
+    "typecheck": "tsc --noEmit && tsc -p electron/tsconfig.json --noEmit",
+    "dist:mac": "npm run build && npm run build:electron && electron-builder --mac --arm64",
+    "test:e2e": "playwright test",
+    "build:config": "node scripts/build-service-config.mjs",
+    "check:cloud": "deno check supabase/functions/workspace/index.ts supabase/functions/paddle-webhook/index.ts supabase/functions/reconcile-billing/index.ts",
+    "release:preflight": "node scripts/release-preflight.mjs"
   },
   "build": {
     "appId": "com.electron.quip",
@@ -29,7 +36,9 @@
       "dist-electron/**/*",
       "dist-remote/**/*",
       "package.json",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "!.env*",
+      "!**/*.test.*"
     ],
     "directories": {
       "output": "release",
@@ -37,11 +46,12 @@
     },
     "extraResources": [
       {
-        "from": ".env",
-        "to": ".env"
+        "from": "build/service-config.json",
+        "to": "service-config.json"
       }
     ],
     "mac": {
+      "icon": "build/icon.png",
       "category": "public.app-category.productivity",
       "target": [
         {
@@ -49,9 +59,21 @@
           "arch": [
             "arm64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
         }
       ],
-      "identity": null
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
+      "extendInfo": {
+        "NSScreenCaptureUsageDescription": "Attach a screen capture to a question when you choose."
+      }
     },
     "win": {
       "target": [
@@ -111,12 +133,14 @@
   "keywords": [],
   "author": "Aditya Kumthekar",
   "license": "Apache-2.0",
-  "description": "Quip — an invisible, always-on-top desktop AI assistant.",
+  "description": "Quip — turn desktop context into useful, reusable work.",
   "devDependencies": {
     "@capacitor/cli": "^8.5.0",
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-pgvector": "^0.0.9",
+    "@playwright/test": "^1.63.0",
     "@types/color": "^4.2.0",
     "@types/diff": "^6.0.0",
-    "@types/electron": "^1.4.38",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
@@ -125,41 +149,50 @@
     "@typescript-eslint/eslint-plugin": "^8.14.0",
     "@typescript-eslint/parser": "^8.14.0",
     "autoprefixer": "^10.4.20",
-    "concurrently": "^9.1.0",
+    "concurrently": "^10.0.5",
     "cross-env": "^7.0.3",
-    "electron": "^33.4.11",
-    "electron-builder": "^25.1.8",
+    "deno": "^2.9.6",
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
     "electron-is-dev": "^3.0.1",
-    "postcss": "^8.4.49",
+    "esbuild": "^0.28.2",
+    "postcss": "^8.5.28",
+    "prettier": "^3.9.6",
     "rimraf": "^6.0.1",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11",
+    "vite": "^8.2.2",
     "vitest": "^4.1.10",
     "wait-on": "^8.0.1"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
     "@capacitor/core": "^8.5.0",
-    "@google/generative-ai": "^0.2.1",
+    "@google/genai": "^2.21.0",
+    "@journeyapps/sqlcipher": "^6.0.0",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-toast": "^1.2.2",
+    "@supabase/supabase-js": "^2.116.0",
     "@types/qrcode": "^1.5.6",
-    "diff": "^7.0.0",
+    "diff": "^9.0.0",
     "dotenv": "^16.6.1",
+    "electron-updater": "^6.8.9",
     "katex": "^0.18.1",
     "lucide-react": "^0.460.0",
+    "mammoth": "^1.12.2",
+    "pdfjs-dist": "^4.10.38",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.1.0",
     "react-query": "^3.39.3",
-    "react-syntax-highlighter": "^15.6.1",
+    "react-syntax-highlighter": "^16.1.1",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "sharp": "^0.33.5",
-    "uuid": "^11.0.3"
+    "sharp": "^0.35.4",
+    "uuid": "^11.0.3",
+    "zod": "^4.5.4"
   }
 }

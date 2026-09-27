@@ -20,16 +20,16 @@ describe("createMessage", () => {
 
   it("defaults the timestamp to now and keeps the fields given", () => {
     const before = Date.now()
-    const msg = createMessage({ role: "gemini", text: "yo", source: "voice" })
+    const msg = createMessage({ role: "assistant", text: "yo", source: "voice" })
     expect(msg.at).toBeGreaterThanOrEqual(before)
-    expect(msg).toMatchObject({ role: "gemini", text: "yo", source: "voice" })
+    expect(msg).toMatchObject({ role: "assistant", text: "yo", source: "voice" })
   })
 })
 
 describe("startsExchange", () => {
   const user = createMessage({ role: "user", text: "q", source: "typed" })
-  const answer = createMessage({ role: "gemini", text: "a", source: "typed" })
-  const note = createMessage({ role: "gemini", text: "n", source: "system" })
+  const answer = createMessage({ role: "assistant", text: "a", source: "typed" })
+  const note = createMessage({ role: "assistant", text: "n", source: "system" })
 
   it("is false for the first message so the list has no leading rule", () => {
     expect(startsExchange(undefined, user)).toBe(false)
@@ -75,9 +75,9 @@ describe("startsExchange", () => {
 describe("lastExchangeStart", () => {
   const user = () => createMessage({ role: "user", text: "q", source: "typed" })
   const answer = () =>
-    createMessage({ role: "gemini", text: "a", source: "typed" })
+    createMessage({ role: "assistant", text: "a", source: "typed" })
   const note = () =>
-    createMessage({ role: "gemini", text: "n", source: "system" })
+    createMessage({ role: "assistant", text: "n", source: "system" })
 
   it("returns 0 for an empty list so the caller can index safely", () => {
     expect(lastExchangeStart([])).toBe(0)
@@ -103,7 +103,7 @@ describe("lastExchangeStart", () => {
       user(),
       answer(),
       user(),
-      createMessage({ role: "gemini", text: "", source: "typed" })
+      createMessage({ role: "assistant", text: "", source: "typed" })
     ]
     expect(lastExchangeStart(msgs)).toBe(2)
   })
@@ -132,18 +132,18 @@ describe("toHistory", () => {
   it("keeps user and assistant turns in order", () => {
     const msgs = [
       createMessage({ role: "user", text: "two sum", source: "typed" }),
-      createMessage({ role: "gemini", text: "use a map", source: "typed" })
+      createMessage({ role: "assistant", text: "use a map", source: "typed" })
     ]
     expect(toHistory(msgs)).toEqual([
       { role: "user", text: "two sum" },
-      { role: "gemini", text: "use a map" }
+      { role: "assistant", text: "use a map" }
     ])
   })
 
   it("drops system notices, which are app chrome not conversation", () => {
     const msgs = [
       createMessage({
-        role: "gemini",
+        role: "assistant",
         text: "Switched to x.",
         source: "system"
       }),
@@ -155,7 +155,7 @@ describe("toHistory", () => {
   it("drops empty turns — placeholders and header-only turns", () => {
     const msgs = [
       createMessage({ role: "user", text: "", source: "screen" }),
-      createMessage({ role: "gemini", text: "   ", source: "typed" }),
+      createMessage({ role: "assistant", text: "   ", source: "typed" }),
       createMessage({ role: "user", text: "real", source: "typed" })
     ]
     expect(toHistory(msgs)).toEqual([{ role: "user", text: "real" }])
@@ -170,14 +170,14 @@ describe("toHistory", () => {
         speaker: "them"
       }),
       createMessage({ role: "user", text: "by tenant", source: "voice" }),
-      createMessage({ role: "gemini", text: "right", source: "voice" })
+      createMessage({ role: "assistant", text: "right", source: "voice" })
     ]
     expect(toHistory(msgs)).toEqual([
       {
         role: "user",
         text: "Interviewer: how would you shard this\nMe: by tenant"
       },
-      { role: "gemini", text: "right" }
+      { role: "assistant", text: "right" }
     ])
   })
 

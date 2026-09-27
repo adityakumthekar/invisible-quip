@@ -1,3 +1,6 @@
+import TodaySticky from "./today/TodaySticky"
+import CompanionOverlay from "./companion/CompanionOverlay"
+import WorkspaceApp from "./workspace/WorkspaceApp"
 import { ToastProvider } from "./components/ui/toast"
 import Queue from "./_pages/Queue"
 import { ToastViewport } from "@radix-ui/react-toast"
@@ -19,6 +22,7 @@ const MainApp: React.FC = () => {
         }
       })
   )
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [view, setView] = useState<"queue" | "solutions">("queue")
   const containerRef = useRef<HTMLDivElement>(null)
   useClickThrough()
@@ -45,9 +49,11 @@ const MainApp: React.FC = () => {
   useEffect(() => {
     const unsubscribe = window.electronAPI.onContentLimits(
       ({ maxHeight, maxWidth }) => {
-        // Control bar + panel header + input row + the pb-8 shadow guard, none
-        // of which live inside the scroller.
-        const CHROME_PX = 150
+        // Control bar + panel header + input row + the wrapper's bottom
+        // padding, none of which live inside the scroller. Dropped from 150
+        // when the surfaces lost their drop shadows: 28px of that was the
+        // pb-8 shadow guard in Queue.tsx, now pb-1.
+        const CHROME_PX = 122
         const budget = Math.max(200, maxHeight - CHROME_PX)
         document.documentElement.style.setProperty("--chat-max-h", `${budget}px`)
 
@@ -147,11 +153,10 @@ const MainApp: React.FC = () => {
     <div ref={containerRef} className="min-h-0 font-sans">
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
-          {view === "queue" ? (
-            <Queue setView={setView} />
-          ) : (
-            <Solutions setView={setView} />
-          )}
+          {!toolsOpen ? <CompanionOverlay onTools={() => setToolsOpen(true)} /> : <>
+            <button className="glass-bar hit-region px-4 py-2 m-3 text-glass-text" onClick={() => { setToolsOpen(false); setView("queue") }}>← Back to desktop assistant</button>
+            {view === "queue" ? <Queue setView={setView} /> : <Solutions setView={setView} />}
+          </>}
           <ToastViewport />
         </ToastProvider>
       </QueryClientProvider>
@@ -160,6 +165,8 @@ const MainApp: React.FC = () => {
 }
 
 const App: React.FC = () => {
+  if (new URLSearchParams(window.location.search).get("view") === "today-sticky") return <TodaySticky />
+  if (new URLSearchParams(window.location.search).get("view") === "workspace") return <WorkspaceApp compact={false} />
   const route = new URLSearchParams(window.location.search).get("view")
   return route === "teaching-overlay" ? <TeachingTargetOverlay /> : <MainApp />
 }

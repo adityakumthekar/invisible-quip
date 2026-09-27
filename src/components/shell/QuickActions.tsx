@@ -75,7 +75,7 @@ interface QuickActionsProps {
 
 const QuickActions: React.FC<QuickActionsProps> = ({ onRun }) => (
   <div className="glass-panel-dark panel-enter w-[300px] p-3 no-drag">
-    <p className="text-[11px] uppercase tracking-wide glass-muted pb-2">
+    <p className="text-meta uppercase tracking-wide glass-muted pb-2">
       Quick actions
     </p>
     <div className="grid grid-cols-2 gap-1.5">
@@ -84,7 +84,7 @@ const QuickActions: React.FC<QuickActionsProps> = ({ onRun }) => (
           key={label}
           type="button"
           onClick={() => onRun(prompt, useScreen, QUICK_ACTION_PERSONA)}
-          className="glass-control flex items-center gap-2 rounded-lg px-2.5 py-2 text-[11px] glass-text hover:bg-glass-hover transition-colors"
+          className="glass-control flex items-center gap-2 rounded-nested px-2.5 py-2 text-meta glass-text hover:bg-glass-hover transition-colors"
         >
           <Icon className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} />
           <span className="truncate">{label}</span>

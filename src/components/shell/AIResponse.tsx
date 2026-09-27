@@ -6,6 +6,7 @@ import rehypeKatex from "rehype-katex"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
 import {
+  ArrowDown,
   Check,
   Copy,
   MessageSquare,
@@ -14,6 +15,7 @@ import {
   MonitorDot,
   Send,
   Settings2,
+  Square,
   X
 } from "lucide-react"
 import { cn } from "../../lib/utils"
@@ -76,7 +78,7 @@ const CopyButton: React.FC<{
     <button
       type="button"
       className={cn(
-        "no-drag p-1.5 rounded-md glass-icon hover:text-white hover:bg-glass-hover",
+        "no-drag p-1.5 rounded-inner glass-icon hover:text-white hover:bg-glass-hover",
         className
       )}
       onClick={() => copy(text)}
@@ -95,10 +97,10 @@ const CopyButton: React.FC<{
  * `inline` prop, so a block is anything with a language tag or a newline —
  * that second test is what catches an untagged fence.
  */
-const CodeBlock: React.FC<{ className?: string; children?: React.ReactNode }> = ({
-  className,
-  children
-}) => {
+const CodeBlock: React.FC<{
+  className?: string
+  children?: React.ReactNode
+}> = ({ className, children }) => {
   const text = String(children ?? "").replace(/\n$/, "")
   const language = languageFromClassName(className)
   const isBlock = language !== null || text.includes("\n")
@@ -151,11 +153,13 @@ const TurnHeader: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
   // would attribute the interviewer's question to the person reading it.
   const label = msg.speaker === "them" ? "Them · voice" : sourceLabel
   return (
-    <div className="flex items-center gap-1.5 text-[11px] glass-subtle mb-1">
+    <div className="flex items-center gap-1.5 text-meta glass-subtle mb-1">
       <Icon className="w-3 h-3 shrink-0" strokeWidth={1.75} />
       <span className="truncate">{label}</span>
       {msg.durationSec !== undefined && (
-        <span className="tabular-nums">· {formatDuration(msg.durationSec)}</span>
+        <span className="tabular-nums">
+          · {formatDuration(msg.durationSec)}
+        </span>
       )}
       <span className="ml-auto tabular-nums">{formatClock(msg.at)}</span>
     </div>
@@ -173,11 +177,17 @@ interface AIResponseProps {
   title?: string
   messages: ChatMessage[]
   loading: boolean
+  /**
+   * True for the whole lifetime of a request, unlike `loading`, which drops as
+   * soon as the first token lands. The stop control keys off this.
+   */
+  streaming?: boolean
   modelLabel: string
   input: string
   includeScreen: boolean
   onInputChange: (value: string) => void
   onSend: () => void
+  onStop?: () => void
   onToggleIncludeScreen: () => void
   onClose?: () => void
   className?: string
@@ -187,11 +197,13 @@ const AIResponse: React.FC<AIResponseProps> = ({
   title = "AI response",
   messages,
   loading,
+  streaming = false,
   modelLabel,
   input,
   includeScreen,
   onInputChange,
   onSend,
+  onStop,
   onToggleIncludeScreen,
   onClose,
   className
@@ -204,21 +216,22 @@ const AIResponse: React.FC<AIResponseProps> = ({
   // backwards for your own question to read it from the top. Instead: park the
   // newest question at the top of the scroller and let the answer fill in
   // beneath it.
+  //
+  // `followRef` drives the scrolling and `detached` only paints the Latest
+  // chip: the anchoring effect runs on every stream chunk and must read the
+  // current value without re-subscribing per render.
   const followRef = useRef(true)
+  const [detached, setDetached] = useState(false)
   const anchorId = messages[lastExchangeStart(messages)]?.id
 
-  // A new exchange re-arms anchoring, whatever the reader did during the last.
-  useEffect(() => {
-    followRef.current = true
-  }, [anchorId])
+  const setFollowing = (next: boolean) => {
+    followRef.current = next
+    setDetached(!next)
+  }
 
-  // Re-applied on every frame, not just at turn start: the assistant turn is an
-  // empty placeholder when the exchange opens, so there is nothing below the
-  // question to scroll against and the browser clamps the write. Re-running as
-  // the answer grows walks the question up to the top and holds it there.
-  useEffect(() => {
+  const anchorToTop = () => {
     const container = scrollRef.current
-    if (!container || !followRef.current || !anchorId) return
+    if (!container || !anchorId) return
     const anchor = container.querySelector<HTMLElement>(
       `[data-msg-id="${anchorId}"]`
     )
@@ -228,6 +241,20 @@ const AIResponse: React.FC<AIResponseProps> = ({
       container.getBoundingClientRect().top +
       container.scrollTop
     container.scrollTop = Math.max(0, offset - ANCHOR_TOP_GAP)
+  }
+
+  // A new exchange re-arms anchoring, whatever the reader did during the last.
+  useEffect(() => {
+    setFollowing(true)
+  }, [anchorId])
+
+  // Re-applied on every frame, not just at turn start: the assistant turn is an
+  // empty placeholder when the exchange opens, so there is nothing below the
+  // question to scroll against and the browser clamps the write. Re-running as
+  // the answer grows walks the question up to the top and holds it there.
+  useEffect(() => {
+    if (!followRef.current) return
+    anchorToTop()
   }, [messages, loading, anchorId])
 
   // Hand control over on the gesture itself rather than on a scroll event: main
@@ -235,10 +262,17 @@ const AIResponse: React.FC<AIResponseProps> = ({
   // and the resulting clamp of scrollTop is indistinguishable from a reader
   // scrolling. A trackpad two-finger scroll fires wheel, which is the real case.
   const releaseFollow = () => {
-    followRef.current = false
+    setFollowing(false)
   }
 
-  const lastAssistant = [...messages].reverse().find((m) => m.role === "gemini")
+  // Back to the current exchange, rather than to the raw bottom: the whole
+  // point of anchoring is that the question stays readable from the top.
+  const jumpToLatest = () => {
+    setFollowing(true)
+    anchorToTop()
+  }
+
+  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")
   const hasContent = messages.length > 0 || loading
 
   // Copying an answer is nearly always about the code; the raw markdown would
@@ -265,14 +299,21 @@ const AIResponse: React.FC<AIResponseProps> = ({
         )}
       >
         <div className="flex items-baseline gap-2 min-w-0">
-          <h2 className="text-[13px] font-semibold tracking-tight glass-heading">
+          <h2 className="text-title font-semibold tracking-tight glass-heading">
             {title}
           </h2>
-          {!hasContent && (
-            <span className="text-[11px] glass-subtle truncate">
-              {modelLabel}
-            </span>
-          )}
+          {/* Always on, not only on an empty panel. With the Gemini ↔ remote
+              Qwen toggle live, "which model wrote that?" is a question you get
+              mid-session, and this header is the only place that answers it. */}
+          {/* Chipped, not bare: the panel header has no reading scrim, and at
+              the `subtle` tier over a thin fill on a white desktop this
+              measures 3.36:1 — the chip takes it to 5.01:1. */}
+          <span
+            className="glass-badge text-meta glass-subtle shrink-0 truncate"
+            title={modelLabel}
+          >
+            {modelLabel}
+          </span>
         </div>
         <div className="flex items-center gap-0.5">
           <CopyButton
@@ -283,7 +324,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
           {onClose && (
             <button
               type="button"
-              className="no-drag p-1.5 rounded-md glass-icon hover:text-white hover:bg-glass-hover"
+              className="no-drag p-1.5 rounded-inner glass-icon hover:text-white hover:bg-glass-hover"
               onClick={onClose}
               aria-label="Close"
             >
@@ -294,67 +335,82 @@ const AIResponse: React.FC<AIResponseProps> = ({
       </div>
 
       {hasContent && (
-        <div
-          ref={scrollRef}
-          onWheel={releaseFollow}
-          onTouchMove={releaseFollow}
-          className="glass-reading flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[120px]"
-        >
-          {messages.map((msg, idx) => {
-            // One hairline per exchange, so consecutive turns of the same
-            // exchange stay visually joined.
-            const rule = startsExchange(messages[idx - 1], msg)
+        <div className="relative flex min-h-0 flex-1">
+          <div
+            ref={scrollRef}
+            onWheel={releaseFollow}
+            onTouchMove={releaseFollow}
+            className="glass-reading flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[120px]"
+          >
+            {messages.map((msg, idx) => {
+              // One hairline per exchange, so consecutive turns of the same
+              // exchange stay visually joined.
+              const rule = startsExchange(messages[idx - 1], msg)
 
-            if (msg.source === "system") {
+              if (msg.source === "system") {
+                return (
+                  <div
+                    key={msg.id}
+                    className={cn(
+                      "text-meta glass-subtle text-center",
+                      rule && "border-t border-glass pt-3"
+                    )}
+                  >
+                    {msg.text}
+                  </div>
+                )
+              }
+
               return (
                 <div
                   key={msg.id}
                   data-msg-id={msg.id}
                   className={cn(
-                    "text-[11px] glass-subtle text-center",
-                    rule && "border-t border-glass pt-3"
+                    "text-title leading-[1.6]",
+                    rule && "border-t border-glass pt-3",
+                    msg.role === "user" ? "glass-muted" : "glass-text"
                   )}
                 >
-                  {msg.text}
+                  {msg.role === "user" ? (
+                    <>
+                      <TurnHeader msg={msg} />
+                      {/* A header-only turn is how a screen glance or a silent
+                        clip shows its provenance without a body. */}
+                      {msg.text && (
+                        <p className="pl-3 border-l-2 border-glass">
+                          {msg.text}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <div className="chat-md chat-md-dark">
+                      <ReactMarkdown
+                        remarkPlugins={MARKDOWN_REMARK_PLUGINS}
+                        rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
+                        components={MARKDOWN_COMPONENTS}
+                      >
+                        {msg.text}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </div>
               )
-            }
-
-            return (
-              <div
-                key={msg.id}
-                data-msg-id={msg.id}
-                className={cn(
-                  "text-[13px] leading-[1.6]",
-                  rule && "border-t border-glass pt-3",
-                  msg.role === "user" ? "glass-muted" : "glass-text"
-                )}
-              >
-                {msg.role === "user" ? (
-                  <>
-                    <TurnHeader msg={msg} />
-                    {/* A header-only turn is how a screen glance or a silent
-                        clip shows its provenance without a body. */}
-                    {msg.text && (
-                      <p className="pl-3 border-l-2 border-glass">{msg.text}</p>
-                    )}
-                  </>
-                ) : (
-                  <div className="chat-md chat-md-dark">
-                    <ReactMarkdown
-                      remarkPlugins={MARKDOWN_REMARK_PLUGINS}
-                      rehypePlugins={MARKDOWN_REHYPE_PLUGINS}
-                      components={MARKDOWN_COMPONENTS}
-                    >
-                      {msg.text}
-                    </ReactMarkdown>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-          {loading && (
-            <p className="text-xs glass-muted animate-pulse">Thinking…</p>
+            })}
+            {loading && (
+              <p className="text-body glass-muted animate-pulse">Thinking…</p>
+            )}
+          </div>
+          {/* Only while detached. Pinned is the common case, and a permanent
+              floating chip over the transcript would cost more than it earns. */}
+          {detached && (
+            <button
+              type="button"
+              onClick={jumpToLatest}
+              className="glass-control absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full px-2.5 py-1 text-meta glass-text"
+            >
+              <ArrowDown className="w-3 h-3" strokeWidth={1.75} />
+              Latest
+            </button>
           )}
         </div>
       )}
@@ -367,6 +423,12 @@ const AIResponse: React.FC<AIResponseProps> = ({
         )}
         onSubmit={(e) => {
           e.preventDefault()
+          // Enter is still live while an answer streams (the input stays
+          // enabled so you can compose the follow-up), but firing a second
+          // request now would leave two streams writing the same last message.
+          if (streaming) return
+          // You just acted — go to it, wherever you'd scrolled to.
+          setFollowing(true)
           onSend()
         }}
       >
@@ -380,7 +442,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
           }
           aria-pressed={includeScreen}
           className={cn(
-            "p-2 rounded-lg border transition-colors",
+            "p-2 rounded-nested border transition-colors",
             includeScreen ? "glass-action" : "glass-control glass-icon"
           )}
         >
@@ -388,22 +450,42 @@ const AIResponse: React.FC<AIResponseProps> = ({
         </button>
         <input
           ref={inputRef}
-          className="glass-control flex-1 rounded-lg px-3 py-2 text-[12.5px]"
+          className="glass-control flex-1 rounded-nested px-3 py-2 text-body"
           placeholder={
             includeScreen ? "Ask about your screen…" : "Ask a follow-up…"
           }
           value={input}
           onChange={(e) => onInputChange(e.target.value)}
-          disabled={loading}
         />
-        <button
-          type="submit"
-          disabled={loading || !input.trim()}
-          className="glass-action p-2 rounded-lg disabled:opacity-40"
-          aria-label="Send"
-        >
-          <Send className="w-3.5 h-3.5" strokeWidth={1.75} />
-        </button>
+        {/* Stop replaces Send for the duration of a request, rather than
+            sitting beside it: the two are never both useful, and the bar's
+            width is the overlay's width. Keyed off `streaming`, not `loading` —
+            loading drops the instant the first token lands, so a stop button
+            gated on it would vanish exactly when you want it. */}
+        {streaming && onStop ? (
+          <button
+            type="button"
+            onClick={onStop}
+            className="glass-action p-2 rounded-nested"
+            title="Stop generating"
+            aria-label="Stop generating"
+          >
+            <Square
+              className="w-3.5 h-3.5"
+              strokeWidth={1.75}
+              fill="currentColor"
+            />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!input.trim()}
+            className="glass-action p-2 rounded-nested disabled:opacity-40"
+            aria-label="Send"
+          >
+            <Send className="w-3.5 h-3.5" strokeWidth={1.75} />
+          </button>
+        )}
       </form>
     </div>
   )

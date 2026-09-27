@@ -1,4 +1,8 @@
-import type { PrivacyPreflightResult } from "./privacyContract"
+import {
+  VISIBLE_MODE_REMEDIATION,
+  VISIBLE_MODE_WARNING,
+  type PrivacyPreflightResult
+} from "./privacyContract"
 import type { DisplayCaptureInfo } from "./teaching"
 import { evaluateMarkerDetection } from "./privacyPreflightAnalysis"
 import {
@@ -32,10 +36,6 @@ export interface PrivacyPreflightDependencies {
   removeFile: (path: string) => Promise<void>
 }
 
-const DEBUG_MODE_REASON =
-  "INVISIBLE=false disables capture protection for debugging, so Quip is intentionally capturable right now."
-const DEBUG_MODE_REMEDIATION =
-  "Set INVISIBLE=true (or unset it) and restart Quip before teaching during a real screen share."
 const LEAK_REASON =
   "The test marker was visible in a local screenshot, so capture protection is not excluding Quip on this system."
 const LEAK_REMEDIATION =
@@ -49,11 +49,13 @@ export class PrivacyPreflightChecker {
   constructor(private readonly dependencies: PrivacyPreflightDependencies) {}
 
   public async run(): Promise<PrivacyPreflightResult> {
+    // Reported honestly as a failure, but no longer a blocker: the privacy
+    // gate lets teaching proceed in visible mode behind a persistent warning.
     if (this.dependencies.isDebugMode()) {
       return {
         status: "fail",
-        reason: DEBUG_MODE_REASON,
-        remediation: DEBUG_MODE_REMEDIATION,
+        reason: VISIBLE_MODE_WARNING,
+        remediation: VISIBLE_MODE_REMEDIATION,
         debugMode: true
       }
     }

@@ -1,8 +1,11 @@
+import "./workspacePreload"
+import "./companionPreload"
 import { contextBridge, ipcRenderer } from "electron"
 import { TeachingResult } from "./teaching"
 import type { TeachingOverlayTargetEvent } from "./teachingOverlayContract"
 import type { PrivacyGateStatus, PrivacyPreflightResult } from "./privacyContract"
 import type { AutopilotUpdate } from "./autopilot"
+import type { AutonomyLevel } from "./autopilotPolicy"
 import type { RemoteServerInfo } from "./remoteServer"
 import type { RemoteDeviceSummary } from "./remotePairing"
 
@@ -10,6 +13,11 @@ export interface AutopilotConsent {
   consented: boolean
   text: string
   version: number
+}
+
+export interface AutopilotAutonomy {
+  level: AutonomyLevel
+  description: string
 }
 
 /**
@@ -95,7 +103,7 @@ interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
-  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[]) => Promise<{ transcript: string; text: string; timestamp: number }>
+  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "assistant"; text: string }[]) => Promise<{ transcript: string; text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>
@@ -116,6 +124,8 @@ interface ElectronAPI {
   // Autopilot (unattended runs)
   autopilotGetConsent: () => Promise<AutopilotConsent>
   autopilotAcknowledgeConsent: () => Promise<AutopilotConsent>
+  autopilotGetAutonomy: () => Promise<AutopilotAutonomy>
+  autopilotSetAutonomy: (level: AutonomyLevel) => Promise<AutopilotAutonomy>
   systemAudioGetConsent: () => Promise<AutopilotConsent>
   systemAudioAcknowledgeConsent: () => Promise<AutopilotConsent>
   autopilotStart: (
@@ -162,9 +172,21 @@ interface ElectronAPI {
   quitApp: () => Promise<void>
   
   // LLM Model Management
-  getCurrentLlmConfig: () => Promise<{ provider: "ollama" | "gemini"; model: string; isOllama: boolean }>
+  getCurrentLlmConfig: () => Promise<{
+    provider: "ollama" | "gemini" | "qwen"
+    model: string
+    isOllama: boolean
+    isQwen: boolean
+    qwenBaseUrl: string
+  }>
   getAvailableOllamaModels: () => Promise<string[]>
+  listQwenModels: (baseUrl?: string, apiKey?: string) => Promise<string[]>
   switchToOllama: (model?: string, url?: string) => Promise<{ success: boolean; error?: string }>
+  switchToQwen: (
+    baseUrl?: string,
+    model?: string,
+    apiKey?: string
+  ) => Promise<{ success: boolean; error?: string }>
   switchToGemini: (apiKey?: string) => Promise<{ success: boolean; error?: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   
@@ -351,7 +373,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   moveWindowRight: () => ipcRenderer.invoke("move-window-right"),
   moveWindowUp: () => ipcRenderer.invoke("move-window-up"),
   moveWindowDown: () => ipcRenderer.invoke("move-window-down"),
-  analyzeAudioFromBase64: (data: string, mimeType: string, history: { role: "user" | "gemini"; text: string }[] = [], system?: { data: string; mimeType: string }) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType, history, system),
+  analyzeAudioFromBase64: (data: string, mimeType: string, history: { role: "user" | "assistant"; text: string }[] = [], system?: { data: string; mimeType: string }) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType, history, system),
   analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
   teachStart: (goal: string) => ipcRenderer.invoke("teach-start", goal),
   teachNext: () => ipcRenderer.invoke("teach-next"),
@@ -391,6 +413,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   autopilotGetConsent: () => ipcRenderer.invoke("autopilot-get-consent"),
   autopilotAcknowledgeConsent: () =>
     ipcRenderer.invoke("autopilot-acknowledge-consent"),
+  autopilotGetAutonomy: () => ipcRenderer.invoke("autopilot-get-autonomy"),
+  autopilotSetAutonomy: (level: AutonomyLevel) =>
+    ipcRenderer.invoke("autopilot-set-autonomy", level),
   systemAudioGetConsent: () => ipcRenderer.invoke("system-audio-get-consent"),
   systemAudioAcknowledgeConsent: () =>
     ipcRenderer.invoke("system-audio-acknowledge-consent"),
@@ -447,6 +472,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   switchToOllama: (model?: string, url?: string) => ipcRenderer.invoke("switch-to-ollama", model, url),
+  switchToQwen: (baseUrl?: string, model?: string, apiKey?: string) =>
+    ipcRenderer.invoke("switch-to-qwen", baseUrl, model, apiKey),
+  listQwenModels: (baseUrl?: string, apiKey?: string) =>
+    ipcRenderer.invoke("list-qwen-models", baseUrl, apiKey),
   switchToGemini: (apiKey?: string) => ipcRenderer.invoke("switch-to-gemini", apiKey),
   testLlmConnection: () => ipcRenderer.invoke("test-llm-connection"),
   
@@ -482,5 +511,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.removeListener("chat-stream-error", subscription)
     }
   },
-  invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args)
+  invoke: (channel: string, ...args: any[]) => {
+    const allowed = ["set-user-profile", "set-system-prompt", "process-screenshot-queue", "toggle-window", "cancel-chat-stream", "gemini-chat-stream", "chat-with-screen-stream", "analyze-image-file-stream"]
+    if (!allowed.includes(channel)) return Promise.reject(new Error("Unsupported operation"))
+    return ipcRenderer.invoke(channel, ...args)
+  }
 } as ElectronAPI)

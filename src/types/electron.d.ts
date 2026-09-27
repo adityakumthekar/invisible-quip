@@ -1,12 +1,17 @@
 import type { TeachingResult } from "../lib/teaching"
 import type { TeachingOverlayTargetEvent } from "../lib/teachingOverlayContract"
 import type { PrivacyGateStatus, PrivacyPreflightResult } from "../lib/privacyContract"
-import type { AutopilotUpdate } from "../lib/autopilot"
+import type { AutonomyLevel, AutopilotUpdate } from "../lib/autopilot"
 
 export interface AutopilotConsent {
   consented: boolean
   text: string
   version: number
+}
+
+export interface AutopilotAutonomy {
+  level: AutonomyLevel
+  description: string
 }
 
 export interface RemoteServerInfo {
@@ -101,7 +106,7 @@ export interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
-  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[], system?: { data: string; mimeType: string }) => Promise<{ transcript: string; turns: { speaker: "you" | "them"; text: string }[]; text: string; timestamp: number }>
+  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "assistant"; text: string }[], system?: { data: string; mimeType: string }) => Promise<{ transcript: string; turns: { speaker: "you" | "them"; text: string }[]; text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>
@@ -122,6 +127,8 @@ export interface ElectronAPI {
   // Autopilot (unattended runs)
   autopilotGetConsent: () => Promise<AutopilotConsent>
   autopilotAcknowledgeConsent: () => Promise<AutopilotConsent>
+  autopilotGetAutonomy: () => Promise<AutopilotAutonomy>
+  autopilotSetAutonomy: (level: AutonomyLevel) => Promise<AutopilotAutonomy>
   systemAudioGetConsent: () => Promise<AutopilotConsent>
   systemAudioAcknowledgeConsent: () => Promise<AutopilotConsent>
   autopilotStart: (
@@ -158,9 +165,11 @@ export interface ElectronAPI {
 
   quitApp: () => Promise<void>
   getCurrentLlmConfig: () => Promise<{
-    provider: "ollama" | "gemini"
+    provider: "ollama" | "gemini" | "qwen"
     model: string
     isOllama: boolean
+    isQwen: boolean
+    qwenBaseUrl: string
   }>
   getAvailableOllamaModels: () => Promise<string[]>
   getOllamaModelCapabilities: (model: string) => Promise<{ vision: boolean }>
@@ -174,6 +183,12 @@ export interface ElectronAPI {
     model?: string,
     url?: string
   ) => Promise<{ success: boolean; error?: string }>
+  switchToQwen: (
+    baseUrl?: string,
+    model?: string,
+    apiKey?: string
+  ) => Promise<{ success: boolean; error?: string }>
+  listQwenModels: (baseUrl?: string, apiKey?: string) => Promise<string[]>
   switchToGemini: (
     apiKey?: string
   ) => Promise<{ success: boolean; error?: string }>
