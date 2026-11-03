@@ -19,7 +19,7 @@ import { applySavedProfile } from "../lib/userProfile"
 import { closeSystemAudio, openSystemAudio } from "../lib/systemAudio"
 import { createLevelMonitor, type LevelMonitor } from "../lib/audioLevel"
 import { getBarCollapsed, setBarCollapsed } from "../lib/collapsedBar"
-import { streamChat } from "../lib/chatStream"
+import { streamChat, type StreamTranscript } from "../lib/chatStream"
 import {
   createMessage,
   toHistory,
@@ -692,8 +692,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
           const history = toHistory(chatMessagesRef.current)
           // Snapshotted at stop, not at record start: a ⌘N pressed mid-clip
           // should still deliver this transcript, just into the empty chat.
-          // There is no abort for this path — it is a plain invoke — so the
-          // epoch check is the only thing keeping a stale answer out.
+          // A ⌘N after stop aborts the stream; the epoch check covers events
+          // already in flight when it lands.
           const epoch = chatEpochRef.current
           stream.getTracks().forEach((t) => t.stop())
           setMicStream(null)
@@ -737,25 +737,21 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             const base64Data = await blobToBase64(blob)
             openPanels()
             setChatLoading(true)
-            try {
-              const chunks = await longClipChunks(
-                clipSeconds,
-                blob,
-                systemPart ? systemBlob : null
-              )
-              const result = await window.electronAPI.analyzeAudioFromBase64(
-                base64Data,
-                blob.type,
-                history,
-                systemPart,
-                chunks
-              )
-              if (epoch !== chatEpochRef.current) return
+            const controller = new AbortController()
+            chatAbortRef.current = controller
+            // The spoken turns land first (from the transcript event), then the
+            // answer streams into the placeholder after them. A reply that never
+            // reports a transcript still gets a header-only turn, placed when
+            // its first text arrives.
+            let placed = false
+            let answered = ""
+            const placeTurns = (turns: StreamTranscript["turns"]) => {
+              placed = true
               // One clip can hold several turns once system audio is on. The
               // length belongs to the clip, so only its first turn carries it;
               // a clip with no speech at all still leaves a header-only turn.
-              const spoken = result.turns.length
-                ? result.turns.map((turn, i) =>
+              const spoken = turns.length
+                ? turns.map((turn, i) =>
                     createMessage({
                       role: "user",
                       text: turn.text,
@@ -775,14 +771,41 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
               setChatMessages((msgs) => [
                 ...msgs,
                 ...spoken,
-                createMessage({
-                  role: "gemini",
-                  text: result.text,
-                  source: "voice"
-                })
+                createMessage({ role: "gemini", text: "", source: "voice" })
               ])
-            } catch {
-              if (epoch !== chatEpochRef.current) return
+            }
+            try {
+              const chunks = await longClipChunks(
+                clipSeconds,
+                blob,
+                systemPart ? systemBlob : null
+              )
+              await streamChat(
+                window.electronAPI,
+                "analyze-audio-stream",
+                [base64Data, blob.type, history, systemPart, chunks],
+                {
+                  signal: controller.signal,
+                  onTranscript: ({ turns }) => {
+                    if (epoch !== chatEpochRef.current || placed) return
+                    placeTurns(turns)
+                  },
+                  onText: (text) => {
+                    if (epoch !== chatEpochRef.current) return
+                    if (!placed) placeTurns([])
+                    answered = text
+                    setChatLoading(false)
+                    replaceLastMessage(text)
+                  }
+                }
+              )
+            } catch (err) {
+              if (epoch !== chatEpochRef.current || isAbortError(err)) return
+              if (placed) {
+                // Keep a half-written answer rather than swapping it for an error.
+                if (!answered) replaceLastMessage("Audio analysis failed.")
+                return
+              }
               // Still emit the user turn: a header-only "You · voice · 0:12"
               // beats a failure message with nothing explaining what failed.
               setChatMessages((msgs) => [
@@ -800,6 +823,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                 })
               ])
             } finally {
+              if (chatAbortRef.current === controller) chatAbortRef.current = null
               // Only ours to clear: a newer request may already own the spinner.
               if (epoch === chatEpochRef.current) setChatLoading(false)
             }

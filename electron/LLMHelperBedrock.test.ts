@@ -345,3 +345,45 @@ describe("labelledTranscript", () => {
     expect(labelledTranscript([""], [])).toBe("")
   })
 })
+
+describe("Bedrock voice streaming", () => {
+  it("announces Sarvam's transcript, then streams Claude's answer", async () => {
+    vi.stubEnv("SARVAM_API_KEY", "sarvam-key")
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: any) => {
+        const file = init.body.get("file") as Blob
+        return new Response(JSON.stringify({ transcript: await file.text() }))
+      })
+    )
+    send.mockResolvedValue(streamOf(["Hash ", "map."]))
+    const events: string[] = []
+
+    const text = await helper().analyzeAudioStream(
+      Buffer.from("explain two sum").toString("base64"),
+      "audio/webm",
+      (transcript) => events.push(`T:${transcript}`),
+      (delta) => events.push(`A:${delta}`)
+    )
+
+    expect(events).toEqual(["T:YOU: explain two sum", "A:Hash ", "A:map."])
+    expect(text).toBe("Hash map.")
+    expect(send.mock.calls[0][0].kind).toBe("stream")
+  })
+
+  it("streams the no-speech reply without calling Claude", async () => {
+    vi.stubEnv("SARVAM_API_KEY", "sarvam-key")
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ transcript: "" }))))
+    const events: string[] = []
+
+    await helper().analyzeAudioStream(
+      "",
+      "audio/webm",
+      (transcript) => events.push(`T:${transcript}`),
+      (delta) => events.push(`A:${delta}`)
+    )
+
+    expect(send).not.toHaveBeenCalled()
+    expect(events).toEqual(["T:", "A:No speech was picked up in that clip."])
+  })
+})

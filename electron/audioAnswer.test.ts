@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { parseAudioAnswer, parseTranscriptTurns } from "./audioAnswer"
+import { parseAudioAnswer, parseTranscriptTurns, createAnswerSplitter } from "./audioAnswer"
 
 describe("parseAudioAnswer", () => {
   it("splits the two labelled sections", () => {
@@ -118,5 +118,45 @@ describe("parseTranscriptTurns", () => {
   it("returns nothing for an empty transcript", () => {
     expect(parseTranscriptTurns("")).toEqual([])
     expect(parseTranscriptTurns("   \n  ")).toEqual([])
+  })
+})
+
+describe("createAnswerSplitter", () => {
+  function run(deltas: string[]) {
+    const events: string[] = []
+    const splitter = createAnswerSplitter({
+      onTranscript: (t) => events.push(`T:${t}`),
+      onAnswerDelta: (d) => events.push(`A:${d}`)
+    })
+    deltas.forEach((d) => splitter.push(d))
+    const result = splitter.finish()
+    return { events, result }
+  }
+
+  it("holds everything until the label, then announces the transcript first", () => {
+    const { events, result } = run([
+      "TRANSCRIPT: two sum?\nANS",
+      "WER:  Use a ",
+      "hash map."
+    ])
+    expect(events).toEqual(["T:two sum?", "A:Use a ", "A:hash map."])
+    expect(result).toEqual({ transcript: "two sum?", answer: "Use a hash map." })
+  })
+
+  it("keeps dual-speaker transcripts intact for turn parsing", () => {
+    const { events } = run(["TRANSCRIPT:\nTHEM: why?\nYOU: hmm\nANSWER: because"])
+    expect(events[0]).toBe("T:THEM: why?\nYOU: hmm")
+    expect(events.slice(1)).toEqual(["A:because"])
+  })
+
+  it("reports no speech as an empty transcript", () => {
+    const { events } = run(["TRANSCRIPT: (no speech)\nANSWER: Nothing was said."])
+    expect(events).toEqual(["T:", "A:Nothing was said."])
+  })
+
+  it("falls back to all-answer at finish when the label never comes", () => {
+    const { events, result } = run(["Just an ", "answer."])
+    expect(events).toEqual(["T:", "A:Just an answer."])
+    expect(result.answer).toBe("Just an answer.")
   })
 })

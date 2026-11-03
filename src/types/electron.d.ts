@@ -193,6 +193,13 @@ export interface ElectronAPI {
   onChatStreamError: (
     callback: (data: { requestId: string; message: string }) => void
   ) => () => void
+  onChatStreamTranscript: (
+    callback: (data: {
+      requestId: string
+      transcript: string
+      turns: { speaker: "you" | "them"; text: string }[]
+    }) => void
+  ) => () => void
   invoke: (channel: string, ...args: any[]) => Promise<any>
 }
 

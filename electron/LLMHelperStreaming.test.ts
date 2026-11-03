@@ -157,3 +157,25 @@ describe("LLMHelper chat image encoding", () => {
     expect(meta.height).toBe(300)
   })
 })
+
+describe("analyzeAudioStream on Gemini", () => {
+  it("announces the transcript before streaming only the answer", async () => {
+    generateContentStream.mockReturnValueOnce(
+      fakeStream(["TRANSCRIPT: two sum?\nANS", "WER: Use a ", "hash map."])
+    )
+    const events: string[] = []
+
+    const text = await helper().analyzeAudioStream(
+      "YXVkaW8=",
+      "audio/webm",
+      (transcript, turns) => events.push(`T:${transcript}|${turns.length}`),
+      (delta) => events.push(`A:${delta}`)
+    )
+
+    expect(events).toEqual(["T:two sum?|1", "A:Use a ", "A:hash map."])
+    expect(text).toBe("Use a hash map.")
+    const request = generateContentStream.mock.calls[0][0]
+    expect(request.generationConfig.maxOutputTokens).toBe(3072)
+    expect(request.contents.at(-1).parts[1].inlineData.mimeType).toBe("audio/webm")
+  })
+})

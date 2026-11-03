@@ -183,3 +183,32 @@ describe("streamChat", () => {
     ).rejects.toThrow("no provider configured")
   })
 })
+
+describe("streamChat transcript events", () => {
+  it("delivers this request's transcript and ignores other requests'", async () => {
+    const harness = makeApi()
+    const transcriptListeners: Array<(d: any) => void> = []
+    harness.api.onChatStreamTranscript = (cb) => {
+      transcriptListeners.push(cb)
+      return () => {}
+    }
+    const seen: unknown[] = []
+
+    const promise = streamChat(harness.api, "analyze-audio-stream", [], {
+      onText: () => {},
+      onTranscript: (t) => seen.push(t),
+      scheduler: immediate
+    })
+    const turns = [{ speaker: "them", text: "why?" }]
+    transcriptListeners.forEach((l) =>
+      l({ requestId: "someone-else", transcript: "x", turns: [] })
+    )
+    transcriptListeners.forEach((l) =>
+      l({ requestId: harness.id(), transcript: "THEM: why?", turns })
+    )
+    harness.emitDone("because")
+
+    await expect(promise).resolves.toBe("because")
+    expect(seen).toEqual([{ transcript: "THEM: why?", turns }])
+  })
+})

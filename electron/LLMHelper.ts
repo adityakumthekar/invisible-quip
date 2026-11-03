@@ -11,7 +11,12 @@ import {
   pixelTeachingTargetToNormalized,
   TeachingStepResponse
 } from "./teaching"
-import { parseAudioAnswer, parseTranscriptTurns } from "./audioAnswer"
+import {
+  createAnswerSplitter,
+  parseAudioAnswer,
+  parseTranscriptTurns,
+  TranscriptTurn
+} from "./audioAnswer"
 import {
   ChatTurn,
   flattenHistory,
@@ -674,20 +679,7 @@ export class LLMHelper {
       const audioParts = system
         ? [audioPart, { inlineData: { data: system.data, mimeType: system.mimeType } }]
         : [audioPart]
-      // The section labels and the YOU:/THEM: prefixes are parsed by regex in
-      // audioAnswer.ts — reword the framing freely, but they must not move.
-      // Attribution is positional, so the mic clip has to stay part one.
-      const preamble = system
-        ? `Two audio clips are attached, recorded at the same time. The FIRST is this user's own microphone. The SECOND is this computer's audio output — the other people on the call. Each clip may bleed into the other; attribute a line to whoever is louder and clearer in it. Answer the question the other party asked, not the user's own words.
-
-Reply in exactly two sections and nothing else:
-TRANSCRIPT: one line per turn, in the order spoken, each starting with "YOU:" or "THEM:" — or "(no speech)" if neither clip has any
-ANSWER: your answer`
-        : `The attached audio clip is the user speaking, most likely a question asked out loud in the room. Answer what was asked.
-
-Reply in exactly two sections and nothing else:
-TRANSCRIPT: the words that were spoken, verbatim, on one line — or "(no speech)" if the clip has none
-ANSWER: your answer`
+      const preamble = LLMHelper.audioPreamble(Boolean(system))
       // A spoken follow-up belongs to the same conversation as the typed turns
       // around it, so it carries the same history.
       const text = await this.generateChatContent((legacy) =>
@@ -713,6 +705,88 @@ ANSWER: your answer`
     }
   }
 
+  // The section labels and the YOU:/THEM: prefixes are parsed by regex in
+  // audioAnswer.ts — reword the framing freely, but they must not move.
+  // Attribution is positional, so the mic clip has to stay part one.
+  private static audioPreamble(dualClip: boolean): string {
+    return dualClip
+      ? `Two audio clips are attached, recorded at the same time. The FIRST is this user's own microphone. The SECOND is this computer's audio output — the other people on the call. Each clip may bleed into the other; attribute a line to whoever is louder and clearer in it. Answer the question the other party asked, not the user's own words.
+
+Reply in exactly two sections and nothing else:
+TRANSCRIPT: one line per turn, in the order spoken, each starting with "YOU:" or "THEM:" — or "(no speech)" if neither clip has any
+ANSWER: your answer`
+      : `The attached audio clip is the user speaking, most likely a question asked out loud in the room. Answer what was asked.
+
+Reply in exactly two sections and nothing else:
+TRANSCRIPT: the words that were spoken, verbatim, on one line — or "(no speech)" if the clip has none
+ANSWER: your answer`
+  }
+
+  /**
+   * The record button's streaming path. The spoken turns go to `onTranscript`
+   * the moment they are known — before any of the answer — so the renderer can
+   * show what was heard while the answer is still being written. Resolves with
+   * the answer alone, which is what the chat stream's done event carries.
+   */
+  public async analyzeAudioStream(
+    data: string,
+    mimeType: string,
+    onTranscript: (transcript: string, turns: TranscriptTurn[]) => void,
+    onChunk: (delta: string) => void,
+    signal?: AbortSignal,
+    history: ChatTurn[] = [],
+    system?: { data: string; mimeType: string },
+    chunks?: { mic: AudioChunk[]; system?: AudioChunk[] }
+  ): Promise<string> {
+    const announce = (transcript: string) =>
+      onTranscript(transcript, parseTranscriptTurns(transcript))
+
+    if (this.provider === "bedrock") {
+      const hasSystem = Boolean(chunks?.system ?? system)
+      const transcript = await this.transcribeWithSarvam(
+        chunks?.mic ?? [{ data, mimeType }],
+        chunks?.system ?? (system ? [system] : undefined)
+      )
+      announce(transcript)
+      if (!transcript) {
+        onChunk(LLMHelper.NO_SPEECH_REPLY)
+        return LLMHelper.NO_SPEECH_REPLY
+      }
+      return this.bedrockOrThrow().converseStream(
+        this.buildConverseRequest({
+          message: transcript,
+          preamble: LLMHelper.transcriptPreamble(hasSystem),
+          history
+        }),
+        onChunk,
+        signal
+      )
+    }
+
+    const audioParts = [
+      { inlineData: { data, mimeType } },
+      ...(system ? [{ inlineData: { data: system.data, mimeType: system.mimeType } }] : [])
+    ]
+    const splitter = createAnswerSplitter({
+      onTranscript: announce,
+      onAnswerDelta: onChunk
+    })
+    await this.consumeGeminiStream(
+      (legacy) =>
+        this.buildChatRequest({
+          message: "",
+          preamble: LLMHelper.audioPreamble(Boolean(system)),
+          imageParts: audioParts,
+          history,
+          generationConfig: LLMHelper.AUDIO_GENERATION_CONFIG,
+          legacy
+        }),
+      (delta) => splitter.push(delta),
+      signal
+    )
+    return splitter.finish().answer
+  }
+
   /**
    * The voice path on Bedrock: Sarvam transcribes, Claude answers. Each side of
    * the call is its own clip, so attribution comes from which clip a line was
@@ -723,6 +797,45 @@ ANSWER: your answer`
     system: AudioChunk[] | undefined,
     history: ChatTurn[]
   ) {
+    const transcript = await this.transcribeWithSarvam(mic, system)
+    if (!transcript) {
+      // Nothing to answer, so don't pay for a model call to say so.
+      return {
+        transcript: "",
+        turns: [],
+        text: LLMHelper.NO_SPEECH_REPLY,
+        timestamp: Date.now()
+      }
+    }
+
+    const { text } = await this.bedrockOrThrow().converse(
+      this.buildConverseRequest({
+        message: transcript,
+        preamble: LLMHelper.transcriptPreamble(Boolean(system)),
+        history
+      })
+    )
+    return {
+      transcript,
+      turns: parseTranscriptTurns(transcript),
+      text,
+      timestamp: Date.now()
+    }
+  }
+
+  private static readonly NO_SPEECH_REPLY = "No speech was picked up in that clip."
+
+  private static transcriptPreamble(dualClip: boolean): string {
+    return dualClip
+      ? "Below is a transcript of a live call. THEM lines are the other people on the call; YOU lines are this user. Answer the question the other party asked, not the user's own words."
+      : "Below is what the user just said out loud, most likely a question asked in the room. Answer what was asked."
+  }
+
+  /** Both clips at once: the slower of the two is the whole wait, not the sum. */
+  private async transcribeWithSarvam(
+    mic: AudioChunk[],
+    system: AudioChunk[] | undefined
+  ): Promise<string> {
     if (!this.sarvam) {
       throw new Error(
         "Voice on Bedrock needs Sarvam speech-to-text. Set SARVAM_API_KEY or add the key in Settings → Provider."
@@ -732,29 +845,7 @@ ANSWER: your answer`
       this.sarvam.transcribe(mic),
       system ? this.sarvam.transcribe(system) : Promise.resolve([])
     ])
-    const transcript = labelledTranscript(you, them)
-    if (!transcript) {
-      // Nothing to answer, so don't pay for a model call to say so.
-      return {
-        transcript: "",
-        turns: [],
-        text: "No speech was picked up in that clip.",
-        timestamp: Date.now()
-      }
-    }
-
-    const preamble = system
-      ? "Below is a transcript of a live call. THEM lines are the other people on the call; YOU lines are this user. Answer the question the other party asked, not the user's own words."
-      : "Below is what the user just said out loud, most likely a question asked in the room. Answer what was asked."
-    const { text } = await this.bedrockOrThrow().converse(
-      this.buildConverseRequest({ message: transcript, preamble, history })
-    )
-    return {
-      transcript,
-      turns: parseTranscriptTurns(transcript),
-      text,
-      timestamp: Date.now()
-    }
+    return labelledTranscript(you, them)
   }
 
   /**

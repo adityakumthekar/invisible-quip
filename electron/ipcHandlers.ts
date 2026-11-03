@@ -980,6 +980,38 @@ export function initializeIpcHandlers(appState: AppState): void {
       )
   )
 
+  // The record button. The transcript goes out on its own event as soon as it
+  // is known, so the spoken turns appear before the answer starts streaming.
+  ipcMain.handle(
+    "analyze-audio-stream",
+    async (
+      event,
+      requestId: string,
+      data: string,
+      mimeType: string,
+      history: ChatTurn[] = [],
+      system?: { data: string; mimeType: string },
+      chunks?: { mic: { data: string; mimeType: string }[]; system?: { data: string; mimeType: string }[] }
+    ) =>
+      runChatStream(event, requestId, (onChunk, signal) =>
+        appState.processingHelper
+          .getLLMHelper()
+          .analyzeAudioStream(
+            data,
+            mimeType,
+            (transcript, turns) => {
+              if (signal.aborted || event.sender.isDestroyed()) return
+              event.sender.send("chat-stream-transcript", { requestId, transcript, turns })
+            },
+            onChunk,
+            signal,
+            history,
+            system,
+            chunks
+          )
+      )
+  )
+
   ipcMain.handle("cancel-chat-stream", async (_event, requestId: string) => {
     activeChatStreams.get(requestId)?.abort()
     activeChatStreams.delete(requestId)

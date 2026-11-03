@@ -178,6 +178,13 @@ interface ElectronAPI {
   onChatStreamError: (
     callback: (data: { requestId: string; message: string }) => void
   ) => () => void
+  onChatStreamTranscript: (
+    callback: (data: {
+      requestId: string
+      transcript: string
+      turns: { speaker: "you" | "them"; text: string }[]
+    }) => void
+  ) => () => void
 
   invoke: (channel: string, ...args: any[]) => Promise<any>
 }
@@ -470,6 +477,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("chat-stream-done", subscription)
     return () => {
       ipcRenderer.removeListener("chat-stream-done", subscription)
+    }
+  },
+  onChatStreamTranscript: (
+    callback: (data: { requestId: string; transcript: string; turns: { speaker: "you" | "them"; text: string }[] }) => void
+  ) => {
+    const subscription = (_: any, data: { requestId: string; transcript: string; turns: { speaker: "you" | "them"; text: string }[] }) => callback(data)
+    ipcRenderer.on("chat-stream-transcript", subscription)
+    return () => {
+      ipcRenderer.removeListener("chat-stream-transcript", subscription)
     }
   },
   onChatStreamError: (
