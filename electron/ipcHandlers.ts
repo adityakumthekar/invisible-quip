@@ -1247,7 +1247,8 @@ export function initializeIpcHandlers(appState: AppState): void {
       return {
         provider: llmHelper.getCurrentProvider(),
         model: llmHelper.getCurrentModel(),
-        isOllama: llmHelper.isUsingOllama()
+        isOllama: llmHelper.isUsingOllama(),
+        stt: llmHelper.getCurrentStt()
       };
     } catch (error: any) {
       console.error("Error getting current LLM config:", error);
@@ -1288,7 +1289,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
-  ipcMain.handle("switch-to-bedrock", async (_, opts: { apiKey?: string; region?: string; modelId?: string; sarvamApiKey?: string } = {}) => {
+  ipcMain.handle("switch-to-bedrock", async (_, opts: { apiKey?: string; region?: string; modelId?: string; sarvamApiKey?: string; groqApiKey?: string; sttProvider?: "sarvam" | "groq" } = {}) => {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
       await llmHelper.switchToBedrock(opts);

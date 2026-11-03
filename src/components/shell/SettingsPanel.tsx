@@ -97,6 +97,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [bedrockRegion, setBedrockRegion] = useState("")
   const [bedrockModelId, setBedrockModelId] = useState("")
   const [sarvamApiKey, setSarvamApiKey] = useState("")
+  const [groqApiKey, setGroqApiKey] = useState("")
+  // Which service turns a voice clip into text before Claude answers it.
+  const [sttProvider, setSttProvider] = useState<"sarvam" | "groq">("sarvam")
   const [currentLabel, setCurrentLabel] = useState("")
   const [status, setStatus] = useState<"idle" | "working" | "ok" | "err">("idle")
   const [errorMessage, setErrorMessage] = useState("")
@@ -126,6 +129,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     try {
       const config = await window.electronAPI.getCurrentLlmConfig()
       setSelectedProvider(config.provider)
+      if (config.stt) setSttProvider(config.stt)
       setCurrentLabel(`${config.provider} · ${config.model}`)
       if (config.isOllama) {
         setSelectedOllamaModel(config.model)
@@ -210,7 +214,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           apiKey: bedrockApiKey || undefined,
           region: bedrockRegion || undefined,
           modelId: bedrockModelId || undefined,
-          sarvamApiKey: sarvamApiKey || undefined
+          sarvamApiKey: sarvamApiKey || undefined,
+          groqApiKey: groqApiKey || undefined,
+          sttProvider
         })
       } else {
         result = await window.electronAPI.switchToGemini(
@@ -413,9 +419,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 {(
                   [
                     ["Bedrock API key", "password", "Optional if already set", bedrockApiKey, setBedrockApiKey],
-                    ["Region", "text", "us-east-1", bedrockRegion, setBedrockRegion],
+                    ["Region", "text", "ap-south-1", bedrockRegion, setBedrockRegion],
                     ["Claude model ID", "text", "Inference profile ID from the console", bedrockModelId, setBedrockModelId],
-                    ["Sarvam key (voice)", "password", "Optional if already set", sarvamApiKey, setSarvamApiKey]
+                    ["Sarvam key (voice)", "password", "Optional if already set", sarvamApiKey, setSarvamApiKey],
+                    ["Groq key (voice)", "password", "Optional if already set", groqApiKey, setGroqApiKey]
                   ] as const
                 ).map(([label, type, placeholder, value, setValue]) => (
                   <div key={label} className="space-y-1.5">
@@ -431,6 +438,23 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     />
                   </div>
                 ))}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] uppercase tracking-wide glass-muted">
+                    Voice transcription
+                  </label>
+                  <select
+                    value={sttProvider}
+                    onChange={(e) => setSttProvider(e.target.value as "sarvam" | "groq")}
+                    className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
+                  >
+                    <option value="sarvam" className="bg-neutral-900">
+                      Sarvam · best for Indian English
+                    </option>
+                    <option value="groq" className="bg-neutral-900">
+                      Groq Whisper · no 30 s limit
+                    </option>
+                  </select>
+                </div>
               </div>
             ) : selectedProvider === "gemini" ? (
               <div className="space-y-1.5">

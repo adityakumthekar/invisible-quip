@@ -26,11 +26,18 @@ import {
 import {
   BedrockClient,
   BedrockConfig,
+  bedrockApiKeyFromEnv,
   ConverseRequest,
   imageBlock,
   withUserTurn
 } from "./bedrockClient"
-import { AudioChunk, SarvamStt, labelledTranscript } from "./sarvamStt"
+import {
+  AudioChunk,
+  SpeechToText,
+  SttProvider,
+  createSpeechToText,
+  labelledTranscript
+} from "./speechToText"
 
 /**
  * How a model expresses target coordinates. Gemini is trained on a normalized
@@ -258,9 +265,16 @@ export class LLMHelper {
   private provider: LLMProvider = "gemini"
   private bedrock: BedrockClient | null = null
   // Voice on Bedrock only — Converse can't take audio, Gemini hears it directly.
-  private sarvam: SarvamStt | null = process.env.SARVAM_API_KEY
-    ? new SarvamStt(process.env.SARVAM_API_KEY)
-    : null
+  // Both keys are kept so Settings can change backend without re-entering one.
+  private sttKeys = {
+    sarvam: process.env.SARVAM_API_KEY,
+    groq: process.env.GROQ_API_KEY
+  }
+  private stt: SpeechToText | null = createSpeechToText({
+    provider: process.env.STT_PROVIDER,
+    sarvamApiKey: this.sttKeys.sarvam,
+    groqApiKey: this.sttKeys.groq
+  })
   private ollamaModel: string = "llama3.2"
   private ollamaUrl: string = "http://localhost:11434"
   // gemini-2.0-flash was shut down June 1, 2026. 3.6 Flash (GA 2026-07-21) is
@@ -743,7 +757,7 @@ ANSWER: your answer`
 
     if (this.provider === "bedrock") {
       const hasSystem = Boolean(chunks?.system ?? system)
-      const transcript = await this.transcribeWithSarvam(
+      const transcript = await this.transcribe(
         chunks?.mic ?? [{ data, mimeType }],
         chunks?.system ?? (system ? [system] : undefined)
       )
@@ -797,7 +811,7 @@ ANSWER: your answer`
     system: AudioChunk[] | undefined,
     history: ChatTurn[]
   ) {
-    const transcript = await this.transcribeWithSarvam(mic, system)
+    const transcript = await this.transcribe(mic, system)
     if (!transcript) {
       // Nothing to answer, so don't pay for a model call to say so.
       return {
@@ -832,18 +846,19 @@ ANSWER: your answer`
   }
 
   /** Both clips at once: the slower of the two is the whole wait, not the sum. */
-  private async transcribeWithSarvam(
+  private async transcribe(
     mic: AudioChunk[],
     system: AudioChunk[] | undefined
   ): Promise<string> {
-    if (!this.sarvam) {
+    const stt = this.stt
+    if (!stt) {
       throw new Error(
-        "Voice on Bedrock needs Sarvam speech-to-text. Set SARVAM_API_KEY or add the key in Settings → Provider."
+        "Voice on Bedrock needs speech-to-text. Set SARVAM_API_KEY or GROQ_API_KEY, or add a key in Settings → Provider."
       )
     }
     const [you, them] = await Promise.all([
-      this.sarvam.transcribe(mic),
-      system ? this.sarvam.transcribe(system) : Promise.resolve([])
+      stt.transcribe(mic),
+      system ? stt.transcribe(system) : Promise.resolve([])
     ])
     return labelledTranscript(you, them)
   }
@@ -1466,6 +1481,11 @@ ANSWER: your answer`
     return this.provider;
   }
 
+  /** Which service transcribes voice on Bedrock, or null if none has a key. */
+  public getCurrentStt(): SttProvider | null {
+    return this.stt?.provider ?? null;
+  }
+
   public getCurrentModel(): string {
     if (this.provider === "ollama") return this.ollamaModel;
     if (this.provider === "bedrock") return this.bedrock?.config.modelId ?? "";
@@ -1510,23 +1530,30 @@ ANSWER: your answer`
     region?: string
     modelId?: string
     sarvamApiKey?: string
+    groqApiKey?: string
+    sttProvider?: SttProvider
   } = {}): Promise<void> {
     const current = this.bedrock?.config
     const config: BedrockConfig = {
-      apiKey:
-        opts.apiKey || current?.apiKey || process.env.AWS_BEARER_TOKEN_BEDROCK || "",
+      apiKey: opts.apiKey || current?.apiKey || bedrockApiKeyFromEnv() || "",
       region: opts.region || current?.region || process.env.AWS_REGION || "us-east-1",
       modelId: opts.modelId || current?.modelId || process.env.BEDROCK_MODEL_ID || ""
     }
     if (!config.apiKey) {
-      throw new Error("No Bedrock API key provided (AWS_BEARER_TOKEN_BEDROCK)")
+      throw new Error("No Bedrock API key provided (AWS_BEARER_TOKEN_BEDROCK or BEDROCK_TOKEN)")
     }
     if (!config.modelId) {
       throw new Error("No Bedrock model ID provided (BEDROCK_MODEL_ID)")
     }
     this.bedrock = new BedrockClient(config)
-    if (opts.sarvamApiKey) {
-      this.sarvam = new SarvamStt(opts.sarvamApiKey)
+    if (opts.sarvamApiKey) this.sttKeys.sarvam = opts.sarvamApiKey
+    if (opts.groqApiKey) this.sttKeys.groq = opts.groqApiKey
+    if (opts.sarvamApiKey || opts.groqApiKey || opts.sttProvider) {
+      this.stt = createSpeechToText({
+        provider: opts.sttProvider ?? this.stt?.provider,
+        sarvamApiKey: this.sttKeys.sarvam,
+        groqApiKey: this.sttKeys.groq
+      })
     }
     this.provider = "bedrock";
     console.log(`[LLMHelper] Switched to Bedrock (${config.modelId}, ${config.region})`);

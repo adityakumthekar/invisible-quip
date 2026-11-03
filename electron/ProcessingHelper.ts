@@ -2,7 +2,8 @@
 
 import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
-import { AudioChunk } from "./sarvamStt"
+import { AudioChunk } from "./speechToText"
+import { bedrockApiKeyFromEnv } from "./bedrockClient"
 import { abortAllChatStreams } from "./chatStreams"
 import { ChatTurn } from "./chatHistory"
 import dotenv from "dotenv"
@@ -27,10 +28,10 @@ export class ProcessingHelper {
     const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434"
     
     if (process.env.USE_BEDROCK === "true") {
-      const apiKey = process.env.AWS_BEARER_TOKEN_BEDROCK
+      const apiKey = bedrockApiKeyFromEnv()
       const modelId = process.env.BEDROCK_MODEL_ID
       if (!apiKey || !modelId) {
-        throw new Error("USE_BEDROCK=true needs AWS_BEARER_TOKEN_BEDROCK (a Bedrock API key) and BEDROCK_MODEL_ID in the environment")
+        throw new Error("USE_BEDROCK=true needs a Bedrock API key (AWS_BEARER_TOKEN_BEDROCK or BEDROCK_TOKEN) and BEDROCK_MODEL_ID in the environment")
       }
       console.log("[ProcessingHelper] Initializing with Claude on Bedrock")
       this.llmHelper = new LLMHelper(

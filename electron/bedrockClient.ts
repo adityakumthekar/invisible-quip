@@ -15,6 +15,15 @@ export interface BedrockConfig {
   modelId: string
 }
 
+/**
+ * The key from the environment. AWS's own tooling reads
+ * AWS_BEARER_TOKEN_BEDROCK; BEDROCK_TOKEN is accepted too, because that is the
+ * name people reach for first.
+ */
+export function bedrockApiKeyFromEnv(): string | undefined {
+  return process.env.AWS_BEARER_TOKEN_BEDROCK || process.env.BEDROCK_TOKEN || undefined
+}
+
 export interface ConverseRequest {
   system?: string
   messages: Message[]

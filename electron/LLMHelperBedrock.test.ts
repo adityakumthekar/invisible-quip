@@ -23,8 +23,8 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => ({
 
 import { LLMHelper } from "./LLMHelper"
 import { toConverseHistory } from "./chatHistory"
-import { withUserTurn } from "./bedrockClient"
-import { labelledTranscript } from "./sarvamStt"
+import { bedrockApiKeyFromEnv, withUserTurn } from "./bedrockClient"
+import { createSpeechToText, labelledTranscript } from "./speechToText"
 
 const BEDROCK = { apiKey: "bedrock-key", region: "us-east-1", modelId: "claude-test" }
 
@@ -329,11 +329,49 @@ describe("Bedrock voice via Sarvam", () => {
     expect(result.turns).toEqual([])
   })
 
-  it("names the missing key instead of failing obscurely", async () => {
+  it("names the missing keys instead of failing obscurely", async () => {
     vi.stubEnv("SARVAM_API_KEY", "")
+    vi.stubEnv("GROQ_API_KEY", "")
     await expect(
       helper().analyzeAudioFromBase64(b64("hi"), "audio/webm")
-    ).rejects.toThrow(/SARVAM_API_KEY/)
+    ).rejects.toThrow(/SARVAM_API_KEY or GROQ_API_KEY/)
+  })
+
+  it("uses Groq Whisper when STT_PROVIDER asks for it", async () => {
+    vi.stubEnv("SARVAM_API_KEY", "sarvam-key")
+    vi.stubEnv("GROQ_API_KEY", "groq-key")
+    vi.stubEnv("STT_PROVIDER", "groq")
+    const fetchMock = vi.fn(async (_url: string, init: any) => {
+      const file = init.body.get("file") as Blob
+      return new Response(JSON.stringify({ text: await file.text() }))
+    })
+    vi.stubGlobal("fetch", fetchMock)
+    send.mockResolvedValue(reply("answer"))
+
+    const llm = helper()
+    const result = await llm.analyzeAudioFromBase64(b64("two sum?"), "audio/webm")
+
+    expect(llm.getCurrentStt()).toBe("groq")
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.groq.com/openai/v1/audio/transcriptions"
+    )
+    const init = fetchMock.mock.calls[0][1]
+    expect(init.headers).toEqual({ Authorization: "Bearer groq-key" })
+    expect(init.body.get("model")).toBe("whisper-large-v3-turbo")
+    expect((init.body.get("file") as File).name).toBe("clip.webm")
+    expect(result.transcript).toBe("YOU: two sum?")
+  })
+
+  it("switches transcription backend from Settings without re-entering keys", async () => {
+    vi.stubEnv("SARVAM_API_KEY", "sarvam-key")
+    vi.stubEnv("GROQ_API_KEY", "groq-key")
+    const llm = helper()
+    expect(llm.getCurrentStt()).toBe("sarvam")
+
+    await llm.switchToBedrock({ sttProvider: "groq" })
+    expect(llm.getCurrentStt()).toBe("groq")
+    await llm.switchToBedrock({ sttProvider: "sarvam" })
+    expect(llm.getCurrentStt()).toBe("sarvam")
   })
 })
 
@@ -410,5 +448,25 @@ describe("Bedrock temperature fallback", () => {
     send.mockRejectedValueOnce(new Error("AccessDeniedException: no access to model"))
     await expect(helper().chatWithGemini("q")).rejects.toThrow(/AccessDenied/)
     expect(send).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("createSpeechToText", () => {
+  it("honours the requested backend only when its key exists", () => {
+    expect(createSpeechToText({ provider: "groq", sarvamApiKey: "s", groqApiKey: "g" })?.provider).toBe("groq")
+    expect(createSpeechToText({ provider: "groq", sarvamApiKey: "s" })?.provider).toBe("sarvam")
+    expect(createSpeechToText({ sarvamApiKey: "s", groqApiKey: "g" })?.provider).toBe("sarvam")
+    expect(createSpeechToText({ groqApiKey: "g" })?.provider).toBe("groq")
+    expect(createSpeechToText({})).toBeNull()
+  })
+})
+
+describe("bedrockApiKeyFromEnv", () => {
+  it("prefers AWS's own name and accepts BEDROCK_TOKEN", () => {
+    vi.stubEnv("AWS_BEARER_TOKEN_BEDROCK", "")
+    vi.stubEnv("BEDROCK_TOKEN", "short-name")
+    expect(bedrockApiKeyFromEnv()).toBe("short-name")
+    vi.stubEnv("AWS_BEARER_TOKEN_BEDROCK", "aws-name")
+    expect(bedrockApiKeyFromEnv()).toBe("aws-name")
   })
 })

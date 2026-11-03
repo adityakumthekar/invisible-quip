@@ -162,11 +162,11 @@ interface ElectronAPI {
   quitApp: () => Promise<void>
   
   // LLM Model Management
-  getCurrentLlmConfig: () => Promise<{ provider: "ollama" | "gemini" | "bedrock"; model: string; isOllama: boolean }>
+  getCurrentLlmConfig: () => Promise<{ provider: "ollama" | "gemini" | "bedrock"; model: string; isOllama: boolean; stt: "sarvam" | "groq" | null }>
   getAvailableOllamaModels: () => Promise<string[]>
   switchToOllama: (model?: string, url?: string) => Promise<{ success: boolean; error?: string }>
   switchToGemini: (apiKey?: string) => Promise<{ success: boolean; error?: string }>
-  switchToBedrock: (opts?: { apiKey?: string; region?: string; modelId?: string; sarvamApiKey?: string }) => Promise<{ success: boolean; error?: string }>
+  switchToBedrock: (opts?: { apiKey?: string; region?: string; modelId?: string; sarvamApiKey?: string; groqApiKey?: string; sttProvider?: "sarvam" | "groq" }) => Promise<{ success: boolean; error?: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   
   onChatStreamChunk: (
@@ -456,7 +456,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   switchToOllama: (model?: string, url?: string) => ipcRenderer.invoke("switch-to-ollama", model, url),
   switchToGemini: (apiKey?: string) => ipcRenderer.invoke("switch-to-gemini", apiKey),
-  switchToBedrock: (opts?: { apiKey?: string; region?: string; modelId?: string; sarvamApiKey?: string }) => ipcRenderer.invoke("switch-to-bedrock", opts),
+  switchToBedrock: (opts?: { apiKey?: string; region?: string; modelId?: string; sarvamApiKey?: string; groqApiKey?: string; sttProvider?: "sarvam" | "groq" }) => ipcRenderer.invoke("switch-to-bedrock", opts),
   testLlmConnection: () => ipcRenderer.invoke("test-llm-connection"),
   
   onChatStreamChunk: (

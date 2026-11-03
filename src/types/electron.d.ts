@@ -161,6 +161,7 @@ export interface ElectronAPI {
     provider: "ollama" | "gemini" | "bedrock"
     model: string
     isOllama: boolean
+    stt: "sarvam" | "groq" | null
   }>
   getAvailableOllamaModels: () => Promise<string[]>
   getOllamaModelCapabilities: (model: string) => Promise<{ vision: boolean }>
@@ -182,6 +183,8 @@ export interface ElectronAPI {
     region?: string
     modelId?: string
     sarvamApiKey?: string
+    groqApiKey?: string
+    sttProvider?: "sarvam" | "groq"
   }) => Promise<{ success: boolean; error?: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   onChatStreamChunk: (
