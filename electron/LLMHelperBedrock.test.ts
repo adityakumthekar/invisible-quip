@@ -387,3 +387,28 @@ describe("Bedrock voice streaming", () => {
     expect(events).toEqual(["T:", "A:No speech was picked up in that clip."])
   })
 })
+
+describe("Bedrock temperature fallback", () => {
+  it("drops temperature when the model refuses it, and keeps it dropped", async () => {
+    send
+      .mockRejectedValueOnce(
+        new Error("The model returned the following errors: `temperature` is deprecated for this model.")
+      )
+      .mockResolvedValueOnce(streamOf(["ok"]))
+      .mockResolvedValueOnce(reply("again"))
+    const llm = helper()
+
+    await expect(llm.chatWithGeminiStream("q", () => {})).resolves.toBe("ok")
+    await expect(llm.chatWithGemini("q2")).resolves.toBe("again")
+
+    expect(sent(0).inferenceConfig).toEqual({ temperature: 0.25, maxTokens: 2048 })
+    expect(sent(1).inferenceConfig).toEqual({ maxTokens: 2048 })
+    expect(sent(2).inferenceConfig).toEqual({ maxTokens: 2048 })
+  })
+
+  it("does not retry other errors", async () => {
+    send.mockRejectedValueOnce(new Error("AccessDeniedException: no access to model"))
+    await expect(helper().chatWithGemini("q")).rejects.toThrow(/AccessDenied/)
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+})

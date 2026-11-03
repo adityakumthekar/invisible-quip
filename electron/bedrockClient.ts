@@ -28,6 +28,13 @@ export interface ConverseRequest {
  */
 export class BedrockClient {
   private client: BedrockRuntimeClient
+  /**
+   * Newer Claude models refuse `temperature` outright ("deprecated for this
+   * model") rather than ignoring it. Older ones still honour it, and the
+   * teaching step wants 0, so it is sent until the model says no — then
+   * dropped for the life of this client, which is one model.
+   */
+  private sendsTemperature = true
 
   constructor(readonly config: BedrockConfig) {
     this.client = new BedrockRuntimeClient({
@@ -45,17 +52,49 @@ export class BedrockClient {
       messages: req.messages,
       ...(req.system ? { system: [{ text: req.system }] } : {}),
       inferenceConfig: {
-        temperature: req.temperature,
+        ...(this.sendsTemperature ? { temperature: req.temperature } : {}),
         maxTokens: req.maxTokens
       }
+    }
+  }
+
+  private static rejectsTemperature(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return (
+      /temperature/i.test(message) &&
+      /deprecated|not supported|unsupported|not allowed|invalid/i.test(message)
+    )
+  }
+
+  /**
+   * Run once; if the model refuses `temperature`, drop it and run again. The
+   * refusal comes back before any output, and `canRetry` makes that explicit:
+   * a retry after text has been forwarded would duplicate it in the panel.
+   */
+  private async withTemperatureFallback<T>(
+    run: () => Promise<T>,
+    canRetry: () => boolean = () => true
+  ): Promise<T> {
+    try {
+      return await run()
+    } catch (error) {
+      if (
+        !this.sendsTemperature ||
+        !canRetry() ||
+        !BedrockClient.rejectsTemperature(error)
+      ) {
+        throw error
+      }
+      this.sendsTemperature = false
+      return run()
     }
   }
 
   async converse(
     req: ConverseRequest
   ): Promise<{ text: string; stopReason?: string }> {
-    const response = await this.client.send(
-      new ConverseCommand(this.command(req))
+    const response = await this.withTemperatureFallback(() =>
+      this.client.send(new ConverseCommand(this.command(req)))
     )
     const text = (response.output?.message?.content ?? [])
       .map((block) => block.text ?? "")
@@ -76,9 +115,12 @@ export class BedrockClient {
   ): Promise<string> {
     let text = ""
     try {
-      const response = await this.client.send(
-        new ConverseStreamCommand(this.command(req)),
-        { abortSignal: signal }
+      const response = await this.withTemperatureFallback(
+        () =>
+          this.client.send(new ConverseStreamCommand(this.command(req)), {
+            abortSignal: signal
+          }),
+        () => text === ""
       )
       for await (const event of response.stream ?? []) {
         if (signal?.aborted) break
