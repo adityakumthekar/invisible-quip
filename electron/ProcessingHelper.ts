@@ -4,6 +4,8 @@ import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
 import { AudioChunk } from "./speechToText"
 import { bedrockApiKeyFromEnv } from "./bedrockClient"
+import { loadModelRoutes, modelRoutesPath } from "./modelRoutes"
+import { app } from "electron"
 import { abortAllChatStreams } from "./chatStreams"
 import { ChatTurn } from "./chatHistory"
 import dotenv from "dotenv"
@@ -29,9 +31,11 @@ export class ProcessingHelper {
     
     if (process.env.USE_BEDROCK === "true") {
       const apiKey = bedrockApiKeyFromEnv()
-      const modelId = process.env.BEDROCK_MODEL_ID
+      // Per-task models and fallbacks; without the file every task uses BEDROCK_MODEL_ID.
+      const routes = loadModelRoutes(modelRoutesPath(app.isPackaged, process.resourcesPath))
+      const modelId = process.env.BEDROCK_MODEL_ID || routes?.tasks.chat?.[0]
       if (!apiKey || !modelId) {
-        throw new Error("USE_BEDROCK=true needs a Bedrock API key (AWS_BEARER_TOKEN_BEDROCK or BEDROCK_TOKEN) and BEDROCK_MODEL_ID in the environment")
+        throw new Error("USE_BEDROCK=true needs a Bedrock API key (AWS_BEARER_TOKEN_BEDROCK or BEDROCK_TOKEN) and BEDROCK_MODEL_ID in the environment, or a chat model in quip.models.json")
       }
       console.log("[ProcessingHelper] Initializing with Claude on Bedrock")
       this.llmHelper = new LLMHelper(
@@ -39,7 +43,8 @@ export class ProcessingHelper {
         false,
         undefined,
         undefined,
-        { apiKey, modelId, region: process.env.AWS_REGION || "us-east-1" }
+        { apiKey, modelId, region: routes?.region || process.env.AWS_REGION || "us-east-1" },
+        routes ?? undefined
       )
     } else if (useOllama) {
       console.log("[ProcessingHelper] Initializing with Ollama")

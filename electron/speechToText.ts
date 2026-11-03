@@ -1,3 +1,5 @@
+import { withFallback } from "./fallback"
+
 /**
  * Speech-to-text for the voice path when Claude on Bedrock is the provider —
  * Converse can't take audio, so the clip is transcribed first. Two backends,
@@ -133,6 +135,44 @@ export function createSpeechToText(opts: {
   if (sarvamApiKey) return new SarvamStt(sarvamApiKey)
   if (groqApiKey) return new GroqStt(groqApiKey)
   return null
+}
+
+/** Tries each backend in order. Reports the first, since that is the one asked for. */
+export class FallbackStt implements SpeechToText {
+  readonly provider: SttProvider
+
+  constructor(private backends: SpeechToText[]) {
+    this.provider = backends[0].provider
+  }
+
+  async transcribe(chunks: AudioChunk[]): Promise<string[]> {
+    const byProvider = new Map(this.backends.map((b) => [b.provider, b]))
+    return withFallback([...byProvider.keys()], (p) => byProvider.get(p as SttProvider)!.transcribe(chunks), {
+      label: "speech-to-text"
+    })
+  }
+}
+
+/**
+ * `createSpeechToText` for an ordered list (quip.models.json's `stt`): every
+ * listed backend with a key, the rest kept as fallbacks. With no usable entry
+ * it behaves exactly like `createSpeechToText` with no preference.
+ */
+export function createSpeechToTextChain(opts: {
+  order: (string | undefined)[]
+  sarvamApiKey?: string
+  groqApiKey?: string
+}): SpeechToText | null {
+  const backends: SpeechToText[] = []
+  for (const provider of opts.order) {
+    if (backends.some((b) => b.provider === provider)) continue
+    if (provider === "groq" && opts.groqApiKey) backends.push(new GroqStt(opts.groqApiKey))
+    if (provider === "sarvam" && opts.sarvamApiKey) backends.push(new SarvamStt(opts.sarvamApiKey))
+  }
+  if (backends.length === 0) {
+    return createSpeechToText({ sarvamApiKey: opts.sarvamApiKey, groqApiKey: opts.groqApiKey })
+  }
+  return backends.length === 1 ? backends[0] : new FallbackStt(backends)
 }
 
 /**

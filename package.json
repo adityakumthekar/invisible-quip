@@ -39,6 +39,10 @@
       {
         "from": ".env",
         "to": ".env"
+      },
+      {
+        "from": "quip.models.json",
+        "to": "quip.models.json"
       }
     ],
     "mac": {

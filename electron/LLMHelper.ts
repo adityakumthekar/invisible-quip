@@ -35,9 +35,11 @@ import {
   AudioChunk,
   SpeechToText,
   SttProvider,
-  createSpeechToText,
+  createSpeechToTextChain,
   labelledTranscript
 } from "./speechToText"
+import { ModelRoutes, ModelTask } from "./modelRoutes"
+import { withFallback } from "./fallback"
 
 /**
  * How a model expresses target coordinates. Gemini is trained on a normalized
@@ -270,11 +272,16 @@ export class LLMHelper {
     sarvam: process.env.SARVAM_API_KEY,
     groq: process.env.GROQ_API_KEY
   }
-  private stt: SpeechToText | null = createSpeechToText({
-    provider: process.env.STT_PROVIDER,
+  private stt: SpeechToText | null = createSpeechToTextChain({
+    order: [process.env.STT_PROVIDER],
     sarvamApiKey: this.sttKeys.sarvam,
     groqApiKey: this.sttKeys.groq
   })
+  // quip.models.json: the transcription fallbacks, and each task's models,
+  // default first. A task left out uses the primary client's model.
+  private sttOrder: SttProvider[] = []
+  private routes: Partial<Record<ModelTask, string[]>> = {}
+  private bedrockByModel = new Map<string, BedrockClient>()
   private ollamaModel: string = "llama3.2"
   private ollamaUrl: string = "http://localhost:11434"
   // gemini-2.0-flash was shut down June 1, 2026. 3.6 Flash (GA 2026-07-21) is
@@ -288,12 +295,27 @@ export class LLMHelper {
     useOllama: boolean = false,
     ollamaModel?: string,
     ollamaUrl?: string,
-    bedrock?: BedrockConfig
+    bedrock?: BedrockConfig,
+    routes?: ModelRoutes
   ) {
+    if (routes) {
+      this.routes = { ...routes.tasks }
+      if (routes.stt) {
+        this.sttOrder = routes.stt
+        this.stt = createSpeechToTextChain({
+          order: routes.stt,
+          sarvamApiKey: this.sttKeys.sarvam,
+          groqApiKey: this.sttKeys.groq
+        })
+      }
+    }
     if (bedrock) {
       this.provider = "bedrock"
       this.bedrock = new BedrockClient(bedrock)
       console.log(`[LLMHelper] Using Claude on Bedrock (${bedrock.modelId}, ${bedrock.region})`)
+      for (const [task, ids] of Object.entries(this.routes)) {
+        console.log(`[LLMHelper]   ${task}: ${ids.join(" → ")}`)
+      }
       // Kept alongside so Settings can switch back without re-entering a key.
       if (apiKey) {
         this.model = new GoogleGenerativeAI(apiKey).getGenerativeModel({ model: this.geminiModel })
@@ -766,7 +788,7 @@ ANSWER: your answer`
         onChunk(LLMHelper.NO_SPEECH_REPLY)
         return LLMHelper.NO_SPEECH_REPLY
       }
-      return this.bedrockOrThrow().converseStream(
+      return this.streamOnBedrock("voice", 
         this.buildConverseRequest({
           message: transcript,
           preamble: LLMHelper.transcriptPreamble(hasSystem),
@@ -822,7 +844,7 @@ ANSWER: your answer`
       }
     }
 
-    const { text } = await this.bedrockOrThrow().converse(
+    const { text } = await this.converseOnBedrock("voice", 
       this.buildConverseRequest({
         message: transcript,
         preamble: LLMHelper.transcriptPreamble(Boolean(system)),
@@ -1041,6 +1063,66 @@ ANSWER: your answer`
     return this.bedrock
   }
 
+  /** The models for a task, default first; the primary client's when the file doesn't list it. */
+  private modelsFor(task: ModelTask): string[] {
+    const listed = this.routes[task]
+    return listed?.length ? listed : [this.bedrockOrThrow().config.modelId]
+  }
+
+  /** One client per model, so each remembers on its own whether it refuses `temperature`. */
+  private clientFor(modelId: string): BedrockClient {
+    const primary = this.bedrockOrThrow()
+    if (modelId === primary.config.modelId) return primary
+    let client = this.bedrockByModel.get(modelId)
+    if (!client) {
+      client = new BedrockClient({ ...primary.config, modelId })
+      this.bedrockByModel.set(modelId, client)
+    }
+    return client
+  }
+
+  private onBedrock<T>(
+    task: ModelTask,
+    run: (client: BedrockClient) => Promise<T>,
+    canFallBack?: (error: unknown) => boolean
+  ): Promise<T> {
+    return withFallback(this.modelsFor(task), (id) => run(this.clientFor(id)), {
+      label: task,
+      canFallBack
+    })
+  }
+
+  private converseOnBedrock(task: ModelTask, request: ConverseRequest) {
+    return this.onBedrock(task, (client) => client.converse(request))
+  }
+
+  /**
+   * A stream may only move to the next model before its first word: after
+   * that the panel already shows text, and another model would write a
+   * different answer underneath it.
+   */
+  private streamOnBedrock(
+    task: ModelTask,
+    request: ConverseRequest,
+    onChunk: (delta: string) => void,
+    signal?: AbortSignal
+  ): Promise<string> {
+    let started = false
+    return this.onBedrock(
+      task,
+      (client) =>
+        client.converseStream(
+          request,
+          (delta) => {
+            started = true
+            onChunk(delta)
+          },
+          signal
+        ),
+      () => !started && !signal?.aborted
+    )
+  }
+
   /**
    * `buildChatRequest`'s Converse twin: same system layer, same preambles, same
    * history window. Converse has a first-class `system` field, so there is no
@@ -1069,7 +1151,7 @@ ANSWER: your answer`
 
   public async analyzeImageFile(imagePath: string) {
     if (this.provider === "bedrock") {
-      const { text } = await this.bedrockOrThrow().converse(
+      const { text } = await this.converseOnBedrock("screenshot", 
         this.buildConverseRequest({
           message: "",
           preamble: LLMHelper.IMAGE_PREAMBLE,
@@ -1101,7 +1183,7 @@ ANSWER: your answer`
     signal?: AbortSignal
   ): Promise<string> {
     if (this.provider === "bedrock") {
-      return this.bedrockOrThrow().converseStream(
+      return this.streamOnBedrock("screenshot", 
         this.buildConverseRequest({
           message: "",
           preamble: LLMHelper.IMAGE_PREAMBLE,
@@ -1142,7 +1224,7 @@ ANSWER: your answer`
         return this.callOllama(message, { system: this.ollamaSystem() })
       }
       if (this.provider === "bedrock") {
-        const { text } = await this.bedrockOrThrow().converse(
+        const { text } = await this.converseOnBedrock("chat", 
           this.buildConverseRequest({ message })
         )
         return text
@@ -1177,7 +1259,7 @@ ANSWER: your answer`
       )
     }
     if (this.provider === "bedrock") {
-      return this.bedrockOrThrow().converseStream(
+      return this.streamOnBedrock("chat", 
         this.buildConverseRequest({ message, history, persona }),
         onChunk,
         signal
@@ -1205,7 +1287,7 @@ ANSWER: your answer`
         return this.callOllama(message, { system: this.ollamaSystem() })
       }
       if (this.provider === "bedrock") {
-        const { text } = await this.bedrockOrThrow().converse(
+        const { text } = await this.converseOnBedrock("screenshot", 
           this.buildConverseRequest({
             message,
             preamble: LLMHelper.SCREEN_PREAMBLE,
@@ -1248,7 +1330,7 @@ ANSWER: your answer`
       )
     }
     if (this.provider === "bedrock") {
-      return this.bedrockOrThrow().converseStream(
+      return this.streamOnBedrock("screenshot", 
         this.buildConverseRequest({
           message,
           preamble: LLMHelper.SCREEN_PREAMBLE,
@@ -1389,34 +1471,38 @@ ANSWER: your answer`
       format = "jpeg"
     }
 
-    const { text, stopReason } = await this.bedrockOrThrow().converse({
-      messages: [
-        {
-          role: "user",
-          content: [
-            imageBlock(bytes, format),
-            { text: buildTeachingPrompt(goal, history, sent, "pixels") }
-          ]
-        }
-      ],
-      temperature: 0,
-      maxTokens: Number(process.env.TEACHING_MAX_OUTPUT_TOKENS) || 8192
-    })
+    // Every failure here moves to the next model, a reply that isn't usable
+    // JSON included: in testing Opus 5 sent one in three times out of ten.
+    return this.onBedrock("autopilot", async (client) => {
+      const { text, stopReason } = await client.converse({
+        messages: [
+          {
+            role: "user",
+            content: [
+              imageBlock(bytes, format),
+              { text: buildTeachingPrompt(goal, history, sent, "pixels") }
+            ]
+          }
+        ],
+        temperature: 0,
+        maxTokens: Number(process.env.TEACHING_MAX_OUTPUT_TOKENS) || 8192
+      })
 
-    if (stopReason === "max_tokens") {
-      throw new Error(
-        "Teaching response was cut off before completing (max_tokens). " +
-          "Increase TEACHING_MAX_OUTPUT_TOKENS or simplify the step and retry."
-      )
-    }
-    if (!text.trim()) {
-      throw new Error(
-        `Teaching model returned no text (stopReason: ${stopReason ?? "unknown"}).`
-      )
-    }
-    // Pixels of the image Claude saw, folded into the canonical 0–1000 space —
-    // which is resolution-free, so the downscale needs no undoing.
-    return normalizeTeachingStep(parseTeachingModelText(text), sent, "pixels")
+      if (stopReason === "max_tokens") {
+        throw new Error(
+          "Teaching response was cut off before completing (max_tokens). " +
+            "Increase TEACHING_MAX_OUTPUT_TOKENS or simplify the step and retry."
+        )
+      }
+      if (!text.trim()) {
+        throw new Error(
+          `Teaching model returned no text (stopReason: ${stopReason ?? "unknown"}).`
+        )
+      }
+      // Pixels of the image Claude saw, folded into the canonical 0–1000 space —
+      // which is resolution-free, so the downscale needs no undoing.
+      return normalizeTeachingStep(parseTeachingModelText(text), sent, "pixels")
+    })
   }
 
   private async generateTeachingStepWithOllama(
@@ -1488,7 +1574,7 @@ ANSWER: your answer`
 
   public getCurrentModel(): string {
     if (this.provider === "ollama") return this.ollamaModel;
-    if (this.provider === "bedrock") return this.bedrock?.config.modelId ?? "";
+    if (this.provider === "bedrock") return this.bedrock ? this.modelsFor("chat")[0] : "";
     return this.geminiModel;
   }
 
@@ -1534,6 +1620,7 @@ ANSWER: your answer`
     sttProvider?: SttProvider
   } = {}): Promise<void> {
     const current = this.bedrock?.config
+    const shownModel = this.bedrock ? this.getCurrentModel() : undefined
     const config: BedrockConfig = {
       apiKey: opts.apiKey || current?.apiKey || bedrockApiKeyFromEnv() || "",
       region: opts.region || current?.region || process.env.AWS_REGION || "us-east-1",
@@ -1546,11 +1633,21 @@ ANSWER: your answer`
       throw new Error("No Bedrock model ID provided (BEDROCK_MODEL_ID)")
     }
     this.bedrock = new BedrockClient(config)
+    // Built with the old key or region.
+    this.bedrockByModel.clear()
+    // Settings sends back the model it shows even when only a key changed, so
+    // only a different one counts as a choice. It becomes every task's
+    // default; the file's other models stay behind it as fallbacks.
+    if (opts.modelId && opts.modelId !== shownModel) {
+      for (const task of Object.keys(this.routes) as ModelTask[]) {
+        this.routes[task] = [opts.modelId, ...this.routes[task]!.filter((id) => id !== opts.modelId)]
+      }
+    }
     if (opts.sarvamApiKey) this.sttKeys.sarvam = opts.sarvamApiKey
     if (opts.groqApiKey) this.sttKeys.groq = opts.groqApiKey
     if (opts.sarvamApiKey || opts.groqApiKey || opts.sttProvider) {
-      this.stt = createSpeechToText({
-        provider: opts.sttProvider ?? this.stt?.provider,
+      this.stt = createSpeechToTextChain({
+        order: [opts.sttProvider ?? this.stt?.provider, ...this.sttOrder],
         sarvamApiKey: this.sttKeys.sarvam,
         groqApiKey: this.sttKeys.groq
       })

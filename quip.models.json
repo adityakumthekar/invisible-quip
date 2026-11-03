@@ -1,0 +1,11 @@
+{
+  "_about": "Which Bedrock model answers each kind of request when USE_BEDROCK=true. In each list the first ID is the default and the rest are fallbacks, tried in order when a model fails before any of its answer has appeared (for autopilot, also when its reply isn't usable JSON). A task left out uses BEDROCK_MODEL_ID. in.* profiles keep requests in India; global.* ones may be served from any region. region overrides AWS_REGION and stt overrides STT_PROVIDER. Restart Quip after editing.",
+  "region": "ap-south-1",
+  "tasks": {
+    "voice": ["in.anthropic.claude-sonnet-5", "in.anthropic.claude-haiku-4-5-20251001-v1:0"],
+    "chat": ["in.anthropic.claude-sonnet-5", "in.anthropic.claude-haiku-4-5-20251001-v1:0"],
+    "screenshot": ["global.anthropic.claude-opus-5-5", "in.anthropic.claude-opus-5", "in.anthropic.claude-sonnet-5"],
+    "autopilot": ["in.anthropic.claude-sonnet-5", "in.anthropic.claude-haiku-4-5-20251001-v1:0", "global.anthropic.claude-sonnet-5-5"]
+  },
+  "stt": ["groq", "sarvam"]
+}

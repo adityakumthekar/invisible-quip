@@ -451,6 +451,156 @@ describe("Bedrock temperature fallback", () => {
   })
 })
 
+describe("Bedrock model routes", () => {
+  const ROUTES = {
+    tasks: {
+      chat: ["chat-a", "chat-b"],
+      screenshot: ["vision-a", "vision-b"],
+      autopilot: ["click-a", "click-b"]
+    }
+  }
+  const routed = (routes: any = ROUTES) =>
+    new LLMHelper(undefined, false, undefined, undefined, BEDROCK, routes)
+  const png = () =>
+    sharp({ create: { width: 64, height: 64, channels: 3, background: "#245" } }).png().toBuffer()
+
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("sends each task to its own model, and the env model to unlisted ones", async () => {
+    vi.stubEnv("SARVAM_API_KEY", "sarvam-key")
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ transcript: "two sum?" }))))
+    send.mockImplementation(async (command: any) =>
+      command.kind === "stream" ? streamOf(["ok"]) : reply("ok")
+    )
+    const llm = routed()
+
+    await llm.chatWithGeminiStream("q", () => {})
+    await llm.chatWithImageStream("what is this?", [await png()], () => {})
+    await llm.chatWithImage("and this?", [await png()])
+    await llm.analyzeAudioStream("aGk=", "audio/webm", () => {}, () => {})
+
+    expect([0, 1, 2, 3].map((n) => sent(n).modelId)).toEqual([
+      "chat-a",
+      "vision-a",
+      "vision-a",
+      "claude-test"
+    ])
+    expect(llm.getCurrentModel()).toBe("chat-a")
+  })
+
+  it("moves to the next model when one fails before any text", async () => {
+    send
+      .mockRejectedValueOnce(new Error("ThrottlingException: Too many requests"))
+      .mockResolvedValueOnce(streamOf(["ok"]))
+    const chunks: string[] = []
+
+    await expect(routed().chatWithGeminiStream("q", (d) => chunks.push(d))).resolves.toBe("ok")
+
+    expect(sent(0).modelId).toBe("chat-a")
+    expect(sent(1).modelId).toBe("chat-b")
+    expect(chunks).toEqual(["ok"])
+  })
+
+  it("never switches model once the answer has started", async () => {
+    send.mockResolvedValueOnce({
+      stream: (async function* () {
+        yield { contentBlockDelta: { delta: { text: "half an " } } }
+        throw new Error("ModelStreamErrorException: connection reset")
+      })()
+    })
+    const chunks: string[] = []
+
+    await expect(
+      routed().chatWithImageStream("q", [await png()], (d) => chunks.push(d))
+    ).rejects.toThrow(/connection reset/)
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(chunks).toEqual(["half an "])
+  })
+
+  it("throws the last model's error when every model fails", async () => {
+    send
+      .mockRejectedValueOnce(new Error("AccessDeniedException: chat-a"))
+      .mockRejectedValueOnce(new Error("AccessDeniedException: chat-b"))
+
+    await expect(routed().chatWithGemini("q")).rejects.toThrow("AccessDeniedException: chat-b")
+    expect(send).toHaveBeenCalledTimes(2)
+  })
+
+  it("moves autopilot on when a reply isn't JSON Quip can use", async () => {
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "quip-routes-"))
+    try {
+      const file = path.join(dir, "shot.png")
+      await fs.promises.writeFile(file, await png())
+      send.mockResolvedValueOnce(reply("Sure! I'll click Continue for you.")).mockResolvedValueOnce(
+        reply(
+          JSON.stringify({
+            state: "step",
+            instruction: "Click Continue",
+            action: "click",
+            risk: "safe",
+            target: { x: 20, y: 20, width: 10, height: 10 }
+          })
+        )
+      )
+
+      const step = await routed().generateTeachingStep("goal", [], file, { width: 64, height: 64 })
+
+      expect(step.state).toBe("step")
+      expect(sent(0).modelId).toBe("click-a")
+      expect(sent(1).modelId).toBe("click-b")
+    } finally {
+      await fs.promises.rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("makes a model picked in Settings every task's default, keeping the fallbacks", async () => {
+    send.mockImplementation(async () => streamOf(["ok"]))
+    const llm = routed()
+
+    // Saving Settings sends the model it shows back; that must not reroute anything.
+    await llm.switchToBedrock({ modelId: "chat-a" })
+    await llm.chatWithImageStream("q", [await png()], () => {})
+    expect(sent(0).modelId).toBe("vision-a")
+
+    await llm.switchToBedrock({ modelId: "picked" })
+    expect(llm.getCurrentModel()).toBe("picked")
+    await llm.chatWithImageStream("q", [await png()], () => {})
+    expect(sent(1).modelId).toBe("picked")
+
+    send.mockRejectedValueOnce(new Error("ThrottlingException"))
+    await llm.chatWithImageStream("q", [await png()], () => {})
+    expect(sent(3).modelId).toBe("vision-a")
+  })
+
+  it("falls back to the next transcription service", async () => {
+    vi.stubEnv("SARVAM_API_KEY", "sarvam-key")
+    vi.stubEnv("GROQ_API_KEY", "groq-key")
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes("groq")
+        ? new Response(JSON.stringify({ error: { message: "rate limited" } }), { status: 429 })
+        : new Response(JSON.stringify({ transcript: "two sum?" }))
+    )
+    vi.stubGlobal("fetch", fetchMock)
+    send.mockResolvedValue(reply("answer"))
+
+    const llm = routed({ ...ROUTES, stt: ["groq", "sarvam"] })
+    const result = await llm.analyzeAudioFromBase64("aGk=", "audio/webm")
+
+    expect(llm.getCurrentStt()).toBe("groq")
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+      "https://api.groq.com/openai/v1/audio/transcriptions",
+      "https://api.sarvam.ai/speech-to-text"
+    ])
+    expect(result.transcript).toBe("YOU: two sum?")
+  })
+})
+
 describe("createSpeechToText", () => {
   it("honours the requested backend only when its key exists", () => {
     expect(createSpeechToText({ provider: "groq", sarvamApiKey: "s", groqApiKey: "g" })?.provider).toBe("groq")
