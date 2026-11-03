@@ -95,7 +95,7 @@ interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
-  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[]) => Promise<{ transcript: string; text: string; timestamp: number }>
+  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[], system?: { data: string; mimeType: string }, chunks?: { mic: { data: string; mimeType: string }[]; system?: { data: string; mimeType: string }[] }) => Promise<{ transcript: string; text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>
@@ -162,10 +162,11 @@ interface ElectronAPI {
   quitApp: () => Promise<void>
   
   // LLM Model Management
-  getCurrentLlmConfig: () => Promise<{ provider: "ollama" | "gemini"; model: string; isOllama: boolean }>
+  getCurrentLlmConfig: () => Promise<{ provider: "ollama" | "gemini" | "bedrock"; model: string; isOllama: boolean }>
   getAvailableOllamaModels: () => Promise<string[]>
   switchToOllama: (model?: string, url?: string) => Promise<{ success: boolean; error?: string }>
   switchToGemini: (apiKey?: string) => Promise<{ success: boolean; error?: string }>
+  switchToBedrock: (opts?: { apiKey?: string; region?: string; modelId?: string; sarvamApiKey?: string }) => Promise<{ success: boolean; error?: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   
   onChatStreamChunk: (
@@ -351,7 +352,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   moveWindowRight: () => ipcRenderer.invoke("move-window-right"),
   moveWindowUp: () => ipcRenderer.invoke("move-window-up"),
   moveWindowDown: () => ipcRenderer.invoke("move-window-down"),
-  analyzeAudioFromBase64: (data: string, mimeType: string, history: { role: "user" | "gemini"; text: string }[] = [], system?: { data: string; mimeType: string }) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType, history, system),
+  analyzeAudioFromBase64: (data: string, mimeType: string, history: { role: "user" | "gemini"; text: string }[] = [], system?: { data: string; mimeType: string }, chunks?: { mic: { data: string; mimeType: string }[]; system?: { data: string; mimeType: string }[] }) => ipcRenderer.invoke("analyze-audio-base64", data, mimeType, history, system, chunks),
   analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
   teachStart: (goal: string) => ipcRenderer.invoke("teach-start", goal),
   teachNext: () => ipcRenderer.invoke("teach-next"),
@@ -448,6 +449,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   switchToOllama: (model?: string, url?: string) => ipcRenderer.invoke("switch-to-ollama", model, url),
   switchToGemini: (apiKey?: string) => ipcRenderer.invoke("switch-to-gemini", apiKey),
+  switchToBedrock: (opts?: { apiKey?: string; region?: string; modelId?: string; sarvamApiKey?: string }) => ipcRenderer.invoke("switch-to-bedrock", opts),
   testLlmConnection: () => ipcRenderer.invoke("test-llm-connection"),
   
   onChatStreamChunk: (

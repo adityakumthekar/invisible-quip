@@ -838,9 +838,9 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   // IPC handler for analyzing audio from base64 data
-  ipcMain.handle("analyze-audio-base64", async (event, data: string, mimeType: string, history: ChatTurn[] = [], system?: { data: string; mimeType: string }) => {
+  ipcMain.handle("analyze-audio-base64", async (event, data: string, mimeType: string, history: ChatTurn[] = [], system?: { data: string; mimeType: string }, chunks?: { mic: { data: string; mimeType: string }[]; system?: { data: string; mimeType: string }[] }) => {
     try {
-      const result = await appState.processingHelper.processAudioBase64(data, mimeType, history, system)
+      const result = await appState.processingHelper.processAudioBase64(data, mimeType, history, system, chunks)
       return result
     } catch (error: any) {
       console.error("Error in analyze-audio-base64 handler:", error)
@@ -1252,6 +1252,17 @@ export function initializeIpcHandlers(appState: AppState): void {
       return { success: true };
     } catch (error: any) {
       console.error("Error switching to Gemini:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("switch-to-bedrock", async (_, opts: { apiKey?: string; region?: string; modelId?: string; sarvamApiKey?: string } = {}) => {
+    try {
+      const llmHelper = appState.processingHelper.getLLMHelper();
+      await llmHelper.switchToBedrock(opts);
+      return { success: true };
+    } catch (error: any) {
+      console.error("Error switching to Bedrock:", error);
       return { success: false, error: error.message };
     }
   });

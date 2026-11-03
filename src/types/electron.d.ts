@@ -101,7 +101,7 @@ export interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
-  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[], system?: { data: string; mimeType: string }) => Promise<{ transcript: string; turns: { speaker: "you" | "them"; text: string }[]; text: string; timestamp: number }>
+  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[], system?: { data: string; mimeType: string }, chunks?: { mic: { data: string; mimeType: string }[]; system?: { data: string; mimeType: string }[] }) => Promise<{ transcript: string; turns: { speaker: "you" | "them"; text: string }[]; text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>
@@ -158,7 +158,7 @@ export interface ElectronAPI {
 
   quitApp: () => Promise<void>
   getCurrentLlmConfig: () => Promise<{
-    provider: "ollama" | "gemini"
+    provider: "ollama" | "gemini" | "bedrock"
     model: string
     isOllama: boolean
   }>
@@ -177,6 +177,12 @@ export interface ElectronAPI {
   switchToGemini: (
     apiKey?: string
   ) => Promise<{ success: boolean; error?: string }>
+  switchToBedrock: (opts?: {
+    apiKey?: string
+    region?: string
+    modelId?: string
+    sarvamApiKey?: string
+  }) => Promise<{ success: boolean; error?: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   onChatStreamChunk: (
     callback: (data: { requestId: string; delta: string }) => void

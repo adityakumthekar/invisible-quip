@@ -40,6 +40,7 @@ import {
 import type { PrivacyGateStatus } from "../lib/privacyContract"
 import type { AutopilotConsent } from "../types/electron"
 import { evaluatePrivacyGate } from "../lib/privacyGate"
+import { STT_MAX_CHUNK_SECONDS, toWavChunks } from "../lib/wavChunks"
 
 interface QueueProps {
   setView: React.Dispatch<React.SetStateAction<"queue" | "solutions">>
@@ -159,7 +160,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [currentModel, setCurrentModel] = useState<{
-    provider: "ollama" | "gemini"
+    provider: "ollama" | "gemini" | "bedrock"
     model: string
   }>({ provider: "gemini", model: "gemini-3.5-flash" })
 
@@ -610,6 +611,25 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   }, [teachingOpen])
 
   // Both clips take the same trip to the model, so they share one reader.
+  /**
+   * Bedrock's voice path runs through Sarvam, whose real-time endpoint stops at
+   * 30 s; past that, hand main pre-cut WAV pieces. Short clips and Gemini send
+   * the webm untouched, so this costs nothing on the common path.
+   */
+  const longClipChunks = async (
+    clipSeconds: number,
+    mic: Blob,
+    system: Blob | null
+  ) => {
+    if (clipSeconds < STT_MAX_CHUNK_SECONDS - 1) return undefined
+    const { provider } = await window.electronAPI.getCurrentLlmConfig()
+    if (provider !== "bedrock") return undefined
+    return {
+      mic: await toWavChunks(mic),
+      system: system ? await toWavChunks(system) : undefined
+    }
+  }
+
   const blobToBase64 = (blob: Blob) =>
     new Promise<string>((resolve, reject) => {
       const reader = new FileReader()
@@ -718,11 +738,17 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             openPanels()
             setChatLoading(true)
             try {
+              const chunks = await longClipChunks(
+                clipSeconds,
+                blob,
+                systemPart ? systemBlob : null
+              )
               const result = await window.electronAPI.analyzeAudioFromBase64(
                 base64Data,
                 blob.type,
                 history,
-                systemPart
+                systemPart,
+                chunks
               )
               if (epoch !== chatEpochRef.current) return
               // One clip can hold several turns once system audio is on. The
@@ -912,7 +938,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }, [refetch])
 
-  const handleModelChange = (provider: "ollama" | "gemini", model: string) => {
+  const handleModelChange = (
+    provider: "ollama" | "gemini" | "bedrock",
+    model: string
+  ) => {
     setCurrentModel({ provider, model })
     // A notice from the app, not an answer — "system" renders it as a centred
     // caption instead of an assistant turn.
@@ -927,9 +956,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   }
 
   const modelLabel =
-    currentModel.provider === "ollama"
-      ? currentModel.model
-      : "Gemini 3.5 Flash"
+    currentModel.provider === "gemini"
+      ? "Gemini 3.5 Flash"
+      : currentModel.model
 
   return (
     <div

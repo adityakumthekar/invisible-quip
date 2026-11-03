@@ -12,7 +12,20 @@ import {
   TeachingStepResponse
 } from "./teaching"
 import { parseAudioAnswer, parseTranscriptTurns } from "./audioAnswer"
-import { ChatTurn, flattenHistory, toGeminiHistory } from "./chatHistory"
+import {
+  ChatTurn,
+  flattenHistory,
+  toConverseHistory,
+  toGeminiHistory
+} from "./chatHistory"
+import {
+  BedrockClient,
+  BedrockConfig,
+  ConverseRequest,
+  imageBlock,
+  withUserTurn
+} from "./bedrockClient"
+import { AudioChunk, SarvamStt, labelledTranscript } from "./sarvamStt"
 
 /**
  * How a model expresses target coordinates. Gemini is trained on a normalized
@@ -130,6 +143,8 @@ export function parseTeachingModelText(text: string): TeachingStepResponse {
   return parseTeachingResponse(parsed)
 }
 
+export type LLMProvider = "gemini" | "ollama" | "bedrock"
+
 interface OllamaResponse {
   response: string
   done: boolean
@@ -235,7 +250,12 @@ export class LLMHelper {
   // Who the user is, in their own words (Settings → Profile). Without it the
   // model has no way to pitch an answer at the right stack or seniority.
   private userProfile = ""
-  private useOllama: boolean = false
+  private provider: LLMProvider = "gemini"
+  private bedrock: BedrockClient | null = null
+  // Voice on Bedrock only — Converse can't take audio, Gemini hears it directly.
+  private sarvam: SarvamStt | null = process.env.SARVAM_API_KEY
+    ? new SarvamStt(process.env.SARVAM_API_KEY)
+    : null
   private ollamaModel: string = "llama3.2"
   private ollamaUrl: string = "http://localhost:11434"
   // gemini-2.0-flash was shut down June 1, 2026. 3.6 Flash (GA 2026-07-21) is
@@ -244,10 +264,23 @@ export class LLMHelper {
   // Override with GEMINI_MODEL.
   private geminiModel: string = process.env.GEMINI_MODEL || "gemini-3.6-flash"
 
-  constructor(apiKey?: string, useOllama: boolean = false, ollamaModel?: string, ollamaUrl?: string) {
-    this.useOllama = useOllama
-    
-    if (useOllama) {
+  constructor(
+    apiKey?: string,
+    useOllama: boolean = false,
+    ollamaModel?: string,
+    ollamaUrl?: string,
+    bedrock?: BedrockConfig
+  ) {
+    if (bedrock) {
+      this.provider = "bedrock"
+      this.bedrock = new BedrockClient(bedrock)
+      console.log(`[LLMHelper] Using Claude on Bedrock (${bedrock.modelId}, ${bedrock.region})`)
+      // Kept alongside so Settings can switch back without re-entering a key.
+      if (apiKey) {
+        this.model = new GoogleGenerativeAI(apiKey).getGenerativeModel({ model: this.geminiModel })
+      }
+    } else if (useOllama) {
+      this.provider = "ollama"
       this.ollamaUrl = ollamaUrl || "http://localhost:11434"
       this.ollamaModel = ollamaModel || "gemma:latest" // Default fallback
       console.log(`[LLMHelper] Using Ollama with model: ${this.ollamaModel}`)
@@ -259,7 +292,7 @@ export class LLMHelper {
       this.model = genAI.getGenerativeModel({ model: this.geminiModel })
       console.log(`[LLMHelper] Using Google Gemini (${this.geminiModel})`)
     } else {
-      throw new Error("Either provide Gemini API key or enable Ollama mode")
+      throw new Error("Either provide a Gemini API key, a Bedrock config, or enable Ollama mode")
     }
   }
 
@@ -284,7 +317,18 @@ export class LLMHelper {
    * bandwidth without giving the model more to look at.
    */
   private async toChatImagePart(image: string | Buffer) {
-    const jpeg = await sharp(image)
+    const jpeg = await this.toChatJpeg(image)
+    return {
+      inlineData: {
+        data: jpeg.toString("base64"),
+        mimeType: "image/jpeg"
+      }
+    }
+  }
+
+  /** The bytes behind `toChatImagePart`; Bedrock takes them raw, not base64. */
+  private async toChatJpeg(image: string | Buffer): Promise<Buffer> {
+    return sharp(image)
       .resize({
         width: LLMHelper.CHAT_IMAGE_MAX_EDGE,
         height: LLMHelper.CHAT_IMAGE_MAX_EDGE,
@@ -293,12 +337,6 @@ export class LLMHelper {
       })
       .jpeg({ quality: 80 })
       .toBuffer()
-    return {
-      inlineData: {
-        data: jpeg.toString("base64"),
-        mimeType: "image/jpeg"
-      }
-    }
   }
 
   private cleanJsonResponse(text: string): string {
@@ -612,8 +650,20 @@ export class LLMHelper {
     data: string,
     mimeType: string,
     history: ChatTurn[] = [],
-    system?: { data: string; mimeType: string }
+    system?: { data: string; mimeType: string },
+    /**
+     * Pre-split ≤29 s WAV pieces from the renderer, sent only for long clips on
+     * Bedrock — Sarvam's real-time endpoint stops at 30 s. Gemini ignores it.
+     */
+    chunks?: { mic: AudioChunk[]; system?: AudioChunk[] }
   ) {
+    if (this.provider === "bedrock") {
+      return this.analyzeAudioWithBedrock(
+        chunks?.mic ?? [{ data, mimeType }],
+        chunks?.system ?? (system ? [system] : undefined),
+        history
+      )
+    }
     try {
       const audioPart = {
         inlineData: {
@@ -660,6 +710,50 @@ ANSWER: your answer`
     } catch (error) {
       console.error("Error analyzing audio from base64:", error);
       throw error;
+    }
+  }
+
+  /**
+   * The voice path on Bedrock: Sarvam transcribes, Claude answers. Each side of
+   * the call is its own clip, so attribution comes from which clip a line was
+   * in rather than the model judging who sounded louder.
+   */
+  private async analyzeAudioWithBedrock(
+    mic: AudioChunk[],
+    system: AudioChunk[] | undefined,
+    history: ChatTurn[]
+  ) {
+    if (!this.sarvam) {
+      throw new Error(
+        "Voice on Bedrock needs Sarvam speech-to-text. Set SARVAM_API_KEY or add the key in Settings → Provider."
+      )
+    }
+    const [you, them] = await Promise.all([
+      this.sarvam.transcribe(mic),
+      system ? this.sarvam.transcribe(system) : Promise.resolve([])
+    ])
+    const transcript = labelledTranscript(you, them)
+    if (!transcript) {
+      // Nothing to answer, so don't pay for a model call to say so.
+      return {
+        transcript: "",
+        turns: [],
+        text: "No speech was picked up in that clip.",
+        timestamp: Date.now()
+      }
+    }
+
+    const preamble = system
+      ? "Below is a transcript of a live call. THEM lines are the other people on the call; YOU lines are this user. Answer the question the other party asked, not the user's own words."
+      : "Below is what the user just said out loud, most likely a question asked in the room. Answer what was asked."
+    const { text } = await this.bedrockOrThrow().converse(
+      this.buildConverseRequest({ message: transcript, preamble, history })
+    )
+    return {
+      transcript,
+      turns: parseTranscriptTurns(transcript),
+      text,
+      timestamp: Date.now()
     }
   }
 
@@ -834,7 +928,50 @@ ANSWER: your answer`
     }
   }
 
+  private bedrockOrThrow(): BedrockClient {
+    if (!this.bedrock) {
+      throw new Error("Bedrock is not configured")
+    }
+    return this.bedrock
+  }
+
+  /**
+   * `buildChatRequest`'s Converse twin: same system layer, same preambles, same
+   * history window. Converse has a first-class `system` field, so there is no
+   * legacy downgrade to carry.
+   */
+  private buildConverseRequest(opts: {
+    message: string
+    preamble?: string
+    images?: Buffer[]
+    history?: ChatTurn[]
+    persona?: string
+  }): ConverseRequest {
+    const { message, preamble, images = [], history = [], persona } = opts
+    const text = [preamble, message].filter((b) => b && b.length > 0).join("\n\n")
+    return {
+      system: `${this.personaBlock(persona)}${RESPONSE_FORMAT}`,
+      // Claude reads an image best when it comes before the question about it.
+      messages: withUserTurn(toConverseHistory(history), [
+        ...images.map((jpeg) => imageBlock(jpeg, "jpeg")),
+        ...(text ? [{ text }] : [])
+      ]),
+      temperature: LLMHelper.CHAT_GENERATION_CONFIG.temperature,
+      maxTokens: LLMHelper.CHAT_GENERATION_CONFIG.maxOutputTokens
+    }
+  }
+
   public async analyzeImageFile(imagePath: string) {
+    if (this.provider === "bedrock") {
+      const { text } = await this.bedrockOrThrow().converse(
+        this.buildConverseRequest({
+          message: "",
+          preamble: LLMHelper.IMAGE_PREAMBLE,
+          images: [await this.toChatJpeg(imagePath)]
+        })
+      )
+      return { text, timestamp: Date.now() }
+    }
     try {
       const imagePart = await this.toChatImagePart(imagePath)
       const text = await this.generateChatContent((legacy) =>
@@ -857,6 +994,17 @@ ANSWER: your answer`
     onChunk: (delta: string) => void,
     signal?: AbortSignal
   ): Promise<string> {
+    if (this.provider === "bedrock") {
+      return this.bedrockOrThrow().converseStream(
+        this.buildConverseRequest({
+          message: "",
+          preamble: LLMHelper.IMAGE_PREAMBLE,
+          images: [await this.toChatJpeg(imagePath)]
+        }),
+        onChunk,
+        signal
+      )
+    }
     const imagePart = await this.toChatImagePart(imagePath)
     return this.consumeGeminiStream(
       (legacy) =>
@@ -884,8 +1032,14 @@ ANSWER: your answer`
 
   public async chatWithGemini(message: string): Promise<string> {
     try {
-      if (this.useOllama) {
+      if (this.provider === "ollama") {
         return this.callOllama(message, { system: this.ollamaSystem() })
+      }
+      if (this.provider === "bedrock") {
+        const { text } = await this.bedrockOrThrow().converse(
+          this.buildConverseRequest({ message })
+        )
+        return text
       }
       return this.generateChatContent((legacy) =>
         this.buildChatRequest({ message, legacy })
@@ -908,12 +1062,19 @@ ANSWER: your answer`
     history: ChatTurn[] = [],
     persona?: string
   ): Promise<string> {
-    if (this.useOllama) {
+    if (this.provider === "ollama") {
       const prior = flattenHistory(history)
       return this.callOllamaStream(
         prior ? `${prior}\n\nUser: ${message}` : message,
         onChunk,
         { signal, system: this.ollamaSystem(persona) }
+      )
+    }
+    if (this.provider === "bedrock") {
+      return this.bedrockOrThrow().converseStream(
+        this.buildConverseRequest({ message, history, persona }),
+        onChunk,
+        signal
       )
     }
     return this.consumeGeminiStream(
@@ -934,8 +1095,18 @@ ANSWER: your answer`
     try {
       // ponytail: most Ollama models are text-only — fall back to a text reply.
       // The system layer still rides along; it used to be dropped entirely here.
-      if (this.useOllama) {
+      if (this.provider === "ollama") {
         return this.callOllama(message, { system: this.ollamaSystem() })
+      }
+      if (this.provider === "bedrock") {
+        const { text } = await this.bedrockOrThrow().converse(
+          this.buildConverseRequest({
+            message,
+            preamble: LLMHelper.SCREEN_PREAMBLE,
+            images: await Promise.all(images.map((i) => this.toChatJpeg(i)))
+          })
+        )
+        return text
       }
       const imageParts = await Promise.all(images.map((i) => this.toChatImagePart(i)));
       return this.generateChatContent((legacy) =>
@@ -960,7 +1131,7 @@ ANSWER: your answer`
     history: ChatTurn[] = [],
     persona?: string
   ): Promise<string> {
-    if (this.useOllama) {
+    if (this.provider === "ollama") {
       // This used to send the bare message: no persona, no profile, no output
       // contract. Ollama's /api/generate has a first-class `system` field.
       const prior = flattenHistory(history)
@@ -968,6 +1139,19 @@ ANSWER: your answer`
         prior ? `${prior}\n\nUser: ${message}` : message,
         onChunk,
         { signal, system: this.ollamaSystem(persona) }
+      )
+    }
+    if (this.provider === "bedrock") {
+      return this.bedrockOrThrow().converseStream(
+        this.buildConverseRequest({
+          message,
+          preamble: LLMHelper.SCREEN_PREAMBLE,
+          images: await Promise.all(images.map((i) => this.toChatJpeg(i))),
+          history,
+          persona
+        }),
+        onChunk,
+        signal
       )
     }
     const imageParts = await Promise.all(
@@ -996,13 +1180,16 @@ ANSWER: your answer`
     screenshotPath: string,
     imageSize: { width: number; height: number }
   ): Promise<TeachingStepResponse> {
-    if (this.useOllama) {
+    if (this.provider === "ollama") {
       return this.generateTeachingStepWithOllama(
         goal,
         history,
         screenshotPath,
         imageSize
       )
+    }
+    if (this.provider === "bedrock") {
+      return this.generateTeachingStepWithBedrock(goal, history, screenshotPath)
     }
     if (!this.model) {
       throw new Error("Gemini is not configured for teaching mode.")
@@ -1058,6 +1245,74 @@ ANSWER: your answer`
     return parseTeachingModelText(rawText)
   }
 
+  /**
+   * Claude grounds in pixels of the image it is given — but if the image is
+   * over its vision budget the API shrinks it first, and the coordinates come
+   * back in the shrunk space with nothing saying so. Sending it already inside
+   * the budget means the size we ask in is the size it answers in.
+   */
+  private static readonly BEDROCK_TEACHING_MAX_EDGE = 1568
+  private static readonly BEDROCK_TEACHING_MAX_PIXELS = 1_150_000
+  /** Bedrock's per-image cap is 3.75 MB; leave room for the request around it. */
+  private static readonly BEDROCK_IMAGE_MAX_BYTES = 3_500_000
+
+  private async generateTeachingStepWithBedrock(
+    goal: string,
+    history: string[],
+    screenshotPath: string
+  ): Promise<TeachingStepResponse> {
+    const meta = await sharp(screenshotPath).metadata()
+    const width = meta.width ?? 1
+    const height = meta.height ?? 1
+    const scale = Math.min(
+      1,
+      LLMHelper.BEDROCK_TEACHING_MAX_EDGE / Math.max(width, height),
+      Math.sqrt(LLMHelper.BEDROCK_TEACHING_MAX_PIXELS / (width * height))
+    )
+    const sent = {
+      width: Math.max(1, Math.floor(width * scale)),
+      height: Math.max(1, Math.floor(height * scale))
+    }
+    const resized = sharp(screenshotPath).resize(sent.width, sent.height)
+    // Lossless unless that won't fit: a busy, photo-heavy screen can blow the
+    // per-image cap as PNG, and a refused request is worse than JPEG artefacts.
+    let bytes = await resized.clone().png().toBuffer()
+    let format: "png" | "jpeg" = "png"
+    if (bytes.length > LLMHelper.BEDROCK_IMAGE_MAX_BYTES) {
+      bytes = await resized.clone().jpeg({ quality: 90 }).toBuffer()
+      format = "jpeg"
+    }
+
+    const { text, stopReason } = await this.bedrockOrThrow().converse({
+      messages: [
+        {
+          role: "user",
+          content: [
+            imageBlock(bytes, format),
+            { text: buildTeachingPrompt(goal, history, sent, "pixels") }
+          ]
+        }
+      ],
+      temperature: 0,
+      maxTokens: Number(process.env.TEACHING_MAX_OUTPUT_TOKENS) || 8192
+    })
+
+    if (stopReason === "max_tokens") {
+      throw new Error(
+        "Teaching response was cut off before completing (max_tokens). " +
+          "Increase TEACHING_MAX_OUTPUT_TOKENS or simplify the step and retry."
+      )
+    }
+    if (!text.trim()) {
+      throw new Error(
+        `Teaching model returned no text (stopReason: ${stopReason ?? "unknown"}).`
+      )
+    }
+    // Pixels of the image Claude saw, folded into the canonical 0–1000 space —
+    // which is resolution-free, so the downscale needs no undoing.
+    return normalizeTeachingStep(parseTeachingModelText(text), sent, "pixels")
+  }
+
   private async generateTeachingStepWithOllama(
     goal: string,
     history: string[],
@@ -1098,11 +1353,11 @@ ANSWER: your answer`
   }
 
   public isUsingOllama(): boolean {
-    return this.useOllama;
+    return this.provider === "ollama";
   }
 
   public async getOllamaModels(): Promise<string[]> {
-    if (!this.useOllama) return [];
+    if (this.provider !== "ollama") return [];
     
     try {
       const response = await fetch(`${this.ollamaUrl}/api/tags`);
@@ -1116,16 +1371,18 @@ ANSWER: your answer`
     }
   }
 
-  public getCurrentProvider(): "ollama" | "gemini" {
-    return this.useOllama ? "ollama" : "gemini";
+  public getCurrentProvider(): LLMProvider {
+    return this.provider;
   }
 
   public getCurrentModel(): string {
-    return this.useOllama ? this.ollamaModel : this.geminiModel;
+    if (this.provider === "ollama") return this.ollamaModel;
+    if (this.provider === "bedrock") return this.bedrock?.config.modelId ?? "";
+    return this.geminiModel;
   }
 
   public async switchToOllama(model?: string, url?: string): Promise<void> {
-    this.useOllama = true;
+    this.provider = "ollama";
     if (url) this.ollamaUrl = url;
     
     if (model) {
@@ -1148,13 +1405,55 @@ ANSWER: your answer`
       throw new Error("No Gemini API key provided and no existing model instance");
     }
     
-    this.useOllama = false;
+    this.provider = "gemini";
     console.log(`[LLMHelper] Switched to Gemini (${this.geminiModel})`);
+  }
+
+  /**
+   * Blank fields keep what is already configured — the env on first switch,
+   * the last Settings entry after — so changing only the model ID doesn't mean
+   * pasting the key again.
+   */
+  public async switchToBedrock(opts: {
+    apiKey?: string
+    region?: string
+    modelId?: string
+    sarvamApiKey?: string
+  } = {}): Promise<void> {
+    const current = this.bedrock?.config
+    const config: BedrockConfig = {
+      apiKey:
+        opts.apiKey || current?.apiKey || process.env.AWS_BEARER_TOKEN_BEDROCK || "",
+      region: opts.region || current?.region || process.env.AWS_REGION || "us-east-1",
+      modelId: opts.modelId || current?.modelId || process.env.BEDROCK_MODEL_ID || ""
+    }
+    if (!config.apiKey) {
+      throw new Error("No Bedrock API key provided (AWS_BEARER_TOKEN_BEDROCK)")
+    }
+    if (!config.modelId) {
+      throw new Error("No Bedrock model ID provided (BEDROCK_MODEL_ID)")
+    }
+    this.bedrock = new BedrockClient(config)
+    if (opts.sarvamApiKey) {
+      this.sarvam = new SarvamStt(opts.sarvamApiKey)
+    }
+    this.provider = "bedrock";
+    console.log(`[LLMHelper] Switched to Bedrock (${config.modelId}, ${config.region})`);
   }
 
   public async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
-      if (this.useOllama) {
+      if (this.provider === "bedrock") {
+        const { text } = await this.bedrockOrThrow().converse({
+          messages: [{ role: "user", content: [{ text: "Hello" }] }],
+          temperature: 0,
+          maxTokens: 16
+        })
+        return text
+          ? { success: true }
+          : { success: false, error: "Empty response from Bedrock" };
+      }
+      if (this.provider === "ollama") {
         const available = await this.checkOllamaAvailable();
         if (!available) {
           return { success: false, error: `Ollama not available at ${this.ollamaUrl}` };

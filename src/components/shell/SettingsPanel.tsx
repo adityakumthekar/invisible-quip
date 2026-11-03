@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react"
 import {
   Cloud,
   Cpu,
+  Server,
   Download,
   Home,
   Info,
@@ -28,8 +29,10 @@ import { PROFILE_MAX_CHARS, getProfile, setProfile } from "../../lib/userProfile
 import RemotePanel from "./RemotePanel"
 import SystemAudioPanel from "./SystemAudioPanel"
 
+type Provider = "ollama" | "gemini" | "bedrock"
+
 interface SettingsPanelProps {
-  onModelChange?: (provider: "ollama" | "gemini", model: string) => void
+  onModelChange?: (provider: Provider, model: string) => void
   onOpenChat?: () => void
   // The whole mode, not just its label: the shell sizes the answer panel from
   // it (see Mode.panelWidth).
@@ -76,9 +79,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [tab, setTab] = useState<Tab>("modes")
 
   // Provider state (ported from ModelsPopover)
-  const [selectedProvider, setSelectedProvider] = useState<"ollama" | "gemini">(
-    "gemini"
-  )
+  const [selectedProvider, setSelectedProvider] = useState<Provider>("gemini")
   const [availableOllamaModels, setAvailableOllamaModels] = useState<string[]>(
     []
   )
@@ -91,6 +92,11 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [pullError, setPullError] = useState("")
   const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434")
   const [geminiApiKey, setGeminiApiKey] = useState("")
+  // Blank Bedrock fields keep what main already has (env or last apply).
+  const [bedrockApiKey, setBedrockApiKey] = useState("")
+  const [bedrockRegion, setBedrockRegion] = useState("")
+  const [bedrockModelId, setBedrockModelId] = useState("")
+  const [sarvamApiKey, setSarvamApiKey] = useState("")
   const [currentLabel, setCurrentLabel] = useState("")
   const [status, setStatus] = useState<"idle" | "working" | "ok" | "err">("idle")
   const [errorMessage, setErrorMessage] = useState("")
@@ -125,8 +131,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         setSelectedOllamaModel(config.model)
         await loadOllamaModels()
       }
+      return config
     } catch (e) {
       console.error(e)
+      return null
     }
   }
 
@@ -197,18 +205,22 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           selectedOllamaModel,
           ollamaUrl
         )
+      } else if (selectedProvider === "bedrock") {
+        result = await window.electronAPI.switchToBedrock({
+          apiKey: bedrockApiKey || undefined,
+          region: bedrockRegion || undefined,
+          modelId: bedrockModelId || undefined,
+          sarvamApiKey: sarvamApiKey || undefined
+        })
       } else {
         result = await window.electronAPI.switchToGemini(
           geminiApiKey || undefined
         )
       }
       if (result.success) {
-        await loadConfig()
+        const config = await loadConfig()
         setStatus("ok")
-        onModelChange?.(
-          selectedProvider,
-          selectedProvider === "ollama" ? selectedOllamaModel : "gemini-3.5-flash"
-        )
+        onModelChange?.(selectedProvider, config?.model ?? "")
         onOpenChat?.()
       } else {
         setStatus("err")
@@ -354,7 +366,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       : currentLabel}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-glass-soft border border-glass">
+            <div className="grid grid-cols-3 gap-1 p-0.5 rounded-lg bg-glass-soft border border-glass">
               <button
                 type="button"
                 onClick={() => setSelectedProvider("gemini")}
@@ -381,9 +393,46 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <Home className="w-3 h-3" strokeWidth={1.75} />
                 Ollama
               </button>
+              <button
+                type="button"
+                onClick={() => setSelectedProvider("bedrock")}
+                className={cn(
+                  "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
+                  selectedProvider === "bedrock"
+                    ? "glass-action"
+                    : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
+                )}
+              >
+                <Server className="w-3 h-3" strokeWidth={1.75} />
+                Bedrock
+              </button>
             </div>
 
-            {selectedProvider === "gemini" ? (
+            {selectedProvider === "bedrock" ? (
+              <div className="space-y-2.5">
+                {(
+                  [
+                    ["Bedrock API key", "password", "Optional if already set", bedrockApiKey, setBedrockApiKey],
+                    ["Region", "text", "us-east-1", bedrockRegion, setBedrockRegion],
+                    ["Claude model ID", "text", "Inference profile ID from the console", bedrockModelId, setBedrockModelId],
+                    ["Sarvam key (voice)", "password", "Optional if already set", sarvamApiKey, setSarvamApiKey]
+                  ] as const
+                ).map(([label, type, placeholder, value, setValue]) => (
+                  <div key={label} className="space-y-1.5">
+                    <label className="text-[11px] uppercase tracking-wide glass-muted">
+                      {label}
+                    </label>
+                    <input
+                      type={type}
+                      placeholder={placeholder}
+                      value={value}
+                      onChange={(e) => setValue(e.target.value)}
+                      className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : selectedProvider === "gemini" ? (
               <div className="space-y-1.5">
                 <label className="text-[11px] uppercase tracking-wide glass-muted">
                   API key
