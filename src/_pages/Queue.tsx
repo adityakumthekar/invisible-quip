@@ -119,6 +119,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const handleAskAiRef = useRef<() => void>(() => {})
   const handleRecordClickRef = useRef<() => void>(() => {})
   const handleNewChatRef = useRef<() => void>(() => {})
+  const toggleCollapsedRef = useRef<() => void>(() => {})
+  const collapseDisabledRef = useRef<string | null>(null)
   const [privacyStatus, setPrivacyStatus] = useState<PrivacyGateStatus | null>(null)
   const [privacyChecking, setPrivacyChecking] = useState(false)
   const [privacyError, setPrivacyError] = useState<string | null>(null)
@@ -521,6 +523,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     handleAskAiRef.current = handleAskAi
     handleRecordClickRef.current = () => void handleRecordClick()
     handleNewChatRef.current = handleNewChat
+    toggleCollapsedRef.current = toggleCollapsed
+    collapseDisabledRef.current = collapseDisabledReason
   })
 
   useEffect(
@@ -543,6 +547,18 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   useEffect(() => {
     const unsubscribe = window.electronAPI.onAskAiHotkey(() => {
       handleAskAiRef.current()
+    })
+    return () => {
+      unsubscribe && unsubscribe()
+    }
+  }, [])
+
+  // Cmd/Ctrl+Shift+B. Collapse to the blob or expand it. The disabled reason
+  // is read through a ref so a run that starts after mount still blocks it.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onCollapseHotkey(() => {
+      if (collapseDisabledRef.current) return
+      toggleCollapsedRef.current()
     })
     return () => {
       unsubscribe && unsubscribe()
@@ -992,9 +1008,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       {/* Bottom padding is load-bearing: the window is sized to this element's
           scrollHeight, and box-shadows don't contribute to layout, so anything
           the surfaces cast beyond this padding is clipped off at the
-          transparent window edge. Keep pb >= the largest shadow reach
-          (offset + blur/2) in index.css. */}
-      <div className="px-3 pt-2 pb-8 space-y-3">
+          transparent window edge. The surfaces carry only a 1px contact ring,
+          so pb-1 covers it. Re-adding a blurred shadow in index.css means
+          growing this, and CHROME_PX in App.tsx, by its reach. */}
+      <div className="px-3 pt-2 pb-1 space-y-3">
         <Toast
           open={toastOpen}
           onOpenChange={setToastOpen}

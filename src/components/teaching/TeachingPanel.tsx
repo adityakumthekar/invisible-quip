@@ -98,11 +98,11 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
         <div>
           <h2
             id="teaching-panel-title"
-            className="text-[13px] font-semibold tracking-tight glass-heading"
+            className="panel-title"
           >
             Teach Me
           </h2>
-          <p className="mt-0.5 text-[11px] glass-subtle">
+          <p className="mt-0.5 text-[11.5px] glass-subtle">
             {mode === "guide"
               ? "Step-by-step guidance from your current screen"
               : "Quip works through the task on your screen"}
@@ -110,7 +110,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
         </div>
         <button
           type="button"
-          className="p-1.5 rounded-md glass-icon hover:text-glass-heading hover:bg-glass-hover"
+          className="icon-btn !px-1.5 glass-icon"
           onClick={onClose}
           aria-label="Close teaching"
         >
@@ -119,7 +119,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
       </div>
 
       <div
-        className="mt-3 flex gap-1 rounded-lg bg-glass-soft p-0.5"
+        className="glass-well mt-3 flex gap-0.5 p-0.5"
         role="tablist"
         aria-label="Teaching mode"
       >
@@ -131,11 +131,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
             aria-selected={mode === option.value}
             disabled={modeLocked && mode !== option.value}
             onClick={() => onModeChange(option.value)}
-            className={`flex-1 rounded-md px-2.5 py-1.5 text-[11px] transition-colors disabled:opacity-40 ${
-              mode === option.value
-                ? "glass-action"
-                : "glass-text hover:bg-glass-hover"
-            }`}
+            className="seg-option flex-1 rounded-md px-2.5 py-1.5 text-[12px]"
           >
             {option.label}
           </button>
@@ -190,7 +186,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
             <button
               type="submit"
               disabled={!session.goal.trim()}
-              className="glass-action rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+              className="glass-primary rounded-full px-3.5 py-1.5 text-[12px] lowercase"
             >
               Start
             </button>
@@ -208,14 +204,14 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
 
       {mode === "guide" && hasResult && session.result && (
         <div className="mt-4" aria-live="polite">
-          <p className="text-[11px] uppercase tracking-wide glass-muted">
+          <p className="label">
             {session.result.state === "step"
               ? "Current instruction"
               : session.result.state === "complete"
                 ? "Complete"
                 : "Can’t continue"}
           </p>
-          <p className="mt-2 text-[13px] leading-relaxed glass-heading">
+          <p className="mt-1.5 text-[14.5px] font-medium leading-snug glass-heading">
             {session.result.instruction}
           </p>
           {session.result.label && (
@@ -225,12 +221,13 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
             </p>
           )}
           {session.result.state === "step" && (
-            <div className="mt-3 rounded-lg bg-glass-soft px-2.5 py-2">
+            <div className="mt-3 glass-well px-3 py-2.5">
               <p className="text-[11px] glass-text">
                 {describePendingAction(session.result)}
               </p>
-              <p className="mt-1 text-[11px] glass-muted">
-                Press ⌘/Ctrl+⇧+Enter to perform · Esc to stop
+              <p className="readout mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5">
+                <span>⌘/Ctrl+⇧+Enter to perform</span>
+                <span>Esc to stop</span>
               </p>
             </div>
           )}
@@ -238,7 +235,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
       )}
 
       {mode === "guide" && loading && (
-        <p className="mt-3 text-[11px] glass-muted animate-pulse" role="status">
+        <p className="readout mt-3 motion-safe:animate-pulse" role="status">
           {session.pendingOperation === "start"
             ? "Looking at your screen…"
             : "Capturing a fresh view…"}
@@ -252,7 +249,8 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
               type="button"
               onClick={onNext}
               disabled={loading}
-              className="glass-action flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+              aria-busy={loading}
+              className="glass-primary flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] lowercase"
             >
               <ArrowRight className="w-3.5 h-3.5" strokeWidth={1.75} />
               Next
@@ -265,7 +263,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
                 type="button"
                 onClick={() => onRetry(session.retryOperation!)}
                 disabled={loading}
-                className="glass-action flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+                className="glass-primary flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] lowercase"
               >
                 <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} />
                 Retry
@@ -274,7 +272,7 @@ const TeachingPanel: React.FC<TeachingPanelProps> = ({
           <button
             type="button"
             onClick={onStop}
-            className="glass-control flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] glass-text"
+            className="glass-action flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] lowercase"
           >
             <Square className="w-3 h-3" strokeWidth={1.75} />
             Stop

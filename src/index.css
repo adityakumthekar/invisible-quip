@@ -1,3 +1,13 @@
+/* Hallmark · shape: app screen · genre: atmospheric · theme: Lumen (deal 1/3, seed translucent-always-on-top-assistant-overlay-bed5·5dc64b89·2026-11-03·r0), by request re-pointed at the kept glass accent and Architects Daughter · redesign: full · scope: app
+ * nav: the floating control bar, kept, recomposed to lead with ask · signature: the exchange, the latest question on an accent rule over its mono readout, the answer streaming beneath · states: loading, empty, error and full where the screens have logic for them
+ * axes: dark/handwritten/neutral · type: Architects Daughter (bundled, by request) with the system mono for readouts and code · posture: restrained · contrast: the kept model, 4.94:1 floor on running text · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S3 R4 V4 · weakest: S, panel chrome tiers still sit under 4.5:1 on clear strength over white, so every small label that must read sits on a chip or the scrim */
+/* Hallmark · reworded "I understand — enable …" to "I understand, enable …" on the four consent buttons, and "best-effort — always verify" to "best-effort, so always verify" · 19 names the dash; the consent and disclaimer meaning is unchanged */
+/* Hallmark · dismissed 70 · "Screen will be sent with your message" is the screen toggle's tooltip, a state, not a success message */
+/* Hallmark · dismissed 49 · the consent buttons sit in a 300px settings column and wrap to two lines by design */
+@import "./tokens.css";
+@import "./base.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -10,134 +20,19 @@
    a neutral (non-tinting) fill, high text alphas, and a per-glyph text shadow —
    NOT by the blur, which is kept only as free progressive enhancement.
    Raising the alpha is deliberately not the lever: the overlay is meant to stay
-   see-through. */
-:root {
-  color-scheme: dark;
-  /* Default theme is neutral graphite: a saturated fill tints everything behind
-     it and shifts hue per background, which is what made text swim. */
-  --glass-primary-rgb: 18 19 23;
-  --glass-secondary-rgb: 30 32 38;
-  --glass-primary-alpha: 0.72;
-  --glass-secondary-alpha: 0.7;
-  --glass-primary-border: rgba(255, 255, 255, 0.13);
-  --glass-secondary-border: rgba(255, 255, 255, 0.1);
-  --glass-heading: rgb(255, 255, 255);
-  --glass-text: rgba(247, 249, 255, 0.96);
-  --glass-muted: rgba(232, 236, 245, 0.82);
-  --glass-subtle: rgba(232, 236, 245, 0.7);
-  --glass-accent: #e6e8ec;
-  --glass-accent-strong: #aab1bd;
-  --glass-accent-soft: rgba(255, 255, 255, 0.09);
-  --glass-hover: rgba(255, 255, 255, 0.07);
-  /* Links need their own hue — the accent is near-white on this theme and
-     would be indistinguishable from body text. */
-  --glass-link: #8ab4ff;
-  /* Status hues, lightened so they clear contrast on a dark translucent fill —
-     the Tailwind 400/500 ramps components reached for are too dark here. */
-  --glass-danger: #ff8f8f;
-  --glass-success: #6fd694;
-  --glass-warning: #f2c46b;
-  /* A dark well, not a light one: typed text needs a solid backing, and a
-     light fill only compounds the bleed-through. */
-  --glass-control-bg: rgba(0, 0, 0, 0.24);
-  --glass-control-border: rgba(255, 255, 255, 0.16);
-  --glass-blur: blur(30px) saturate(155%);
-  --glass-radius: 18px;
-  --glass-radius-sm: 12px;
-  --glass-radius-pill: 999px;
-
-  /* Local contrast per glyph, so text survives whatever bleeds through. Same
-     trick subtitles and desktop icon labels use. Set to `none` to disable. */
-  --glass-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
-  /* For the small, low-contrast tiers. Tighter radius but higher opacity than
-     the base: a 2px blur under 10px type starts filling in counters and reads
-     smeary, so buy density with alpha instead of spread. */
-  --glass-text-shadow-strong: 0 1px 1.5px rgba(0, 0, 0, 0.72),
-    0 0 1.5px rgba(0, 0, 0, 0.6);
-  /* Extra density behind running text only, so panel chrome stays airy. */
-  --glass-scrim: rgba(10, 11, 14, 0.22);
-
-  /* Compatibility aliases for older surfaces. */
-  --glass-dark-bg: rgb(var(--glass-primary-rgb) / var(--glass-primary-alpha));
-  --glass-dark-border: var(--glass-primary-border);
-  --glass-dark-text: var(--glass-text);
-  --glass-dark-muted: var(--glass-muted);
-  --glass-light-bg: rgb(var(--glass-secondary-rgb) / var(--glass-secondary-alpha));
-  --glass-light-border: var(--glass-secondary-border);
-  --glass-light-text: var(--glass-text);
-  --glass-light-muted: var(--glass-muted);
-}
-
-/* `neutral` is the :root default above — it needs no block of its own.
-   The tinted themes below darken and desaturate relative to their old values so
-   they stay readable at the same alpha, and drop the bright border glow that
-   used to halo every panel. */
-[data-glass-theme="royal"] {
-  --glass-primary-rgb: 11 26 62;
-  --glass-secondary-rgb: 24 46 96;
-  --glass-primary-border: rgba(160, 190, 255, 0.24);
-  --glass-secondary-border: rgba(160, 190, 255, 0.2);
-  --glass-accent: #9cb6ff;
-  --glass-accent-strong: #3b6ff5;
-  --glass-accent-soft: rgba(143, 176, 255, 0.16);
-  --glass-hover: rgba(143, 176, 255, 0.12);
-  --glass-link: #a8c4ff;
-}
-
-[data-glass-theme="purple"] {
-  --glass-primary-rgb: 34 16 62;
-  --glass-secondary-rgb: 56 30 98;
-  --glass-primary-border: rgba(198, 180, 255, 0.24);
-  --glass-secondary-border: rgba(198, 180, 255, 0.2);
-  --glass-accent: #c9b6ff;
-  --glass-accent-strong: #7c5cff;
-  --glass-accent-soft: rgba(168, 140, 255, 0.16);
-  --glass-hover: rgba(168, 140, 255, 0.12);
-  --glass-link: #cbb8ff;
-}
-
-/* Strength is how much desktop bleeds through — it is not a blur amount, since
-   the blur never reaches the desktop. Each level pays for its own transparency:
-   as the fill thins, the text tiers, halo, and reading scrim all step up to
-   compensate, so the 4.5:1 floor over a white desktop holds at every setting.
-   Measured worst case (subtle tier, white backdrop): clear 4.94:1,
-   balanced 4.94:1, solid 6.86:1. */
-[data-glass-strength="clear"] {
-  --glass-primary-alpha: 0.62;
-  --glass-secondary-alpha: 0.6;
-  --glass-muted: rgba(232, 236, 245, 0.88);
-  --glass-subtle: rgba(232, 236, 245, 0.78);
-  --glass-scrim: rgba(10, 11, 14, 0.3);
-  --glass-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.62);
-  --glass-text-shadow-strong: 0 1px 1.5px rgba(0, 0, 0, 0.78),
-    0 0 1.5px rgba(0, 0, 0, 0.68);
-}
-
-[data-glass-strength="balanced"] {
-  --glass-primary-alpha: 0.72;
-  --glass-secondary-alpha: 0.7;
-}
-
-/* Dense enough that the halo is pure cost — it would only look heavy here. */
-[data-glass-strength="solid"] {
-  --glass-primary-alpha: 0.9;
-  --glass-secondary-alpha: 0.88;
-  --glass-scrim: rgba(10, 11, 14, 0.12);
-  --glass-text-shadow: none;
-  --glass-text-shadow-strong: 0 1px 1.5px rgba(0, 0, 0, 0.4);
-}
+   see-through. Every value lives in tokens.css. */
 
 html,
 body,
 #root {
   background: transparent;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
-    system-ui, sans-serif;
+  font-family: var(--font-body);
   /* Base type scale. Bigger glyphs carry more ink and hold up better against
      the noise bleeding through the scrim. */
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  caret-color: var(--signal);
   /* Click-through: only glass / .hit-region surfaces receive hits */
   pointer-events: none;
 }
@@ -166,6 +61,50 @@ body,
   pointer-events: none;
 }
 
+/* ——— Type roles ———
+   Heads, tabs and controls speak lowercase (Lumen's register); prose and form
+   labels keep sentence case so a model or product name survives. */
+.panel-title {
+  font-size: var(--fs-title);
+  font-weight: var(--display-weight);
+  letter-spacing: var(--tracking-display);
+  line-height: 1.25;
+  text-transform: lowercase;
+  color: var(--glass-heading);
+  text-shadow: var(--glass-text-shadow);
+}
+
+/* A field or group label: the body face a step down, untracked. */
+.label {
+  display: block;
+  font-size: var(--fs-label);
+  line-height: 1.4;
+  color: var(--glass-muted);
+  text-shadow: var(--glass-text-shadow-strong);
+}
+
+/* The machine speaking: a clock, a duration, a model id, a status, a percent. */
+.readout {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: var(--glass-subtle);
+  text-shadow: var(--glass-text-shadow-strong);
+}
+
+/* Chrome text has no scrim behind it, so the low tiers fall under 4.5:1 on
+   clear strength over a white desktop. A recessed chip buys it back. */
+.glass-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-chip);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  text-shadow: none;
+}
+
 /* Markdown — light panel context.
    The wrapping rules are load-bearing, not cosmetic: the window is sized from
    contentRef.scrollWidth, so one long unbroken URL in a reply would otherwise
@@ -178,28 +117,29 @@ body,
 .chat-md ul { list-style: disc; }
 .chat-md ol { list-style: decimal; }
 .chat-md li { margin: 0.2em 0; }
+.chat-md li::marker { color: var(--glass-subtle); }
 .chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4 {
   font-weight: 600;
-  margin: 0.55em 0 0.3em;
+  margin: 0.7em 0 0.3em;
 }
-.chat-md h1 { font-size: 1.05em; }
-.chat-md h2 { font-size: 1em; }
-.chat-md h3, .chat-md h4 { font-size: 0.95em; }
+.chat-md h1 { font-size: 1.1em; }
+.chat-md h2 { font-size: 1.05em; }
+.chat-md h3, .chat-md h4 { font-size: 1em; }
 .chat-md strong { font-weight: 600; }
 .chat-md em { font-style: italic; }
 .chat-md a { color: var(--glass-accent-strong); text-decoration: none; }
 .chat-md a:hover { text-decoration: underline; }
 .chat-md code {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--code-bg-light);
   padding: 0.1em 0.35em;
   border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
 .chat-md pre {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--code-bg-light);
   padding: 0.7em;
-  border-radius: 8px;
+  border-radius: var(--radius-well);
   overflow-x: auto;
   max-width: 100%;
   margin: 0.5em 0;
@@ -209,17 +149,17 @@ body,
    the highlighter itself can stay transparent and only colour the tokens. */
 .chat-md .chat-code {
   position: relative;
-  background: rgba(0, 0, 0, 0.06);
-  border-radius: 8px;
+  background: var(--code-bg-light);
+  border-radius: var(--radius-well);
   max-width: 100%;
-  margin: 0.5em 0;
+  margin: 0.6em 0;
 }
 /* The scroll lives on the inner element so the copy button can sit pinned to
    the block's corner instead of scrolling off with a long line. */
 .chat-md .chat-code-scroll {
   overflow-x: auto;
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: var(--radius-well);
 }
 .chat-md .chat-code-copy {
   position: absolute;
@@ -227,7 +167,7 @@ body,
   right: 0.25em;
   z-index: 1;
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity var(--dur-micro) var(--ease-out);
 }
 .chat-md .chat-code:hover .chat-code-copy,
 .chat-md .chat-code-copy:focus-visible {
@@ -238,7 +178,7 @@ body,
   background: none;
   border: 0;
   padding: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 /* The panel is width-capped and the window auto-sizes to content, so a wide
    formula would otherwise stretch the whole overlay. */
@@ -250,7 +190,7 @@ body,
   margin: 0.5em 0;
 }
 .chat-md blockquote {
-  border-left: 2px solid rgba(0, 0, 0, 0.15);
+  border-left: 2px solid var(--quote-rule-light);
   padding-left: 0.7em;
   margin: 0.45em 0;
   color: var(--glass-light-muted);
@@ -270,6 +210,7 @@ body,
   margin: 0.55em 0;
   border-collapse: collapse;
   font-size: 0.94em;
+  font-variant-numeric: tabular-nums;
   display: block;
   overflow-x: auto;
 }
@@ -296,7 +237,7 @@ body,
   margin: 0;
   flex: 0 0 auto;
   transform: translateY(1px);
-  accent-color: var(--glass-accent);
+  accent-color: var(--signal);
 }
 
 /* Markdown on dark panels */
@@ -315,31 +256,47 @@ body,
    sits, the same way the scrim does for running text. */
 .chat-md-dark code,
 .chat-md-dark pre {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
   /* A shadow on monospace glyphs sitting on their own chip just reads muddy. */
   text-shadow: none;
 }
 .chat-md-dark pre code { border: 0; }
 .chat-md-dark .chat-code {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
   text-shadow: none;
 }
 /* Its own scrim, or the icon disappears into whatever token sits behind it. */
 .chat-md-dark .chat-code-copy {
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--code-copy-bg);
 }
 .chat-md-dark blockquote {
-  border-left-color: rgba(255, 255, 255, 0.2);
+  border-left-color: var(--quote-rule);
   color: var(--glass-dark-muted);
 }
-.chat-md-dark th { background: rgba(0, 0, 0, 0.18); }
+.chat-md-dark th { background: var(--table-head-bg); }
+
+/* ——— The exchange ———
+   The signature: the question you asked, on a rule, with its provenance as one
+   readout line. The current exchange's rule takes the accent, so the eye finds the
+   live question in a long session without reading. */
+.turn-question {
+  padding-left: var(--space-sm);
+  border-left: 2px solid var(--glass-primary-border);
+  color: var(--glass-heading);
+  font-weight: 500;
+  text-shadow: var(--glass-text-shadow);
+}
+.turn-question[data-current="true"] {
+  border-left-color: var(--signal);
+}
 
 /* ——— Glass surfaces ———
    Each surface carries two rings: a dark outer one so the edge stays defined
    against a bright desktop, and the light inset one so it stays defined against
-   a dark desktop. A single hairline disappears on one or the other. */
+   a dark desktop. A single hairline disappears on one or the other. No blurred
+   shadow: the window is sized to content, and a shadow is not. */
 .glass-bar {
   background: var(--glass-dark-bg);
   backdrop-filter: var(--glass-blur);
@@ -347,18 +304,13 @@ body,
   border: 1px solid var(--glass-dark-border);
   border-radius: var(--glass-radius-pill);
   color: var(--glass-dark-text);
-  /* Reach (offset + blur/2) is kept under the wrapper padding in Queue.tsx —
-     the window is sized to content and shadows don't affect layout, so
-     anything taller than that padding gets hard-clipped at the window edge. */
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 2px 5px rgba(0, 0, 0, 0.24),
-    0 8px 24px rgba(0, 0, 0, 0.46);
+    0 0 0 1px var(--edge-ring),
+    inset 0 1px 0 var(--edge-hairline);
 }
 
-/* Retracted control bar. Everything visual — surface, rings, shadow, and the
-   pill radius that rounds a square box into a circle — comes from .glass-bar,
+/* Retracted control bar. Everything visual — surface, rings, and the pill
+   radius that rounds a square box into a circle — comes from .glass-bar,
    which the blob also carries so it stays hit-tested and clickable without a
    second entry in the click-through selector lists.
    No width/height transition on purpose: animating a layout property re-fires
@@ -373,6 +325,7 @@ body,
   color: var(--glass-dark-text);
   cursor: grab;
   touch-action: none;
+  transition: background-color var(--dur-micro) var(--ease-out);
 }
 .collapsed-blob:active {
   cursor: grabbing;
@@ -381,17 +334,16 @@ body,
   background: var(--glass-accent-soft);
 }
 
-/* Remote-access indicator. Deliberately the one warm accent in a UI that is
-   otherwise neutral graphite: it has to read as "someone else can act here"
-   at a glance, and it is the only signal when the bar is collapsed. No
-   pointer-events — it is a status light, not a control, so it stays out of
-   the click-through selector contract. */
+/* Remote-access indicator. Deliberately the one warm hue on the bar besides
+   the ask pill: it has to read as "someone else can act here" at a glance, and
+   it is the only signal when the bar is collapsed. No pointer-events — it is a
+   status light, not a control, so it stays out of the click-through contract. */
 .remote-indicator {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 4px;
-  color: #f0b429;
+  padding: 0 var(--space-2xs);
+  color: var(--remote-watch);
   pointer-events: none;
 }
 
@@ -402,7 +354,7 @@ body,
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #f0b429;
+  background: var(--remote-watch);
   box-shadow: 0 0 0 1.5px rgb(var(--glass-primary-rgb));
   pointer-events: none;
 }
@@ -412,13 +364,12 @@ body,
    attached"; red plus a pulse says "someone else's hands are on this machine".
    The pulse is what carries it in peripheral vision — a hue shift alone is too
    easy to miss, and too easy to lose to colour blindness. */
-.remote-indicator[data-input="on"],
-.remote-dot[data-input="on"] {
-  color: #ff5f56;
-  background: #ff5f56;
+.remote-indicator[data-input="on"] {
+  color: var(--remote-input);
 }
 
 .remote-dot[data-input="on"] {
+  background: var(--remote-input);
   animation: remote-input-pulse 1.8s ease-in-out infinite;
 }
 
@@ -442,10 +393,8 @@ body,
   border-radius: var(--glass-radius);
   color: var(--glass-text);
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    0 2px 6px rgba(0, 0, 0, 0.26),
-    0 10px 28px rgba(0, 0, 0, 0.44);
+    0 0 0 1px var(--edge-ring),
+    inset 0 1px 0 var(--edge-hairline);
 }
 
 .glass-panel-dark {
@@ -456,10 +405,8 @@ body,
   border-radius: var(--glass-radius);
   color: var(--glass-text);
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.35),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
-    0 2px 6px rgba(0, 0, 0, 0.26),
-    0 10px 28px rgba(0, 0, 0, 0.48);
+    0 0 0 1px var(--edge-ring),
+    inset 0 1px 0 var(--edge-hairline);
 }
 
 /* Denser backing for running text, so the panel chrome can stay see-through
@@ -469,18 +416,23 @@ body,
   background: var(--glass-scrim);
 }
 
+/* A recessed well inside a panel: a group of controls, a pending action, the
+   pairing code. A lightness step and a hairline, never a second surface. */
+.glass-well {
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-secondary-border);
+  border-radius: var(--radius-well);
+}
+
 /* An alert has to be unambiguous, so the toast sits denser than the panels.
    It is transient, so little translucency is lost in practice. */
 .glass-toast {
-  background: rgb(var(--glass-primary-rgb) / 0.92);
+  background: var(--toast-bg);
   border: 1px solid var(--glass-primary-border);
   border-left-width: 3px;
-  border-radius: var(--glass-radius-sm, 12px);
+  border-radius: var(--glass-radius-sm);
   color: var(--glass-text);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.35),
-    0 2px 6px rgba(0, 0, 0, 0.26),
-    0 10px 28px rgba(0, 0, 0, 0.48);
+  box-shadow: 0 0 0 1px var(--edge-ring);
   text-shadow: none;
 }
 
@@ -510,17 +462,28 @@ body,
   text-shadow: var(--glass-text-shadow-strong);
 }
 
-.glass-icon {
-  color: var(--glass-muted);
-  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.6));
+.glass-danger-text {
+  color: var(--glass-danger);
+  text-shadow: var(--glass-text-shadow-strong);
 }
 
+.glass-icon {
+  color: var(--glass-muted);
+  filter: var(--glass-icon-halo);
+}
+
+/* ——— Controls ———
+   Eight states on every control: rest, hover, press, focus, selected,
+   disabled, busy (aria-busy) and, for fields, invalid. Disabled changes fill,
+   ink and cursor together, never opacity alone. */
 .glass-control {
   color: var(--glass-text);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   /* Sits on its own well, so it needs no halo. */
   text-shadow: none;
+  transition: background-color var(--dur-micro) var(--ease-out),
+    border-color var(--dur-micro) var(--ease-out);
 }
 
 .glass-control::placeholder {
@@ -528,26 +491,130 @@ body,
 }
 
 .glass-control:focus {
-  border-color: var(--glass-accent);
+  border-color: var(--signal);
   outline: none;
 }
 
+.glass-control[aria-invalid="true"] {
+  border-color: var(--glass-danger);
+}
+
+/* The hairline pill: secondary actions and the selected option in a set. */
 .glass-action {
   color: var(--glass-heading);
   background: var(--glass-accent-soft);
   border: 1px solid var(--glass-primary-border);
   text-shadow: var(--glass-text-shadow);
+  transition: background-color var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
 }
 
 .glass-action:hover {
   background: var(--glass-hover);
 }
 
+button.glass-control:hover {
+  background: var(--glass-hover);
+}
+
+.glass-action:active,
+button.glass-control:active {
+  background: var(--glass-press);
+}
+
+/* The solid accent pill: the one forward action on a screen. */
+.glass-primary {
+  color: var(--signal-ink);
+  background: var(--signal);
+  border: 1px solid transparent;
+  text-shadow: none;
+  transition: background-color var(--dur-micro) var(--ease-out);
+}
+
+.glass-primary:hover {
+  background: var(--signal-hover);
+}
+
+.glass-primary:active {
+  background: var(--signal-press);
+}
+
+.glass-primary[aria-busy="true"] {
+  cursor: progress;
+}
+
+.glass-action:disabled,
+.glass-control:disabled,
+.glass-primary:disabled {
+  color: var(--glass-disabled-ink);
+  background: var(--glass-disabled-bg);
+  border-color: var(--glass-secondary-border);
+  text-shadow: none;
+  cursor: not-allowed;
+}
+
+/* An option in a segmented set or the settings rail. The current one takes
+   the raised fill and an accent edge: the accent marks the selection. */
+.seg-option {
+  color: var(--glass-muted);
+  text-shadow: var(--glass-text-shadow-strong);
+  text-transform: lowercase;
+  transition: background-color var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
+}
+
+.seg-option:hover {
+  background: var(--glass-hover);
+  color: var(--glass-heading);
+}
+
+.seg-option:active {
+  background: var(--glass-press);
+}
+
+.seg-option[aria-pressed="true"],
+.seg-option[aria-selected="true"] {
+  color: var(--glass-heading);
+  background: var(--glass-accent-soft);
+  box-shadow: inset 0 -2px 0 var(--signal);
+  text-shadow: var(--glass-text-shadow);
+}
+
+.seg-option:disabled {
+  color: var(--glass-disabled-ink);
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.rail-option {
+  color: var(--glass-muted);
+  text-shadow: var(--glass-text-shadow-strong);
+  text-transform: lowercase;
+  transition: background-color var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
+}
+
+.rail-option:hover {
+  background: var(--glass-hover);
+  color: var(--glass-heading);
+}
+
+.rail-option:active {
+  background: var(--glass-press);
+}
+
+.rail-option[aria-pressed="true"] {
+  color: var(--glass-heading);
+  background: var(--glass-accent-soft);
+  box-shadow: inset 2px 0 0 var(--signal);
+  text-shadow: var(--glass-text-shadow);
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--glass-accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -557,14 +624,15 @@ textarea:focus-visible {
   justify-content: center;
   min-width: 1.25rem;
   padding: 0.15rem 0.4rem;
-  border-radius: 5px;
+  border-radius: var(--radius-chip);
+  font-family: var(--font-body);
   font-size: 10px;
   line-height: 1;
   color: var(--glass-muted);
   /* Dark chip, not a light one — a key cap needs to read as recessed, and the
      extra density is what keeps 10px glyphs legible over a busy desktop. */
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
   text-shadow: none;
 }
 
@@ -573,26 +641,75 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 0.35rem;
-  padding: 0.35rem 0.65rem;
-  border-radius: 999px;
-  font-size: 11.5px;
+  min-height: 28px;
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-label);
   line-height: 1;
+  text-transform: lowercase;
   color: var(--glass-text);
   text-shadow: var(--glass-text-shadow);
   background: transparent;
   border: none;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background-color var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
 }
 .icon-btn:hover {
   background: var(--glass-accent-soft);
 }
-.icon-btn:disabled {
-  opacity: 0.4;
-  pointer-events: none;
+.icon-btn:active {
+  background: var(--glass-press);
 }
-.icon-btn.active {
+.icon-btn:disabled {
+  color: var(--glass-disabled-ink);
+  background: transparent;
+  text-shadow: none;
+  cursor: not-allowed;
+}
+.icon-btn.active,
+.icon-btn[aria-pressed="true"] {
   background: var(--glass-accent-soft);
-  color: var(--glass-accent);
+  color: var(--glass-heading);
+}
+
+/* The ask pill, in the theme's accent: it is the one action the bar exists for. */
+.icon-btn.icon-btn-primary {
+  color: var(--signal-ink);
+  background: var(--signal);
+  text-shadow: none;
+  padding-inline: var(--space-sm) var(--space-xs);
+}
+.icon-btn.icon-btn-primary:hover {
+  background: var(--signal-hover);
+}
+.icon-btn.icon-btn-primary:active {
+  background: var(--signal-press);
+}
+.icon-btn-primary .kbd {
+  color: var(--signal-ink);
+  background: var(--signal-chip);
+  border-color: transparent;
+}
+
+.icon-btn.icon-btn-danger {
+  color: var(--glass-danger);
+}
+.icon-btn.icon-btn-danger:hover {
+  color: var(--glass-heading);
+}
+
+/* Recording: the record pill turns live and carries the timer. */
+.icon-btn.icon-btn-live {
+  color: var(--glass-danger);
+  background: var(--glass-accent-soft);
+}
+
+.bar-divider {
+  align-self: center;
+  width: 1px;
+  height: 16px;
+  margin-inline: var(--space-3xs);
+  background: var(--glass-primary-border);
 }
 
 .theme-swatch {
@@ -600,19 +717,36 @@ textarea:focus-visible {
   height: 0.65rem;
   flex: 0 0 auto;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.45);
+  border: 1px solid var(--swatch-ring);
 }
 
 .theme-swatch-royal {
-  background: #3b6ff5;
+  background: var(--swatch-royal);
 }
 
 .theme-swatch-purple {
-  background: #7c5cff;
+  background: var(--swatch-purple);
 }
 
 .theme-swatch-neutral {
-  background: #8b93a1;
+  background: var(--swatch-neutral);
+}
+
+/* Download progress. Scaled, never resized: a width animation is a layout
+   change the window would chase. */
+.progress-track {
+  height: 3px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--glass-accent-soft);
+}
+.progress-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--signal);
+  transform-origin: left;
+  transition: transform var(--dur-short) var(--ease-out);
 }
 
 /* Named `panel-reveal`, not `panel-in`: tailwind.config.js used to define a
@@ -620,17 +754,17 @@ textarea:focus-visible {
    in the bundle silently won. Transform-only on purpose — animating a layout
    property would re-trigger the ResizeObserver that sizes the window. */
 .panel-enter {
-  animation: panel-reveal 0.28s cubic-bezier(0.2, 0.9, 0.25, 1.15);
+  animation: panel-reveal var(--dur-short) var(--ease-out);
 }
 
 @keyframes panel-reveal {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.985);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
@@ -647,8 +781,8 @@ textarea:focus-visible {
 .teach-glow-cursor {
   transform: translate(-15.6%, -9.4%);
   transform-origin: 15.6% 9.4%;
-  filter: drop-shadow(0 0 5px rgba(232, 121, 249, 0.85))
-    drop-shadow(0 0 14px rgba(192, 38, 211, 0.55));
+  filter: drop-shadow(0 0 5px var(--teach-glow-near))
+    drop-shadow(0 0 14px var(--teach-glow-far));
   animation: teach-cursor-pulse 1.8s ease-in-out infinite;
   user-select: none;
 }
@@ -701,7 +835,7 @@ textarea:focus-visible {
     var(--glass-dark-muted) 0 2px,
     transparent 2px 4px
   );
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.5));
+  filter: var(--glass-icon-halo);
   opacity: 0.8;
 }
 
@@ -720,6 +854,12 @@ textarea,
   cursor: pointer;
 }
 
+/* Native option lists render on their own opaque popup. */
+.glass-control option {
+  background: rgb(var(--glass-primary-rgb));
+  color: var(--glass-text);
+}
+
 /* Legacy aliases so older class names still render quietly */
 .liquid-glass,
 .liquid-glass.chat-container {
@@ -728,7 +868,7 @@ textarea,
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-light-border);
   border-radius: var(--glass-radius);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 0 0 1px var(--edge-ring);
 }
 
 .liquid-glass-bar,
@@ -738,7 +878,7 @@ textarea,
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-dark-border);
   border-radius: var(--glass-radius-pill);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 0 0 1px var(--edge-ring);
 }
 
 .glass-content {

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { createMainWindowOptions } from "./mainWindowPolicy"
+import {
+  createMainWindowOptions,
+  mainWindowAlwaysOnTopLevel
+} from "./mainWindowPolicy"
 
 describe("main window stealth policy", () => {
   it("hides the window from capture and drops chrome in normal (invisible) mode", () => {
@@ -30,5 +33,9 @@ describe("main window stealth policy", () => {
 
     // contentProtection is the only field the mode is allowed to change.
     expect({ ...debug, contentProtection: stealth.contentProtection }).toEqual(stealth)
+  })
+
+  it("stays at floating level so the bar hovers and can receive clicks", () => {
+    expect(mainWindowAlwaysOnTopLevel()).toBe("floating")
   })
 })

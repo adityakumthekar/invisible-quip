@@ -174,7 +174,7 @@ const ControlBar: React.FC<ControlBarProps> = ({
 
   return (
     <div className="w-fit relative">
-      <div className="glass-bar draggable-area flex items-center gap-1 px-2 py-1.5">
+      <div className="glass-bar draggable-area flex items-center gap-0.5 px-1.5 py-1">
         {/* Dedicated grip. Explicitly no-drag: Chromium's app-region drag is
             unreliable on this transparent click-through window, so the move is
             driven manually from the main process instead. */}
@@ -202,6 +202,35 @@ const ControlBar: React.FC<ControlBarProps> = ({
           </span>
         )}
 
+        {/* Ask leads: it is the one action the bar exists for, so it is the
+            one solid pill. Record and Teach me keep their words because they
+            change what the overlay is doing; everything else is an icon, since
+            the window is sized to this bar and every label widens it. */}
+        <button
+          type="button"
+          className={cn("icon-btn icon-btn-primary no-drag", panelsOpen && "active")}
+          onClick={onAskAi}
+          title="Ask AI"
+        >
+          <Sparkles className="w-3.5 h-3.5" strokeWidth={2} />
+          <span>Ask AI</span>
+          <span className="kbd">⌘</span>
+          <span className="kbd">↵</span>
+        </button>
+
+        <button
+          type="button"
+          className={cn("icon-btn no-drag", isRecording && "icon-btn-live")}
+          onClick={onRecordClick}
+          title={isRecording ? "Stop recording" : "Record voice"}
+          aria-pressed={isRecording}
+        >
+          <Mic className="w-3.5 h-3.5" strokeWidth={1.75} />
+          <span>{isRecording ? "Stop" : "Record"}</span>
+          <span className="kbd">⌥</span>
+          <span className="kbd">M</span>
+        </button>
+
         {isRecording && micStream && (
           <MicWaveform
             stream={micStream}
@@ -209,30 +238,6 @@ const ControlBar: React.FC<ControlBarProps> = ({
             systemStream={systemStream}
           />
         )}
-
-        <button
-          type="button"
-          className={cn("icon-btn no-drag", panelsOpen && "active")}
-          onClick={onAskAi}
-          title="Ask AI"
-        >
-          <Sparkles className="w-3.5 h-3.5" strokeWidth={1.75} />
-          <span>Ask AI</span>
-          <span className="kbd">⌘</span>
-          <span className="kbd">↵</span>
-        </button>
-
-        {/* Icon only: the window is sized to this bar's content, so every text
-            label widens the overlay. ⌘N is documented in the shortcuts tooltip. */}
-        <button
-          type="button"
-          className="icon-btn no-drag"
-          onClick={onNewChat}
-          title="New chat — clears the conversation (⌘N)"
-          aria-label="New chat"
-        >
-          <MessageSquarePlus className="w-3.5 h-3.5" strokeWidth={1.75} />
-        </button>
 
         <button
           type="button"
@@ -246,44 +251,6 @@ const ControlBar: React.FC<ControlBarProps> = ({
           <span>Teach Me</span>
         </button>
 
-        <button
-          type="button"
-          className={cn("icon-btn no-drag", quickOpen && "active")}
-          onClick={onToggleQuick}
-          title="Quick actions"
-        >
-          <LayoutGrid className="w-3.5 h-3.5" strokeWidth={1.75} />
-        </button>
-
-        <button
-          type="button"
-          className="icon-btn no-drag"
-          onClick={() => window.electronAPI.invoke("toggle-window")}
-          title="Show / Hide"
-        >
-          <Eye className="w-3.5 h-3.5" strokeWidth={1.75} />
-          <span>Show/Hide</span>
-          <span className="kbd">⌘</span>
-          <span className="kbd">B</span>
-        </button>
-
-        <div className="mx-0.5 h-4 w-px bg-glass-line" />
-
-        <button
-          type="button"
-          className={cn(
-            "icon-btn no-drag",
-            isRecording && "active text-glass-danger"
-          )}
-          onClick={onRecordClick}
-          title={isRecording ? "Stop recording" : "Record voice"}
-        >
-          <Mic className="w-3.5 h-3.5" strokeWidth={1.75} />
-          <span>{isRecording ? "Stop" : "Record"}</span>
-          <span className="kbd">⌥</span>
-          <span className="kbd">M</span>
-        </button>
-
         {screenshots.length > 0 && (
           <button
             type="button"
@@ -292,14 +259,42 @@ const ControlBar: React.FC<ControlBarProps> = ({
             title={`Solve ${screenshots.length} queued screenshot(s)`}
           >
             <span>Solve</span>
+            <span className="readout">{screenshots.length}</span>
           </button>
         )}
+
+        <span className="bar-divider" aria-hidden />
+
+        {/* Icon only: the window is sized to this bar's content, so every text
+            label widens the overlay. ⌘N is documented in the shortcuts tooltip. */}
+        <button
+          type="button"
+          className="icon-btn no-drag"
+          onClick={onNewChat}
+          title="New chat: clears the conversation (⌘N)"
+          aria-label="New chat"
+        >
+          <MessageSquarePlus className="w-3.5 h-3.5" strokeWidth={1.75} />
+        </button>
+
+        <button
+          type="button"
+          className={cn("icon-btn no-drag", quickOpen && "active")}
+          onClick={onToggleQuick}
+          title="Quick actions"
+          aria-label="Quick actions"
+          aria-pressed={quickOpen}
+        >
+          <LayoutGrid className="w-3.5 h-3.5" strokeWidth={1.75} />
+        </button>
 
         <button
           type="button"
           className={cn("icon-btn no-drag", modelsOpen && "active")}
           onClick={onToggleModels}
           title="Settings"
+          aria-label="Settings"
+          aria-pressed={modelsOpen}
         >
           <Settings2 className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
@@ -308,6 +303,18 @@ const ControlBar: React.FC<ControlBarProps> = ({
           shortcuts={SHORTCUTS}
           onTooltipVisibilityChange={onTooltipVisibilityChange}
         />
+
+        <span className="bar-divider" aria-hidden />
+
+        <button
+          type="button"
+          className="icon-btn no-drag"
+          onClick={() => window.electronAPI.invoke("toggle-window")}
+          title="Show / Hide (⌘B)"
+          aria-label="Show / Hide"
+        >
+          <Eye className="w-3.5 h-3.5" strokeWidth={1.75} />
+        </button>
 
         {/* Icon only, like New chat above: the window is sized to this bar, so a
             text label here would widen the overlay permanently. */}
@@ -325,9 +332,10 @@ const ControlBar: React.FC<ControlBarProps> = ({
 
         <button
           type="button"
-          className="icon-btn no-drag text-glass-danger opacity-80 hover:opacity-100"
+          className="icon-btn icon-btn-danger no-drag"
           onClick={() => window.electronAPI.quitApp()}
           title="Quit"
+          aria-label="Quit"
         >
           <LogOut className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>

@@ -146,6 +146,7 @@
     "@aws-sdk/client-bedrock-runtime": "^3.1161.0",
     "@capacitor/android": "^8.5.0",
     "@capacitor/core": "^8.5.0",
+    "@fontsource/architects-daughter": "^5.3.0",
     "@google/generative-ai": "^0.2.1",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@radix-ui/react-dialog": "^1.1.2",

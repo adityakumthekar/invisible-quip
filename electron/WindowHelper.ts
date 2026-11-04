@@ -1,8 +1,12 @@
 
-import { BrowserWindow, screen } from "electron"
+import { app, BrowserWindow, screen } from "electron"
 import { AppState } from "./main"
 import path from "node:path"
-import { createMainWindowOptions } from "./mainWindowPolicy"
+import { cursorRelayPoint } from "./cursorRelay"
+import {
+  createMainWindowOptions,
+  mainWindowAlwaysOnTopLevel
+} from "./mainWindowPolicy"
 import { computeWindowBounds } from "./windowSizing"
 
 const isDev = process.env.NODE_ENV === "development"
@@ -42,6 +46,7 @@ export class WindowHelper {
   private lastMaxHeight: number | null = null
   private lastMaxWidth: number | null = null
   /** Active manual grip drag (see startWindowDrag). */
+  private cursorRelay: NodeJS.Timeout | null = null
   private dragSession: {
     timer: NodeJS.Timeout
     offsetX: number
@@ -65,6 +70,49 @@ export class WindowHelper {
     } else {
       this.mainWindow.setIgnoreMouseEvents(false)
     }
+  }
+
+  /** Keep the pill above other apps and on the current Space. */
+  private raiseOverlay(): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+    this.mainWindow.setAlwaysOnTop(true, mainWindowAlwaysOnTopLevel())
+    if (process.platform === "darwin") {
+      this.mainWindow.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true
+      })
+    }
+  }
+
+  /**
+   * AppKit does not deliver mouse-moved events to a window that is ignoring
+   * them, so the page never notices the cursor is over a button. Inject the
+   * move; the renderer turns click-through off when the point hits the pill.
+   */
+  private startCursorRelay(): void {
+    if (this.cursorRelay) return
+    this.cursorRelay = setInterval(() => this.relayCursor(), 32)
+  }
+
+  private stopCursorRelay(): void {
+    if (!this.cursorRelay) return
+    clearInterval(this.cursorRelay)
+    this.cursorRelay = null
+  }
+
+  private relayCursor(): void {
+    const win = this.mainWindow
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
+    const point = cursorRelayPoint(
+      screen.getCursorScreenPoint(),
+      win.getBounds(),
+      {
+        ignoringMouseEvents: this.ignoringMouseEvents,
+        dragging: this.dragSession !== null,
+        visible: this.isWindowVisible
+      }
+    )
+    if (!point) return
+    win.webContents.sendInputEvent({ type: "mouseMove", x: point.x, y: point.y })
   }
 
   /**
@@ -204,12 +252,7 @@ export class WindowHelper {
     this.mainWindow.setContentProtection(contentProtection)
 
     if (process.platform === "darwin") {
-      this.mainWindow.setVisibleOnAllWorkspaces(true, {
-        visibleOnFullScreen: true
-      })
       this.mainWindow.setHiddenInMissionControl(invisible)
-      // "floating" can still be excluded from some captures; use normal when visible
-      this.mainWindow.setAlwaysOnTop(true, invisible ? "floating" : "normal")
     }
     if (process.platform === "linux") {
       // Linux-specific optimizations for better compatibility
@@ -222,7 +265,7 @@ export class WindowHelper {
       this.mainWindow.setFocusable(true)
     } 
     this.mainWindow.setSkipTaskbar(invisible)
-    this.mainWindow.setAlwaysOnTop(true)
+    this.mainWindow.setAlwaysOnTop(true, mainWindowAlwaysOnTopLevel())
 
     // Pass clicks through transparent regions; renderer toggles this when over UI.
     this.ignoringMouseEvents = true
@@ -241,7 +284,12 @@ export class WindowHelper {
         this.centerWindow()
         this.mainWindow.show()
         this.mainWindow.focus()
-        this.mainWindow.setAlwaysOnTop(true, invisible ? "floating" : "normal")
+        // After show. Calling this earlier leaves the window off the current
+        // Space, and level "normal" lets every other app cover it.
+        this.raiseOverlay()
+        if (process.platform === "darwin") app.focus({ steal: true })
+        this.mainWindow.setIgnoreMouseEvents(true, { forward: true })
+        this.startCursorRelay()
         console.log(
           invisible
             ? "Window is now visible and centered (stealth)"
@@ -281,6 +329,7 @@ export class WindowHelper {
 
     this.mainWindow.on("closed", () => {
       this.stopWindowDrag()
+      this.stopCursorRelay()
       this.mainWindow = null
       this.isWindowVisible = false
       this.windowPosition = null
@@ -325,7 +374,7 @@ export class WindowHelper {
     }
 
     this.mainWindow.showInactive()
-
+    this.raiseOverlay()
     this.isWindowVisible = true
   }
 
@@ -378,7 +427,7 @@ export class WindowHelper {
     this.centerWindow()
     this.mainWindow.show()
     this.mainWindow.focus()
-    this.mainWindow.setAlwaysOnTop(true)
+    this.raiseOverlay()
     this.isWindowVisible = true
     
     console.log(`Window centered and shown`)

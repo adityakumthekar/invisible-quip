@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useQueryClient } from "react-query"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
-import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
+import { overlayCodeTheme } from "../lib/codeTheme"
 
 import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
 import { Toast, ToastDescription, ToastTitle } from "../components/ui/toast"
@@ -26,15 +26,15 @@ export const ContentSection = ({
   isLoading: boolean
 }) => (
   <div className="space-y-2">
-    <h2 className="text-[12px] font-semibold text-white/90 tracking-tight">
+    <h2 className="panel-title">
       {title}
     </h2>
     {isLoading ? (
-      <p className="text-xs text-white/40 animate-pulse">
+      <p className="text-xs text-glass-subtle motion-safe:animate-pulse">
         Extracting problem statement…
       </p>
     ) : (
-      <div className="text-[12.5px] leading-relaxed text-white/80 max-w-[640px]">
+      <div className="text-[12.5px] leading-relaxed text-glass-text max-w-[640px]">
         {content}
       </div>
     )}
@@ -50,24 +50,24 @@ const SolutionSection = ({
   isLoading: boolean
 }) => (
   <div className="space-y-2">
-    <h2 className="text-[12px] font-semibold text-white/90 tracking-tight">
+    <h2 className="panel-title">
       {title}
     </h2>
     {isLoading ? (
-      <p className="text-xs text-white/40 animate-pulse">Loading solutions…</p>
+      <p className="text-xs text-glass-subtle motion-safe:animate-pulse">Loading solutions…</p>
     ) : (
-      <div className="w-full rounded-lg overflow-hidden border border-white/10">
+      <div className="w-full rounded-lg overflow-hidden border border-glass">
         <SyntaxHighlighter
           showLineNumbers
           language="python"
-          style={dracula}
+          style={overlayCodeTheme}
           customStyle={{
             maxWidth: "100%",
             margin: 0,
             padding: "1rem",
             whiteSpace: "pre-wrap",
             wordBreak: "break-all",
-            background: "rgba(0,0,0,0.35)"
+            background: "var(--code-bg)"
           }}
           wrapLongLines={true}
         >
@@ -88,19 +88,19 @@ export const ComplexitySection = ({
   isLoading: boolean
 }) => (
   <div className="space-y-2">
-    <h2 className="text-[12px] font-semibold text-white/90 tracking-tight">
+    <h2 className="panel-title">
       Complexity
     </h2>
     {isLoading ? (
-      <p className="text-xs text-white/40 animate-pulse">Calculating…</p>
+      <p className="text-xs text-glass-subtle motion-safe:animate-pulse">Calculating…</p>
     ) : (
-      <div className="space-y-1.5 text-[12.5px] leading-relaxed text-white/80">
+      <div className="space-y-1.5 text-[12.5px] leading-relaxed text-glass-text">
         <div>
-          <span className="text-white/45">Time · </span>
+          <span className="text-glass-subtle">Time: </span>
           {timeComplexity}
         </div>
         <div>
-          <span className="text-white/45">Space · </span>
+          <span className="text-glass-subtle">Space: </span>
           {spaceComplexity}
         </div>
       </div>
@@ -412,7 +412,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
                     {/* Show loading state when waiting for solution */}
                     {problemStatementData && !solutionData && (
                       <div className="mt-2 flex">
-                        <p className="text-xs text-white/40 animate-pulse">
+                        <p className="text-xs text-glass-subtle motion-safe:animate-pulse">
                           {problemStatementData?.output_format?.subtype === "voice" 
                             ? "Processing voice input…" 
                             : "Generating solutions…"}
@@ -432,7 +432,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
                                     key={index}
                                     className="flex items-start gap-2.5"
                                   >
-                                    <div className="w-1 h-1 rounded-full bg-white/35 mt-2 shrink-0" />
+                                    <div className="w-1 h-1 rounded-full bg-glass-subtle mt-2 shrink-0" />
                                     <div>{thought}</div>
                                   </div>
                                 ))}

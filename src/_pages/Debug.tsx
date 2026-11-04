@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useQueryClient } from "react-query"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
-import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
+import { overlayCodeTheme } from "../lib/codeTheme"
 import { ComplexitySection, ContentSection } from "./Solutions"
 import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
 import { Toast, ToastDescription, ToastTitle } from "../components/ui/toast"
@@ -101,30 +101,30 @@ const CodeComparisonSection = ({
 
   return (
     <div className="space-y-1.5">
-      <h2 className="text-[13px] font-medium text-white tracking-wide">
+      <h2 className="panel-title">
         Code Comparison
       </h2>
       {isLoading ? (
         <div className="space-y-1">
           <div className="mt-3 flex">
-            <p className="text-xs text-white/40 animate-pulse">
-              Loading code comparison...
+            <p className="text-xs text-glass-subtle motion-safe:animate-pulse">
+              Loading code comparison…
             </p>
           </div>
         </div>
       ) : (
-        <div className="flex flex-row gap-0.5 bg-[#161b22] rounded-lg overflow-hidden">
+        <div className="flex flex-row gap-0.5 bg-[var(--debug-surface)] rounded-lg overflow-hidden">
           {/* Previous Code */}
-          <div className="w-1/2 border-r border-gray-700">
-            <div className="bg-[#2d333b] px-3 py-1.5">
-              <h3 className="text-[11px] font-medium text-gray-200">
+          <div className="w-1/2 border-r border-[var(--debug-border)]">
+            <div className="bg-[var(--debug-header)] px-3 py-1.5">
+              <h3 className="text-[11px] font-medium text-glass-text">
                 Previous Version
               </h3>
             </div>
             <div className="p-3 overflow-x-auto">
               <SyntaxHighlighter
                 language="python"
-                style={dracula}
+                style={overlayCodeTheme}
                 customStyle={{
                   maxWidth: "100%",
                   margin: 0,
@@ -140,7 +140,7 @@ const CodeComparisonSection = ({
                     style: {
                       display: "block",
                       backgroundColor: line?.removed
-                        ? "rgba(139, 0, 0, 0.2)"
+                        ? "var(--debug-del-bg)"
                         : "transparent"
                     }
                   }
@@ -153,15 +153,15 @@ const CodeComparisonSection = ({
 
           {/* New Code */}
           <div className="w-1/2">
-            <div className="bg-[#2d333b] px-3 py-1.5">
-              <h3 className="text-[11px] font-medium text-gray-200">
+            <div className="bg-[var(--debug-header)] px-3 py-1.5">
+              <h3 className="text-[11px] font-medium text-glass-text">
                 New Version
               </h3>
             </div>
             <div className="p-3 overflow-x-auto">
               <SyntaxHighlighter
                 language="python"
-                style={dracula}
+                style={overlayCodeTheme}
                 customStyle={{
                   maxWidth: "100%",
                   margin: 0,
@@ -177,7 +177,7 @@ const CodeComparisonSection = ({
                     style: {
                       display: "block",
                       backgroundColor: line?.added
-                        ? "rgba(0, 139, 0, 0.2)"
+                        ? "var(--debug-add-bg)"
                         : "transparent"
                     }
                   }
@@ -320,7 +320,7 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
                     <div className="space-y-1">
                       {thoughtsData.map((thought, index) => (
                         <div key={index} className="flex items-start gap-2">
-                          <div className="w-1 h-1 rounded-full bg-white/35 mt-2 shrink-0" />
+                          <div className="w-1 h-1 rounded-full bg-glass-subtle mt-2 shrink-0" />
                           <div>{thought}</div>
                         </div>
                       ))}

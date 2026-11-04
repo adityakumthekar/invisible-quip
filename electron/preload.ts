@@ -82,6 +82,7 @@ interface ElectronAPI {
   onAskAiHotkey: (callback: () => void) => () => void
   onRecordHotkey: (callback: () => void) => () => void
   onNewChatHotkey: (callback: () => void) => () => void
+  onCollapseHotkey: (callback: () => void) => () => void
   onContentLimits: (
     callback: (limits: { maxHeight: number; maxWidth: number }) => void
   ) => () => void
@@ -312,6 +313,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("new-chat-hotkey", subscription)
     return () => {
       ipcRenderer.removeListener("new-chat-hotkey", subscription)
+    }
+  },
+
+  onCollapseHotkey: (callback: () => void) => {
+    const subscription = () => callback()
+    ipcRenderer.on("collapse-hotkey", subscription)
+    return () => {
+      ipcRenderer.removeListener("collapse-hotkey", subscription)
     }
   },
 

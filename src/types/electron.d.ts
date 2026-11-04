@@ -89,6 +89,7 @@ export interface ElectronAPI {
   onAskAiHotkey: (callback: () => void) => () => void
   onRecordHotkey: (callback: () => void) => () => void
   onNewChatHotkey: (callback: () => void) => () => void
+  onCollapseHotkey: (callback: () => void) => () => void
   onContentLimits: (
     callback: (limits: { maxHeight: number; maxWidth: number }) => void
   ) => () => void

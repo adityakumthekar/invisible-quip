@@ -30,4 +30,14 @@ describe("global accelerators", () => {
     const newChat = SHORTCUTS.find((s) => s.action === "New chat")
     expect(newChat?.keys).toEqual(["⌘", "N"])
   })
+
+  it("binds collapse-to-blob to its own key, distinct from hiding the window", () => {
+    expect(GLOBAL_ACCELERATORS.COLLAPSE).toBe("CommandOrControl+Shift+B")
+    expect(GLOBAL_ACCELERATORS.COLLAPSE).not.toBe(GLOBAL_ACCELERATORS.TOGGLE)
+  })
+
+  it("lists collapse in the UI shortcut list so it is discoverable", () => {
+    const collapse = SHORTCUTS.find((s) => s.action === "Collapse to blob")
+    expect(collapse?.keys).toEqual(["⌘", "⇧", "B"])
+  })
 })

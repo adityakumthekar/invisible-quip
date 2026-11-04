@@ -45,9 +45,9 @@ const MainApp: React.FC = () => {
   useEffect(() => {
     const unsubscribe = window.electronAPI.onContentLimits(
       ({ maxHeight, maxWidth }) => {
-        // Control bar + panel header + input row + the pb-8 shadow guard, none
+        // Control bar + panel header + input row + the pb-1 ring guard, none
         // of which live inside the scroller.
-        const CHROME_PX = 150
+        const CHROME_PX = 122
         const budget = Math.max(200, maxHeight - CHROME_PX)
         document.documentElement.style.setProperty("--chat-max-h", `${budget}px`)
 

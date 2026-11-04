@@ -5,14 +5,9 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: [
-          "-apple-system",
-          "BlinkMacSystemFont",
-          '"SF Pro Text"',
-          '"Segoe UI"',
-          "system-ui",
-          "sans-serif"
-        ]
+        /* The faces live in src/tokens.css; these only point at them. */
+        sans: ["var(--font-body)"],
+        mono: ["var(--font-mono)"]
       },
       /* Surfaced so components can theme with `bg-glass-hover` etc. instead of
          hardcoding `bg-white/10`, which ignored the token system entirely.
@@ -33,7 +28,9 @@ module.exports = {
           danger: "var(--glass-danger)",
           success: "var(--glass-success)",
           warning: "var(--glass-warning)"
-        }
+        },
+        signal: "var(--signal)",
+        live: "var(--live)"
       },
       borderColor: {
         glass: {
