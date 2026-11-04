@@ -58,7 +58,7 @@ const SolutionCommands: React.FC<SolutionCommandsProps> = ({
 
         <button
           type="button"
-          className="icon-btn no-drag text-red-300/80"
+          className="icon-btn icon-btn-danger no-drag"
           title="Quit"
           onClick={() => window.electronAPI.quitApp()}
         >

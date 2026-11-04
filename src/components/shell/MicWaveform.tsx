@@ -35,6 +35,9 @@ const LevelBars: React.FC<{
 }> = ({ stream, width, dimmed, watchForSilence }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [dead, setDead] = useState(false)
+  // Read by the draw loop, which is built once per stream.
+  const deadRef = useRef(false)
+  deadRef.current = dead
 
   useEffect(() => {
     setDead(false)
@@ -51,10 +54,11 @@ const LevelBars: React.FC<{
     const data = new Uint8Array(analyser.frequencyBinCount)
     const samples = new Uint8Array(analyser.fftSize)
 
-    const accent =
-      getComputedStyle(document.documentElement)
-        .getPropertyValue("--glass-accent")
-        .trim() || "#8fb0ff"
+    // Live green while signal flows; the danger hue once a routed device has
+    // gone exactly silent. Both come from tokens.css.
+    const rootStyle = getComputedStyle(document.documentElement)
+    const live = rootStyle.getPropertyValue("--live").trim()
+    const danger = rootStyle.getPropertyValue("--glass-danger").trim()
 
     const startedAt = performance.now()
     let lastSound = startedAt
@@ -82,7 +86,7 @@ const LevelBars: React.FC<{
       const w = canvas.width
       const h = canvas.height
       c.clearRect(0, 0, w, h)
-      c.fillStyle = accent
+      c.fillStyle = deadRef.current ? danger : live
       const step = Math.floor(data.length / BARS)
       const bw = w / BARS
       for (let i = 0; i < BARS; i++) {
@@ -106,13 +110,11 @@ const LevelBars: React.FC<{
       ref={canvasRef}
       width={width}
       height={16}
-      title={dead ? "No system audio — check your macOS Output device" : undefined}
-      className={cn(
-        "block",
-        dimmed && "opacity-30",
-        // Red is the only signal the user gets while the clip is still running.
-        dead && "opacity-60 [filter:hue-rotate(140deg)_saturate(3)]"
-      )}
+      aria-hidden
+      title={dead ? "No system audio. Check your macOS Output device." : undefined}
+      // Red bars are the only signal the user gets while the clip is still
+      // running; the draw loop switches the fill.
+      className={cn("block", dimmed && "opacity-30")}
     />
   )
 }
@@ -132,18 +134,19 @@ const MicWaveform: React.FC<MicWaveformProps> = ({
   }
 
   return (
-    <div className="no-drag flex items-center gap-2 px-2">
-      <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse" />
-      <span className="text-[11px] tabular-nums glass-muted">
+    <div className="no-drag flex items-center gap-2 px-1.5">
+      {/* The Stop pill beside this already says a clip is running; the clock
+          says for how long. */}
+      <span className="readout glass-danger-text" role="timer" aria-label="Recording time">
         {formatTime(seconds)}
       </span>
       {systemStream ? (
         // Two channels means each needs naming, and the bars have to shrink to
         // keep the bar from outgrowing the window it is auto-sized to.
         <>
-          <span className="text-[10px] glass-subtle">You</span>
+          <span className="readout">you</span>
           <LevelBars stream={stream} width={40} dimmed={muted} />
-          <span className="text-[10px] glass-subtle">Them</span>
+          <span className="readout">them</span>
           <LevelBars stream={systemStream} width={40} watchForSilence />
         </>
       ) : (
@@ -153,10 +156,12 @@ const MicWaveform: React.FC<MicWaveformProps> = ({
         type="button"
         onClick={toggleMute}
         title={muted ? "Unmute mic" : "Mute mic"}
-        className="p-1 rounded-md glass-icon hover:text-glass-heading hover:bg-glass-hover"
+        aria-label={muted ? "Unmute mic" : "Mute mic"}
+        aria-pressed={muted}
+        className="icon-btn !px-1.5 glass-icon"
       >
         {muted ? (
-          <MicOff className="w-3.5 h-3.5 text-red-300" strokeWidth={1.75} />
+          <MicOff className="w-3.5 h-3.5 text-glass-danger" strokeWidth={1.75} />
         ) : (
           <Mic className="w-3.5 h-3.5" strokeWidth={1.75} />
         )}

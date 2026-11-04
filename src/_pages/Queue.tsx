@@ -992,9 +992,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       {/* Bottom padding is load-bearing: the window is sized to this element's
           scrollHeight, and box-shadows don't contribute to layout, so anything
           the surfaces cast beyond this padding is clipped off at the
-          transparent window edge. Keep pb >= the largest shadow reach
-          (offset + blur/2) in index.css. */}
-      <div className="px-3 pt-2 pb-8 space-y-3">
+          transparent window edge. The surfaces carry only a 1px contact ring,
+          so pb-1 covers it. Re-adding a blurred shadow in index.css means
+          growing this, and CHROME_PX in App.tsx, by its reach. */}
+      <div className="px-3 pt-2 pb-1 space-y-3">
         <Toast
           open={toastOpen}
           onOpenChange={setToastOpen}

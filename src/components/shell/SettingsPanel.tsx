@@ -130,7 +130,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       const config = await window.electronAPI.getCurrentLlmConfig()
       setSelectedProvider(config.provider)
       if (config.stt) setSttProvider(config.stt)
-      setCurrentLabel(`${config.provider} · ${config.model}`)
+      setCurrentLabel(`${config.model} on ${config.provider}`)
       if (config.isOllama) {
         setSelectedOllamaModel(config.model)
         await loadOllamaModels()
@@ -274,9 +274,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   )
 
   return (
-    <div className="glass-panel-dark panel-enter w-[336px] p-3 no-drag">
-      {/* Tab strip */}
-      <div className="flex items-center gap-0.5 rounded-lg bg-glass-soft border border-glass p-0.5">
+    <div className="glass-panel-dark panel-enter flex w-[456px] gap-1 p-1.5 no-drag">
+      {/* Eight destinations earn a rail: with labels, a tab says what it holds
+          instead of asking you to decode its icon. */}
+      <nav
+        aria-label="Settings sections"
+        className="flex w-[116px] shrink-0 flex-col gap-0.5 border-r border-glass pr-1.5"
+      >
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -284,22 +288,18 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             title={label}
             onClick={() => setTab(id)}
             aria-pressed={tab === id}
-            className={cn(
-              "flex-1 flex items-center justify-center rounded-md py-1.5 transition-colors",
-              tab === id
-                ? "glass-action"
-                : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
-            )}
+            className="rail-option flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px]"
           >
-            <Icon className="w-3.5 h-3.5" strokeWidth={1.75} />
+            <Icon className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} aria-hidden />
+            <span className="truncate">{label}</span>
           </button>
         ))}
-      </div>
+      </nav>
 
-      <div className="pt-3 space-y-3">
+      <div className="min-w-0 flex-1 space-y-3 px-2 py-1.5">
         {tab === "modes" && (
           <>
-            <p className="text-[11px] uppercase tracking-wide glass-muted">
+            <p className="label">
               Mode
             </p>
             <div className="grid grid-cols-1 gap-1">
@@ -335,7 +335,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {tab === "profile" && (
           <>
             <div className="flex items-center justify-between">
-              <p className="text-[11px] uppercase tracking-wide glass-muted">
+              <p className="label">
                 About you
               </p>
               <span className="text-[11px] glass-subtle tabular-nums">
@@ -359,10 +359,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {tab === "provider" && (
           <>
             <div className="flex items-center justify-between">
-              <p className="text-[11px] uppercase tracking-wide glass-muted">
+              <p className="label">
                 AI provider
               </p>
-              <span className="text-[11px] glass-subtle truncate max-w-[150px]">
+              <span
+                className={cn(
+                  "readout glass-badge truncate max-w-[170px]",
+                  status === "err" && "glass-danger-text"
+                )}
+                role="status"
+              >
                 {status === "working"
                   ? "Working…"
                   : status === "ok"
@@ -372,16 +378,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       : currentLabel}
               </span>
             </div>
-            <div className="grid grid-cols-3 gap-1 p-0.5 rounded-lg bg-glass-soft border border-glass">
+            <div className="glass-well grid grid-cols-3 gap-0.5 p-0.5">
               <button
                 type="button"
                 onClick={() => setSelectedProvider("gemini")}
-                className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
-                  selectedProvider === "gemini"
-                    ? "glass-action"
-                    : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
-                )}
+                aria-pressed={selectedProvider === "gemini"}
+                className="seg-option flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11.5px]"
               >
                 <Cloud className="w-3 h-3" strokeWidth={1.75} />
                 Gemini
@@ -389,12 +391,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedProvider("ollama")}
-                className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
-                  selectedProvider === "ollama"
-                    ? "glass-action"
-                    : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
-                )}
+                aria-pressed={selectedProvider === "ollama"}
+                className="seg-option flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11.5px]"
               >
                 <Home className="w-3 h-3" strokeWidth={1.75} />
                 Ollama
@@ -402,12 +400,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedProvider("bedrock")}
-                className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
-                  selectedProvider === "bedrock"
-                    ? "glass-action"
-                    : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
-                )}
+                aria-pressed={selectedProvider === "bedrock"}
+                className="seg-option flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11.5px]"
               >
                 <Server className="w-3 h-3" strokeWidth={1.75} />
                 Bedrock
@@ -425,11 +419,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     ["Groq key (voice)", "password", "Optional if already set", groqApiKey, setGroqApiKey]
                   ] as const
                 ).map(([label, type, placeholder, value, setValue]) => (
-                  <div key={label} className="space-y-1.5">
-                    <label className="text-[11px] uppercase tracking-wide glass-muted">
+                  <div key={label} className="space-y-1">
+                    <label className="label" htmlFor={`bedrock-${label}`}>
                       {label}
                     </label>
                     <input
+                      id={`bedrock-${label}`}
                       type={type}
                       placeholder={placeholder}
                       value={value}
@@ -439,7 +434,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   </div>
                 ))}
                 <div className="space-y-1.5">
-                  <label className="text-[11px] uppercase tracking-wide glass-muted">
+                  <label className="label">
                     Voice transcription
                   </label>
                   <select
@@ -447,18 +442,18 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     onChange={(e) => setSttProvider(e.target.value as "sarvam" | "groq")}
                     className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
                   >
-                    <option value="sarvam" className="bg-neutral-900">
-                      Sarvam · best for Indian English
+                    <option value="sarvam">
+                      Sarvam (best for Indian English)
                     </option>
-                    <option value="groq" className="bg-neutral-900">
-                      Groq Whisper · no 30 s limit
+                    <option value="groq">
+                      Groq Whisper (no 30 s limit)
                     </option>
                   </select>
                 </div>
               </div>
             ) : selectedProvider === "gemini" ? (
               <div className="space-y-1.5">
-                <label className="text-[11px] uppercase tracking-wide glass-muted">
+                <label className="label">
                   API key
                 </label>
                 <input
@@ -472,7 +467,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             ) : (
               <div className="space-y-2.5">
                 <div className="space-y-1.5">
-                  <label className="text-[11px] uppercase tracking-wide glass-muted">
+                  <label className="label">
                     Ollama URL
                   </label>
                   <input
@@ -484,7 +479,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 </div>
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-[11px] uppercase tracking-wide glass-muted">
+                    <label className="label">
                       Model
                     </label>
                     <button
@@ -503,9 +498,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       className="glass-control w-full rounded-lg px-3 py-2 text-[12px]"
                     >
                       {availableOllamaModels.map((m) => (
-                        <option key={m} value={m} className="bg-neutral-900">
+                        <option key={m} value={m}>
                           {m}
-                          {visionByModel[m] ? " · sees screen" : ""}
+                          {visionByModel[m] ? " (sees screen)" : ""}
                         </option>
                       ))}
                     </select>
@@ -527,7 +522,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     <button
                       type="button"
                       onClick={() => void installVisionModel()}
-                      className="glass-action flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[11px]"
+                      className="glass-action flex w-full items-center justify-center gap-1.5 rounded-full px-3 py-2 text-[11.5px]"
                     >
                       <Download className="w-3 h-3" strokeWidth={1.75} />
                       Install {RECOMMENDED_VISION_MODEL}
@@ -536,25 +531,25 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
                   {pullProgress && (
                     <div className="space-y-1" role="status">
-                      <div className="flex items-center justify-between text-[11px] glass-muted">
+                      <div className="readout flex items-center justify-between">
                         <span>{pullProgress.status}</span>
                         {pullProgress.percent !== undefined && (
-                          <span className="tabular-nums">
-                            {pullProgress.percent}%
-                          </span>
+                          <span>{pullProgress.percent}%</span>
                         )}
                       </div>
-                      <div className="h-1 w-full overflow-hidden rounded-full bg-glass-soft">
+                      <div className="progress-track">
                         <div
-                          className="h-full rounded-full bg-white/60 transition-[width]"
-                          style={{ width: `${pullProgress.percent ?? 0}%` }}
+                          className="progress-fill"
+                          style={{
+                            transform: `scaleX(${(pullProgress.percent ?? 0) / 100})`
+                          }}
                         />
                       </div>
                     </div>
                   )}
 
                   {pullError && (
-                    <p className="text-[11px] glass-text" role="alert">
+                    <p className="text-[11.5px] glass-danger-text" role="alert">
                       {pullError}
                     </p>
                   )}
@@ -567,7 +562,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 type="button"
                 onClick={() => void apply()}
                 disabled={status === "working"}
-                className="glass-action flex-1 min-h-7 rounded-lg py-2 text-[11px] font-medium disabled:opacity-50"
+                aria-busy={status === "working"}
+                className="glass-primary flex-1 min-h-8 rounded-full py-1.5 text-[12px] lowercase"
               >
                 Apply
               </button>
@@ -575,7 +571,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 type="button"
                 onClick={() => void test()}
                 disabled={status === "working"}
-                className="glass-control min-h-7 rounded-lg px-3 py-2 text-[11px] hover:bg-glass-hover disabled:opacity-50"
+                className="glass-action min-h-8 rounded-full px-4 py-1.5 text-[12px] lowercase"
               >
                 Test
               </button>
@@ -586,14 +582,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {tab === "appearance" && (
           <>
             <div className="flex items-center justify-between">
-              <label className="text-[11px] uppercase tracking-wide glass-muted">
+              <label className="label">
                 Theme
               </label>
-              <span className="text-[11px] glass-subtle capitalize">
+              <span className="readout capitalize">
                 {glassTheme === "royal" ? "Royal blue" : glassTheme}
               </span>
             </div>
-            <div className="grid grid-cols-3 gap-1 rounded-lg bg-glass-soft p-0.5 border border-glass">
+            <div className="glass-well grid grid-cols-3 gap-0.5 p-0.5">
               {(
                 [
                   ["neutral", "Neutral"],
@@ -609,12 +605,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     setGlassTheme(theme)
                   }}
                   aria-pressed={glassTheme === theme}
-                  className={cn(
-                    "flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11px] transition-colors",
-                    glassTheme === theme
-                      ? "glass-action"
-                      : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
-                  )}
+                  className="seg-option flex items-center justify-center gap-1.5 rounded-md py-1.5 text-[11.5px]"
                 >
                   <span className={`theme-swatch theme-swatch-${theme}`} />
                   {label}
@@ -622,10 +613,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               ))}
             </div>
             <div className="space-y-1.5">
-              <label className="text-[11px] uppercase tracking-wide glass-muted">
+              <label className="label">
                 Glass strength
               </label>
-              <div className="grid grid-cols-3 gap-1 rounded-lg bg-glass-soft p-0.5 border border-glass">
+              <div className="glass-well grid grid-cols-3 gap-0.5 p-0.5">
                 {(
                   [
                     ["clear", "Clear"],
@@ -641,12 +632,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       setGlassStrength(strength)
                     }}
                     aria-pressed={glassStrength === strength}
-                    className={cn(
-                      "min-h-7 rounded-md px-1.5 text-[11px] transition-colors",
-                      glassStrength === strength
-                        ? "glass-action"
-                        : "glass-muted hover:bg-glass-hover hover:text-glass-heading"
-                    )}
+                    className="seg-option min-h-7 rounded-md px-1.5 text-[11.5px]"
                   >
                     {label}
                   </button>
@@ -663,7 +649,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 key={s.action}
                 className="flex items-center justify-between gap-3"
               >
-                <span className="text-[11px] glass-muted">{s.action}</span>
+                <span className="text-[12px] glass-muted">{s.action}</span>
                 <span className="flex gap-1">
                   {s.keys.map((k, i) => (
                     <span key={i} className="kbd">
@@ -681,16 +667,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {tab === "audio" && <SystemAudioPanel />}
 
         {tab === "about" && (
-          <div className="space-y-2 text-[11px] glass-muted">
-            <p className="text-[13px] font-semibold glass-heading">Quip</p>
+          <div className="space-y-2 text-[12px] glass-muted">
+            <h3 className="panel-title">Quip</h3>
             <p className="leading-relaxed">
-              An invisible, always-on-top AI assistant — real-time answers,
+              An invisible, always-on-top AI assistant: real-time answers,
               screenshot analysis, and audio insights.
             </p>
-            <div className="flex items-center justify-between">
-              <span>Provider</span>
-              <span className="glass-text truncate max-w-[160px]">
-                {currentLabel || "—"}
+            <div className="flex items-center justify-between gap-3 border-t border-glass pt-2">
+              <span className="label">Provider</span>
+              <span className="readout glass-badge truncate max-w-[180px]">
+                {currentLabel || "Not set"}
               </span>
             </div>
           </div>
@@ -709,12 +695,7 @@ const ModeRow: React.FC<{
     type="button"
     onClick={onClick}
     aria-pressed={active}
-    className={cn(
-      "w-full text-left rounded-lg px-3 py-2 text-[12px] transition-colors",
-      active
-        ? "glass-action"
-        : "glass-control glass-muted hover:bg-glass-hover hover:text-glass-heading"
-    )}
+    className="rail-option w-full text-left rounded-md px-3 py-1.5 text-[12.5px]"
   >
     {label}
   </button>
