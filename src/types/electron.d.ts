@@ -89,6 +89,7 @@ export interface ElectronAPI {
   onAskAiHotkey: (callback: () => void) => () => void
   onRecordHotkey: (callback: () => void) => () => void
   onNewChatHotkey: (callback: () => void) => () => void
+  onCollapseHotkey: (callback: () => void) => () => void
   onContentLimits: (
     callback: (limits: { maxHeight: number; maxWidth: number }) => void
   ) => () => void
@@ -101,7 +102,7 @@ export interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
-  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[], system?: { data: string; mimeType: string }) => Promise<{ transcript: string; turns: { speaker: "you" | "them"; text: string }[]; text: string; timestamp: number }>
+  analyzeAudioFromBase64: (data: string, mimeType: string, history?: { role: "user" | "gemini"; text: string }[], system?: { data: string; mimeType: string }, chunks?: { mic: { data: string; mimeType: string }[]; system?: { data: string; mimeType: string }[] }) => Promise<{ transcript: string; turns: { speaker: "you" | "them"; text: string }[]; text: string; timestamp: number }>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   teachStart: (goal: string) => Promise<TeachingResult>
   teachNext: () => Promise<TeachingResult>
@@ -158,9 +159,10 @@ export interface ElectronAPI {
 
   quitApp: () => Promise<void>
   getCurrentLlmConfig: () => Promise<{
-    provider: "ollama" | "gemini"
+    provider: "ollama" | "gemini" | "bedrock"
     model: string
     isOllama: boolean
+    stt: "sarvam" | "groq" | null
   }>
   getAvailableOllamaModels: () => Promise<string[]>
   getOllamaModelCapabilities: (model: string) => Promise<{ vision: boolean }>
@@ -177,6 +179,14 @@ export interface ElectronAPI {
   switchToGemini: (
     apiKey?: string
   ) => Promise<{ success: boolean; error?: string }>
+  switchToBedrock: (opts?: {
+    apiKey?: string
+    region?: string
+    modelId?: string
+    sarvamApiKey?: string
+    groqApiKey?: string
+    sttProvider?: "sarvam" | "groq"
+  }) => Promise<{ success: boolean; error?: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   onChatStreamChunk: (
     callback: (data: { requestId: string; delta: string }) => void
@@ -186,6 +196,13 @@ export interface ElectronAPI {
   ) => () => void
   onChatStreamError: (
     callback: (data: { requestId: string; message: string }) => void
+  ) => () => void
+  onChatStreamTranscript: (
+    callback: (data: {
+      requestId: string
+      transcript: string
+      turns: { speaker: "you" | "them"; text: string }[]
+    }) => void
   ) => () => void
   invoke: (channel: string, ...args: any[]) => Promise<any>
 }

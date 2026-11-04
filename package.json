@@ -39,6 +39,10 @@
       {
         "from": ".env",
         "to": ".env"
+      },
+      {
+        "from": "quip.models.json",
+        "to": "quip.models.json"
       }
     ],
     "mac": {
@@ -139,8 +143,10 @@
     "wait-on": "^8.0.1"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1161.0",
     "@capacitor/android": "^8.5.0",
     "@capacitor/core": "^8.5.0",
+    "@fontsource/architects-daughter": "^5.3.0",
     "@google/generative-ai": "^0.2.1",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@radix-ui/react-dialog": "^1.1.2",

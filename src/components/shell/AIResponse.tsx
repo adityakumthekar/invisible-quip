@@ -4,7 +4,6 @@ import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
-import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
 import {
   Check,
   Copy,
@@ -18,6 +17,7 @@ import {
 } from "lucide-react"
 import { cn } from "../../lib/utils"
 import { languageFromClassName } from "../../lib/codeLanguage"
+import { overlayCodeTheme } from "../../lib/codeTheme"
 import { copyableText, extractCodeBlocks } from "../../lib/markdownCode"
 import {
   formatClock,
@@ -76,7 +76,7 @@ const CopyButton: React.FC<{
     <button
       type="button"
       className={cn(
-        "no-drag p-1.5 rounded-md glass-icon hover:text-white hover:bg-glass-hover",
+        "icon-btn no-drag !px-1.5 glass-icon",
         className
       )}
       onClick={() => copy(text)}
@@ -114,7 +114,7 @@ const CodeBlock: React.FC<{ className?: string; children?: React.ReactNode }> = 
       <div className="chat-code-scroll">
         <SyntaxHighlighter
           language={language ?? undefined}
-          style={dracula}
+          style={overlayCodeTheme}
           PreTag="div"
           customStyle={{
             margin: 0,
@@ -131,33 +131,34 @@ const CodeBlock: React.FC<{ className?: string; children?: React.ReactNode }> = 
   )
 }
 
-// One 11px line per turn. On a 560px translucent panel over an arbitrary
+// One readout line per turn. On a 560px translucent panel over an arbitrary
 // desktop, avatars and chat bubbles cost width and contrast without adding
 // information — the source icon and the clock are what make a long mixed
-// session scannable.
+// session scannable. Columns, not a dotted string: who, how, how long, when.
 const SOURCE_META: Record<
   ChatMessage["source"],
-  { icon: typeof Mic; label: string }
+  { icon: typeof Mic; label: string; channel?: string }
 > = {
   typed: { icon: MessageSquare, label: "You" },
-  voice: { icon: Mic, label: "You · voice" },
+  voice: { icon: Mic, label: "You", channel: "voice" },
   screen: { icon: MonitorDot, label: "Screen" },
   system: { icon: Settings2, label: "Quip" }
 }
 
 const TurnHeader: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
-  const { icon: Icon, label: sourceLabel } = SOURCE_META[msg.source]
+  const { icon: Icon, label: sourceLabel, channel } = SOURCE_META[msg.source]
   // The other side of the call is still a "user" turn, but labelling it "You"
   // would attribute the interviewer's question to the person reading it.
-  const label = msg.speaker === "them" ? "Them · voice" : sourceLabel
+  const label = msg.speaker === "them" ? "Them" : sourceLabel
   return (
-    <div className="flex items-center gap-1.5 text-[11px] glass-subtle mb-1">
-      <Icon className="w-3 h-3 shrink-0" strokeWidth={1.75} />
-      <span className="truncate">{label}</span>
+    <div className="readout flex items-center gap-2 mb-1">
+      <Icon className="w-3 h-3 shrink-0" strokeWidth={1.75} aria-hidden />
+      <span className="truncate lowercase">{label}</span>
+      {channel && <span className="lowercase">{channel}</span>}
       {msg.durationSec !== undefined && (
-        <span className="tabular-nums">· {formatDuration(msg.durationSec)}</span>
+        <span>{formatDuration(msg.durationSec)}</span>
       )}
-      <span className="ml-auto tabular-nums">{formatClock(msg.at)}</span>
+      <span className="ml-auto">{formatClock(msg.at)}</span>
     </div>
   )
 }
@@ -250,7 +251,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
   return (
     <div
       className={cn(
-        "glass-panel-dark panel-enter flex flex-col w-full overflow-hidden transition-[min-height] duration-200",
+        "glass-panel-dark panel-enter flex flex-col w-full overflow-hidden",
         "min-h-0",
         className
       )}
@@ -260,18 +261,16 @@ const AIResponse: React.FC<AIResponseProps> = ({
     >
       <div
         className={cn(
-          "flex items-center justify-between gap-2 px-4 pt-3.5 pb-2.5",
+          "flex items-center justify-between gap-2 pl-4 pr-2 pt-2.5 pb-2",
           hasContent && "border-b border-glass"
         )}
       >
         <div className="flex items-baseline gap-2 min-w-0">
-          <h2 className="text-[13px] font-semibold tracking-tight glass-heading">
-            {title}
-          </h2>
+          <h2 className="panel-title">{title}</h2>
+          {/* On a chip: chrome text has no scrim, and this one is always
+              visible before the first question. */}
           {!hasContent && (
-            <span className="text-[11px] glass-subtle truncate">
-              {modelLabel}
-            </span>
+            <span className="readout glass-badge truncate">{modelLabel}</span>
           )}
         </div>
         <div className="flex items-center gap-0.5">
@@ -283,7 +282,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
           {onClose && (
             <button
               type="button"
-              className="no-drag p-1.5 rounded-md glass-icon hover:text-white hover:bg-glass-hover"
+              className="icon-btn no-drag !px-1.5 glass-icon"
               onClick={onClose}
               aria-label="Close"
             >
@@ -301,6 +300,8 @@ const AIResponse: React.FC<AIResponseProps> = ({
           className="glass-reading flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[120px]"
         >
           {messages.map((msg, idx) => {
+            // The live question is the one the scroller anchors to.
+            const current = msg.id === anchorId
             // One hairline per exchange, so consecutive turns of the same
             // exchange stay visually joined.
             const rule = startsExchange(messages[idx - 1], msg)
@@ -311,7 +312,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
                   key={msg.id}
                   data-msg-id={msg.id}
                   className={cn(
-                    "text-[11px] glass-subtle text-center",
+                    "readout text-center",
                     rule && "border-t border-glass pt-3"
                   )}
                 >
@@ -336,7 +337,12 @@ const AIResponse: React.FC<AIResponseProps> = ({
                     {/* A header-only turn is how a screen glance or a silent
                         clip shows its provenance without a body. */}
                     {msg.text && (
-                      <p className="pl-3 border-l-2 border-glass">{msg.text}</p>
+                      <p
+                        className="turn-question"
+                        data-current={current ? "true" : "false"}
+                      >
+                        {msg.text}
+                      </p>
                     )}
                   </>
                 ) : (
@@ -354,14 +360,16 @@ const AIResponse: React.FC<AIResponseProps> = ({
             )
           })}
           {loading && (
-            <p className="text-xs glass-muted animate-pulse">Thinking…</p>
+            <p className="readout motion-safe:animate-pulse" role="status">
+              Thinking…
+            </p>
           )}
         </div>
       )}
 
       <form
         className={cn(
-          "no-drag flex items-center gap-1.5 px-3 pb-3 pt-2.5",
+          "no-drag flex items-center gap-1.5 px-2 pb-2 pt-2",
           // Conditional, or an empty panel renders two abutting 1px lines.
           hasContent && "border-t border-glass"
         )}
@@ -379,16 +387,17 @@ const AIResponse: React.FC<AIResponseProps> = ({
               : "Include a screenshot"
           }
           aria-pressed={includeScreen}
+          aria-label={includeScreen ? "Screen attached" : "Attach screen"}
           className={cn(
-            "p-2 rounded-lg border transition-colors",
-            includeScreen ? "glass-action" : "glass-control glass-icon"
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+            includeScreen ? "glass-action !text-signal" : "glass-control glass-icon"
           )}
         >
           <Monitor className="w-3.5 h-3.5" strokeWidth={1.75} />
         </button>
         <input
           ref={inputRef}
-          className="glass-control flex-1 rounded-lg px-3 py-2 text-[12.5px]"
+          className="glass-control h-8 min-w-0 flex-1 rounded-full px-3.5 text-[13px]"
           placeholder={
             includeScreen ? "Ask about your screen…" : "Ask a follow-up…"
           }
@@ -399,7 +408,7 @@ const AIResponse: React.FC<AIResponseProps> = ({
         <button
           type="submit"
           disabled={loading || !input.trim()}
-          className="glass-action p-2 rounded-lg disabled:opacity-40"
+          className="glass-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
           aria-label="Send"
         >
           <Send className="w-3.5 h-3.5" strokeWidth={1.75} />

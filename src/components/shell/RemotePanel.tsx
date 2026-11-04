@@ -1,3 +1,4 @@
+import { cn } from "../../lib/utils"
 import React, { useCallback, useEffect, useReducer, useState } from "react"
 import QRCode from "qrcode"
 import { AlertTriangle, Smartphone, Trash2 } from "lucide-react"
@@ -141,7 +142,7 @@ const RemotePanel: React.FC = () => {
       <div className="mt-4 space-y-3">
         <div className="flex items-start gap-2">
           <AlertTriangle
-            className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon"
+            className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon" aria-hidden="true"
             strokeWidth={1.75}
           />
           <p className="text-[11.5px] leading-relaxed glass-text">
@@ -150,7 +151,7 @@ const RemotePanel: React.FC = () => {
         </div>
         <button
           type="button"
-          className="glass-action rounded-lg px-3 py-2 text-[11px]"
+          className="glass-primary rounded-full px-3.5 py-1.5 text-[12px]"
           onClick={() =>
             guard(async () => {
               await window.electronAPI.remoteAcknowledgeConsent()
@@ -158,7 +159,7 @@ const RemotePanel: React.FC = () => {
             })
           }
         >
-          I understand — enable remote control
+          I understand, enable remote control
         </button>
       </div>
     )
@@ -183,7 +184,10 @@ const RemotePanel: React.FC = () => {
           type="button"
           disabled={busy}
           onClick={toggleServer}
-          className="glass-action rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+          className={cn(
+            "rounded-full px-3.5 py-1.5 text-[12px] lowercase shrink-0",
+            state.server.running ? "glass-action" : "glass-primary"
+          )}
         >
           {state.server.running ? "Turn off" : "Turn on"}
         </button>
@@ -213,24 +217,24 @@ const RemotePanel: React.FC = () => {
             type="button"
             disabled={busy}
             onClick={generateCode}
-            className="glass-action rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+            className="glass-primary rounded-full px-3.5 py-1.5 text-[12px] lowercase"
           >
             {state.pairingCode ? "New pairing code" : "Generate pairing code"}
           </button>
 
           {state.pairingCode && (
-            <div className="rounded-lg bg-glass-soft px-3 py-3 space-y-2">
-              <p className="text-[22px] tracking-[0.3em] tabular-nums glass-heading">
+            <div className="glass-well px-3 py-3 space-y-2">
+              <p className="font-mono text-[22px] tracking-[0.2em] num glass-heading">
                 {state.pairingCode.code}
               </p>
-              <p className="text-[11px] glass-muted">
-                Expires in {secondsLeft}s · works once
+              <p className="readout">
+                Expires in {secondsLeft}s. Works once.
               </p>
               {qr && (
                 <img
                   src={qr}
                   alt="Pairing QR code"
-                  className="w-40 h-40 rounded bg-white p-1"
+                  className="w-40 h-40 rounded bg-[var(--qr-paper)] p-1"
                 />
               )}
             </div>
@@ -241,8 +245,8 @@ const RemotePanel: React.FC = () => {
       {/* Screen control is a second, larger grant than remote autopilot, so it
           gets its own notice and its own switch rather than riding along on the
           one above. See REMOTE_INPUT_CONSENT_TEXT. */}
-      <div className="space-y-2 rounded-lg bg-glass-soft px-3 py-3">
-        <p className="text-[11px] uppercase tracking-wide glass-muted">
+      <div className="space-y-2 glass-well px-3 py-3">
+        <p className="label">
           Screen control
         </p>
 
@@ -260,9 +264,9 @@ const RemotePanel: React.FC = () => {
                   await refresh()
                 })
               }
-              className="glass-action rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+              className="glass-primary rounded-full px-3.5 py-1.5 text-[12px]"
             >
-              I understand — let my phone control this screen
+              I understand, let my phone control this screen
             </button>
           </>
         ) : (
@@ -290,7 +294,7 @@ const RemotePanel: React.FC = () => {
                   await refresh()
                 })
               }
-              className="glass-action rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+              className="glass-action rounded-full px-3.5 py-1.5 text-[12px] lowercase"
             >
               {state.inputConsent.allowed ? "Turn off" : "Turn on"}
             </button>
@@ -299,7 +303,7 @@ const RemotePanel: React.FC = () => {
       </div>
 
       <div className="space-y-2">
-        <p className="text-[11px] uppercase tracking-wide glass-muted">
+        <p className="label">
           Paired devices
         </p>
         {state.devices.length === 0 ? (
@@ -332,7 +336,7 @@ const RemotePanel: React.FC = () => {
                   disabled={busy}
                   onClick={() => revoke(device.id)}
                   aria-label={`Revoke ${device.name}`}
-                  className="glass-control flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] glass-text disabled:opacity-40"
+                  className="glass-action flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] lowercase"
                 >
                   <Trash2 className="w-3 h-3" strokeWidth={1.75} />
                   Revoke

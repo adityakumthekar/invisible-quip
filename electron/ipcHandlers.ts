@@ -838,9 +838,9 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   // IPC handler for analyzing audio from base64 data
-  ipcMain.handle("analyze-audio-base64", async (event, data: string, mimeType: string, history: ChatTurn[] = [], system?: { data: string; mimeType: string }) => {
+  ipcMain.handle("analyze-audio-base64", async (event, data: string, mimeType: string, history: ChatTurn[] = [], system?: { data: string; mimeType: string }, chunks?: { mic: { data: string; mimeType: string }[]; system?: { data: string; mimeType: string }[] }) => {
     try {
-      const result = await appState.processingHelper.processAudioBase64(data, mimeType, history, system)
+      const result = await appState.processingHelper.processAudioBase64(data, mimeType, history, system, chunks)
       return result
     } catch (error: any) {
       console.error("Error in analyze-audio-base64 handler:", error)
@@ -977,6 +977,38 @@ export function initializeIpcHandlers(appState: AppState): void {
         appState.processingHelper
           .getLLMHelper()
           .analyzeImageFileStream(imagePath, onChunk, signal)
+      )
+  )
+
+  // The record button. The transcript goes out on its own event as soon as it
+  // is known, so the spoken turns appear before the answer starts streaming.
+  ipcMain.handle(
+    "analyze-audio-stream",
+    async (
+      event,
+      requestId: string,
+      data: string,
+      mimeType: string,
+      history: ChatTurn[] = [],
+      system?: { data: string; mimeType: string },
+      chunks?: { mic: { data: string; mimeType: string }[]; system?: { data: string; mimeType: string }[] }
+    ) =>
+      runChatStream(event, requestId, (onChunk, signal) =>
+        appState.processingHelper
+          .getLLMHelper()
+          .analyzeAudioStream(
+            data,
+            mimeType,
+            (transcript, turns) => {
+              if (signal.aborted || event.sender.isDestroyed()) return
+              event.sender.send("chat-stream-transcript", { requestId, transcript, turns })
+            },
+            onChunk,
+            signal,
+            history,
+            system,
+            chunks
+          )
       )
   )
 
@@ -1215,7 +1247,8 @@ export function initializeIpcHandlers(appState: AppState): void {
       return {
         provider: llmHelper.getCurrentProvider(),
         model: llmHelper.getCurrentModel(),
-        isOllama: llmHelper.isUsingOllama()
+        isOllama: llmHelper.isUsingOllama(),
+        stt: llmHelper.getCurrentStt()
       };
     } catch (error: any) {
       console.error("Error getting current LLM config:", error);
@@ -1252,6 +1285,17 @@ export function initializeIpcHandlers(appState: AppState): void {
       return { success: true };
     } catch (error: any) {
       console.error("Error switching to Gemini:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("switch-to-bedrock", async (_, opts: { apiKey?: string; region?: string; modelId?: string; sarvamApiKey?: string; groqApiKey?: string; sttProvider?: "sarvam" | "groq" } = {}) => {
+    try {
+      const llmHelper = appState.processingHelper.getLLMHelper();
+      await llmHelper.switchToBedrock(opts);
+      return { success: true };
+    } catch (error: any) {
+      console.error("Error switching to Bedrock:", error);
       return { success: false, error: error.message };
     }
   });

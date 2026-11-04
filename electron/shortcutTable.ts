@@ -17,6 +17,9 @@ export const GLOBAL_ACCELERATORS = {
   MOVE_DOWN: "CommandOrControl+Down",
   MOVE_UP: "CommandOrControl+Up",
   TOGGLE: "CommandOrControl+B",
+  // Shrink the bar to the blob, or expand it. Shift distinguishes it from
+  // TOGGLE, which hides the window entirely.
+  COLLAPSE: "CommandOrControl+Shift+B",
   TEACH_EXECUTE: "CommandOrControl+Shift+Return",
   TEACH_ABORT: "CommandOrControl+Shift+Backspace"
 } as const

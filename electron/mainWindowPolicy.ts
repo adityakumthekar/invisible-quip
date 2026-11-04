@@ -5,6 +5,18 @@ export interface MainWindowPolicy extends BrowserWindowConstructorOptions {
 }
 
 /**
+ * Z-order for the overlay. Always floating.
+ *
+ * `setAlwaysOnTop(true, "normal")` is NSNormalWindowLevel: Electron returns
+ * before applying any higher level, so the window sinks under whatever app
+ * is focused. Capture is `contentProtection`, not the window level — debug
+ * mode stays capturable and still hovers.
+ */
+export function mainWindowAlwaysOnTopLevel(): "floating" {
+  return "floating"
+}
+
+/**
  * Main window construction options. The chrome is the same in both modes: a
  * frameless, transparent, shadowless window so the pill floats free on the
  * desktop. `invisible` only controls capture protection — debug mode

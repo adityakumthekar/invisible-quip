@@ -57,6 +57,7 @@ npm run dist
 | Shortcut | Action |
 |----------|--------|
 | `Cmd/Ctrl + B` | Toggle window visibility |
+| `Cmd/Ctrl + Shift + B` | Collapse to the blob, or expand it |
 | `Cmd/Ctrl + H` | Take screenshot |
 | `Cmd + Enter` | Get solution |
 | `Cmd/Ctrl + Arrow Keys` | Move window |

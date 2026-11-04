@@ -67,3 +67,48 @@ export function parseTranscriptTurns(transcript: string): TranscriptTurn[] {
 
   return turns.filter((t) => t.text && !NO_SPEECH.test(t.text))
 }
+
+/**
+ * `parseAudioAnswer` for a stream. Gemini writes the transcript section first,
+ * so nothing is forwarded until the ANSWER: label lands; from then on deltas
+ * pass straight through. The label can arrive split across deltas, which is
+ * why the whole buffer is re-tested rather than each delta.
+ *
+ * A reply that never produces the label degrades the same way the one-shot
+ * parser does — all answer — just delivered in one piece at `finish`.
+ */
+export function createAnswerSplitter(handlers: {
+  onTranscript: (transcript: string) => void
+  onAnswerDelta: (delta: string) => void
+}) {
+  let raw = ""
+  let answerFrom = -1
+  let forwarded = 0
+
+  return {
+    push(delta: string): void {
+      raw += delta
+      if (answerFrom === -1) {
+        const match = ANSWER.exec(raw)
+        if (!match) return
+        answerFrom = match.index + match[0].length
+        forwarded = answerFrom
+        handlers.onTranscript(parseAudioAnswer(raw).transcript)
+      }
+      // The first piece can start with spaces the label regex hadn't seen yet.
+      const pending = raw.slice(forwarded)
+      const out = forwarded === answerFrom ? pending.replace(/^[ \t]+/, "") : pending
+      forwarded = raw.length
+      if (out) handlers.onAnswerDelta(out)
+    },
+
+    finish(): { transcript: string; answer: string } {
+      const parsed = parseAudioAnswer(raw)
+      if (answerFrom === -1) {
+        handlers.onTranscript(parsed.transcript)
+        if (parsed.answer) handlers.onAnswerDelta(parsed.answer)
+      }
+      return parsed
+    }
+  }
+}

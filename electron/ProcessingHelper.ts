@@ -2,6 +2,10 @@
 
 import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
+import { AudioChunk } from "./speechToText"
+import { bedrockApiKeyFromEnv } from "./bedrockClient"
+import { loadModelRoutes, modelRoutesPath } from "./modelRoutes"
+import { app } from "electron"
 import { abortAllChatStreams } from "./chatStreams"
 import { ChatTurn } from "./chatHistory"
 import dotenv from "dotenv"
@@ -25,7 +29,24 @@ export class ProcessingHelper {
     const ollamaModel = process.env.OLLAMA_MODEL // Don't set default here, let LLMHelper auto-detect
     const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434"
     
-    if (useOllama) {
+    if (process.env.USE_BEDROCK === "true") {
+      const apiKey = bedrockApiKeyFromEnv()
+      // Per-task models and fallbacks; without the file every task uses BEDROCK_MODEL_ID.
+      const routes = loadModelRoutes(modelRoutesPath(app.isPackaged, process.resourcesPath))
+      const modelId = process.env.BEDROCK_MODEL_ID || routes?.tasks.chat?.[0]
+      if (!apiKey || !modelId) {
+        throw new Error("USE_BEDROCK=true needs a Bedrock API key (AWS_BEARER_TOKEN_BEDROCK or BEDROCK_TOKEN) and BEDROCK_MODEL_ID in the environment, or a chat model in quip.models.json")
+      }
+      console.log("[ProcessingHelper] Initializing with Claude on Bedrock")
+      this.llmHelper = new LLMHelper(
+        process.env.GEMINI_API_KEY,
+        false,
+        undefined,
+        undefined,
+        { apiKey, modelId, region: routes?.region || process.env.AWS_REGION || "us-east-1" },
+        routes ?? undefined
+      )
+    } else if (useOllama) {
       console.log("[ProcessingHelper] Initializing with Ollama")
       this.llmHelper = new LLMHelper(undefined, true, ollamaModel, ollamaUrl)
     } else {
@@ -90,10 +111,11 @@ export class ProcessingHelper {
     data: string,
     mimeType: string,
     history: ChatTurn[] = [],
-    system?: { data: string; mimeType: string }
+    system?: { data: string; mimeType: string },
+    chunks?: { mic: AudioChunk[]; system?: AudioChunk[] }
   ) {
     // Directly use LLMHelper to analyze inline base64 audio
-    return this.llmHelper.analyzeAudioFromBase64(data, mimeType, history, system);
+    return this.llmHelper.analyzeAudioFromBase64(data, mimeType, history, system, chunks);
   }
 
   public getLLMHelper() {

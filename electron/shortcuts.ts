@@ -133,21 +133,24 @@ export class ShortcutsHelper {
 
     globalShortcut.register("CommandOrControl+B", () => {
       this.appState.toggleMainWindow()
-      // If window exists and we're showing it, bring it to front
-      const mainWindow = this.appState.getMainWindow()
-      if (mainWindow && !this.appState.isVisible()) {
-        // Force the window to the front on macOS
-        if (process.platform === "darwin") {
-          mainWindow.setAlwaysOnTop(true, "normal")
-          // Reset alwaysOnTop after a brief delay
-          setTimeout(() => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.setAlwaysOnTop(true, "floating")
-            }
-          }, 100)
-        }
-      }
     })
+
+    // Collapse the bar to the floating blob, or expand it. The renderer owns
+    // the collapsed state, so this only signals it. Reveal first when the
+    // window is hidden, otherwise the blob changes with nothing on screen.
+    globalShortcut.register(GLOBAL_ACCELERATORS.COLLAPSE, () => {
+      const mainWindow = this.appState.getMainWindow()
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      if (!this.appState.isVisible()) {
+        this.appState.showMainWindow()
+      }
+      mainWindow.webContents.send("collapse-hotkey")
+    })
+    if (!globalShortcut.isRegistered(GLOBAL_ACCELERATORS.COLLAPSE)) {
+      console.warn(
+        `[Shortcuts] Could not register ${GLOBAL_ACCELERATORS.COLLAPSE} for collapse — another app owns it.`
+      )
+    }
 
     // Perform the highlighted action. During an autopilot run this approves the
     // step it paused on, which main owns directly; otherwise it signals the

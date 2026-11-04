@@ -17,7 +17,16 @@ export type ChatStreamApi = {
   onChatStreamError: (
     callback: (data: { requestId: string; message: string }) => void
   ) => () => void
+  /** Only the voice channel emits it; optional so older harnesses still fit. */
+  onChatStreamTranscript?: (
+    callback: (data: { requestId: string } & StreamTranscript) => void
+  ) => () => void
   invoke: (channel: string, ...args: any[]) => Promise<any>
+}
+
+export type StreamTranscript = {
+  transcript: string
+  turns: { speaker: "you" | "them"; text: string }[]
 }
 
 export type StreamScheduler = (flush: () => void) => void
@@ -40,6 +49,8 @@ const defaultScheduler: StreamScheduler = (flush) => {
 export type StreamChatOptions = {
   /** Called with the full text so far, coalesced to at most one call per frame. */
   onText: (text: string) => void
+  /** Voice only: what was heard, delivered once, before the first answer text. */
+  onTranscript?: (transcript: StreamTranscript) => void
   signal?: AbortSignal
   scheduler?: StreamScheduler
 }
@@ -55,7 +66,7 @@ export async function streamChat(
   api: ChatStreamApi,
   channel: string,
   args: any[],
-  { onText, signal, scheduler = defaultScheduler }: StreamChatOptions
+  { onText, onTranscript, signal, scheduler = defaultScheduler }: StreamChatOptions
 ): Promise<string> {
   const requestId = createRequestId()
   let text = ""
@@ -106,6 +117,14 @@ export async function streamChat(
         reject(new Error(data.message))
       })
     )
+    if (onTranscript && api.onChatStreamTranscript) {
+      unsubscribes.push(
+        api.onChatStreamTranscript(({ requestId: id, transcript, turns }) => {
+          if (id !== requestId || settled) return
+          onTranscript({ transcript, turns })
+        })
+      )
+    }
 
     if (signal?.aborted) {
       onAbort()

@@ -21,13 +21,13 @@ const ScreenshotItem: React.FC<ScreenshotItemProps> = ({
 }) => {
   return (
     <div
-      className={`relative rounded-lg overflow-hidden border border-black/10 aspect-video bg-black/5 ${
+      className={`relative rounded-lg overflow-hidden border border-[var(--thumb-border)] aspect-video bg-[var(--thumb-bg)] ${
         isLoading ? "" : "group"
       }`}
     >
       {isLoading && (
-        <div className="absolute inset-0 bg-black/30 z-10 flex items-center justify-center">
-          <div className="w-4 h-4 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />
+        <div className="absolute inset-0 bg-[var(--thumb-busy)] z-10 flex items-center justify-center">
+          <div className="w-4 h-4 border-2 border-[var(--thumb-spinner)] border-t-transparent rounded-full animate-spin" />
         </div>
       )}
       <img
@@ -44,7 +44,7 @@ const ScreenshotItem: React.FC<ScreenshotItemProps> = ({
             e.stopPropagation()
             void onDelete(index)
           }}
-          className="absolute top-1 left-1 p-0.5 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute top-1 left-1 p-0.5 rounded-full bg-[var(--thumb-action-bg)] text-glass-heading opacity-0 group-hover:opacity-100 transition-opacity"
           aria-label="Delete screenshot"
         >
           <X size={12} strokeWidth={2} />

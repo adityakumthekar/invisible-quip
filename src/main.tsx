@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client"
 import App from "./App"
 // Before index.css so the overlay's .chat-md rules win over KaTeX's defaults.
 import "katex/dist/katex.min.css"
+// Bundled, not fetched: the overlay must render the same offline.
+import "@fontsource/architects-daughter/400.css"
 import "./index.css"
 import {
   getGlassStrength,

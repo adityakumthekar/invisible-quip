@@ -64,7 +64,7 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
       <div className="mt-4 space-y-3">
         <div className="flex items-start gap-2">
           <AlertTriangle
-            className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon"
+            className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon" aria-hidden="true"
             strokeWidth={1.75}
           />
           <p className="text-[11.5px] leading-relaxed glass-text">
@@ -74,9 +74,9 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
         <button
           type="button"
           onClick={onAcceptConsent}
-          className="glass-action rounded-lg px-3 py-2 text-[11px]"
+          className="glass-primary rounded-full px-3.5 py-1.5 text-[12px]"
         >
-          I understand — enable autopilot
+          I understand, enable autopilot
         </button>
       </div>
     )
@@ -111,7 +111,7 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
             <button
               type="submit"
               disabled={!session.goal.trim()}
-              className="glass-action flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+              className="glass-primary flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] lowercase"
             >
               <Play className="w-3.5 h-3.5" strokeWidth={1.75} />
               Run
@@ -123,16 +123,16 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
       {(busy || session.update) && (
         <div aria-live="polite">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] uppercase tracking-wide glass-muted">
+            <p className="label">
               {describeAutopilotPhase(session.phase)}
             </p>
             {progress && (
-              <p className="text-[11px] glass-muted tabular-nums">{progress}</p>
+              <p className="readout">{progress}</p>
             )}
           </div>
 
           {session.update?.result?.instruction && (
-            <p className="mt-2 text-[13px] leading-relaxed glass-heading">
+            <p className="mt-1.5 text-[14.5px] font-medium leading-snug glass-heading">
               {session.update.result.instruction}
             </p>
           )}
@@ -153,16 +153,16 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
 
       {pending && (
         <div
-          className="rounded-lg bg-glass-soft px-2.5 py-2"
+          className="glass-well px-3 py-2.5"
           role="alert"
           aria-live="assertive"
         >
           <p className="text-[11px] glass-heading">{pendingAction}</p>
           {pending.reasons && pending.reasons.length > 0 && (
-            <ul className="mt-1.5 space-y-1">
+            <ul className="mt-1.5 list-disc space-y-1 pl-4 marker:text-glass-subtle">
               {pending.reasons.map((reason) => (
-                <li key={reason} className="text-[11px] glass-muted">
-                  · {reason}
+                <li key={reason} className="text-[11.5px] glass-muted">
+                  {reason}
                 </li>
               ))}
             </ul>
@@ -171,7 +171,7 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
             <button
               type="button"
               onClick={onConfirm}
-              className="glass-action flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px]"
+              className="glass-primary flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] lowercase"
             >
               <Check className="w-3.5 h-3.5" strokeWidth={1.75} />
               Approve
@@ -179,14 +179,15 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
             <button
               type="button"
               onClick={onReject}
-              className="glass-control flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] glass-text"
+              className="glass-action flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] lowercase"
             >
               <SkipForward className="w-3.5 h-3.5" strokeWidth={1.75} />
               Skip
             </button>
           </div>
-          <p className="mt-1.5 text-[11px] glass-muted">
-            ⌘/Ctrl+⇧+Enter to approve · ⌘/Ctrl+⇧+Backspace to stop
+          <p className="readout mt-2 flex flex-wrap gap-x-4 gap-y-0.5">
+            <span>⌘/Ctrl+⇧+Enter to approve</span>
+            <span>⌘/Ctrl+⇧+Backspace to stop</span>
           </p>
         </div>
       )}
@@ -195,7 +196,7 @@ const AutopilotView: React.FC<AutopilotViewProps> = ({
         <button
           type="button"
           onClick={onStop}
-          className="glass-control flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] glass-text"
+          className="glass-action flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] lowercase"
         >
           <Square className="w-3 h-3" strokeWidth={1.75} />
           Stop

@@ -19,7 +19,7 @@ import { applySavedProfile } from "../lib/userProfile"
 import { closeSystemAudio, openSystemAudio } from "../lib/systemAudio"
 import { createLevelMonitor, type LevelMonitor } from "../lib/audioLevel"
 import { getBarCollapsed, setBarCollapsed } from "../lib/collapsedBar"
-import { streamChat } from "../lib/chatStream"
+import { streamChat, type StreamTranscript } from "../lib/chatStream"
 import {
   createMessage,
   toHistory,
@@ -40,6 +40,7 @@ import {
 import type { PrivacyGateStatus } from "../lib/privacyContract"
 import type { AutopilotConsent } from "../types/electron"
 import { evaluatePrivacyGate } from "../lib/privacyGate"
+import { STT_MAX_CHUNK_SECONDS, toWavChunks } from "../lib/wavChunks"
 
 interface QueueProps {
   setView: React.Dispatch<React.SetStateAction<"queue" | "solutions">>
@@ -118,6 +119,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const handleAskAiRef = useRef<() => void>(() => {})
   const handleRecordClickRef = useRef<() => void>(() => {})
   const handleNewChatRef = useRef<() => void>(() => {})
+  const toggleCollapsedRef = useRef<() => void>(() => {})
+  const collapseDisabledRef = useRef<string | null>(null)
   const [privacyStatus, setPrivacyStatus] = useState<PrivacyGateStatus | null>(null)
   const [privacyChecking, setPrivacyChecking] = useState(false)
   const [privacyError, setPrivacyError] = useState<string | null>(null)
@@ -159,7 +162,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [currentModel, setCurrentModel] = useState<{
-    provider: "ollama" | "gemini"
+    provider: "ollama" | "gemini" | "bedrock"
     model: string
   }>({ provider: "gemini", model: "gemini-3.5-flash" })
 
@@ -520,6 +523,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     handleAskAiRef.current = handleAskAi
     handleRecordClickRef.current = () => void handleRecordClick()
     handleNewChatRef.current = handleNewChat
+    toggleCollapsedRef.current = toggleCollapsed
+    collapseDisabledRef.current = collapseDisabledReason
   })
 
   useEffect(
@@ -542,6 +547,18 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   useEffect(() => {
     const unsubscribe = window.electronAPI.onAskAiHotkey(() => {
       handleAskAiRef.current()
+    })
+    return () => {
+      unsubscribe && unsubscribe()
+    }
+  }, [])
+
+  // Cmd/Ctrl+Shift+B. Collapse to the blob or expand it. The disabled reason
+  // is read through a ref so a run that starts after mount still blocks it.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onCollapseHotkey(() => {
+      if (collapseDisabledRef.current) return
+      toggleCollapsedRef.current()
     })
     return () => {
       unsubscribe && unsubscribe()
@@ -610,6 +627,25 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   }, [teachingOpen])
 
   // Both clips take the same trip to the model, so they share one reader.
+  /**
+   * Bedrock's voice path runs through Sarvam, whose real-time endpoint stops at
+   * 30 s; past that, hand main pre-cut WAV pieces. Short clips and Gemini send
+   * the webm untouched, so this costs nothing on the common path.
+   */
+  const longClipChunks = async (
+    clipSeconds: number,
+    mic: Blob,
+    system: Blob | null
+  ) => {
+    if (clipSeconds < STT_MAX_CHUNK_SECONDS - 1) return undefined
+    const { provider } = await window.electronAPI.getCurrentLlmConfig()
+    if (provider !== "bedrock") return undefined
+    return {
+      mic: await toWavChunks(mic),
+      system: system ? await toWavChunks(system) : undefined
+    }
+  }
+
   const blobToBase64 = (blob: Blob) =>
     new Promise<string>((resolve, reject) => {
       const reader = new FileReader()
@@ -672,8 +708,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
           const history = toHistory(chatMessagesRef.current)
           // Snapshotted at stop, not at record start: a ⌘N pressed mid-clip
           // should still deliver this transcript, just into the empty chat.
-          // There is no abort for this path — it is a plain invoke — so the
-          // epoch check is the only thing keeping a stale answer out.
+          // A ⌘N after stop aborts the stream; the epoch check covers events
+          // already in flight when it lands.
           const epoch = chatEpochRef.current
           stream.getTracks().forEach((t) => t.stop())
           setMicStream(null)
@@ -717,19 +753,21 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
             const base64Data = await blobToBase64(blob)
             openPanels()
             setChatLoading(true)
-            try {
-              const result = await window.electronAPI.analyzeAudioFromBase64(
-                base64Data,
-                blob.type,
-                history,
-                systemPart
-              )
-              if (epoch !== chatEpochRef.current) return
+            const controller = new AbortController()
+            chatAbortRef.current = controller
+            // The spoken turns land first (from the transcript event), then the
+            // answer streams into the placeholder after them. A reply that never
+            // reports a transcript still gets a header-only turn, placed when
+            // its first text arrives.
+            let placed = false
+            let answered = ""
+            const placeTurns = (turns: StreamTranscript["turns"]) => {
+              placed = true
               // One clip can hold several turns once system audio is on. The
               // length belongs to the clip, so only its first turn carries it;
               // a clip with no speech at all still leaves a header-only turn.
-              const spoken = result.turns.length
-                ? result.turns.map((turn, i) =>
+              const spoken = turns.length
+                ? turns.map((turn, i) =>
                     createMessage({
                       role: "user",
                       text: turn.text,
@@ -749,14 +787,41 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
               setChatMessages((msgs) => [
                 ...msgs,
                 ...spoken,
-                createMessage({
-                  role: "gemini",
-                  text: result.text,
-                  source: "voice"
-                })
+                createMessage({ role: "gemini", text: "", source: "voice" })
               ])
-            } catch {
-              if (epoch !== chatEpochRef.current) return
+            }
+            try {
+              const chunks = await longClipChunks(
+                clipSeconds,
+                blob,
+                systemPart ? systemBlob : null
+              )
+              await streamChat(
+                window.electronAPI,
+                "analyze-audio-stream",
+                [base64Data, blob.type, history, systemPart, chunks],
+                {
+                  signal: controller.signal,
+                  onTranscript: ({ turns }) => {
+                    if (epoch !== chatEpochRef.current || placed) return
+                    placeTurns(turns)
+                  },
+                  onText: (text) => {
+                    if (epoch !== chatEpochRef.current) return
+                    if (!placed) placeTurns([])
+                    answered = text
+                    setChatLoading(false)
+                    replaceLastMessage(text)
+                  }
+                }
+              )
+            } catch (err) {
+              if (epoch !== chatEpochRef.current || isAbortError(err)) return
+              if (placed) {
+                // Keep a half-written answer rather than swapping it for an error.
+                if (!answered) replaceLastMessage("Audio analysis failed.")
+                return
+              }
               // Still emit the user turn: a header-only "You · voice · 0:12"
               // beats a failure message with nothing explaining what failed.
               setChatMessages((msgs) => [
@@ -774,6 +839,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                 })
               ])
             } finally {
+              if (chatAbortRef.current === controller) chatAbortRef.current = null
               // Only ours to clear: a newer request may already own the spinner.
               if (epoch === chatEpochRef.current) setChatLoading(false)
             }
@@ -912,7 +978,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }, [refetch])
 
-  const handleModelChange = (provider: "ollama" | "gemini", model: string) => {
+  const handleModelChange = (
+    provider: "ollama" | "gemini" | "bedrock",
+    model: string
+  ) => {
     setCurrentModel({ provider, model })
     // A notice from the app, not an answer — "system" renders it as a centred
     // caption instead of an assistant turn.
@@ -927,9 +996,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   }
 
   const modelLabel =
-    currentModel.provider === "ollama"
-      ? currentModel.model
-      : "Gemini 3.5 Flash"
+    currentModel.provider === "gemini"
+      ? "Gemini 3.5 Flash"
+      : currentModel.model
 
   return (
     <div
@@ -939,9 +1008,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       {/* Bottom padding is load-bearing: the window is sized to this element's
           scrollHeight, and box-shadows don't contribute to layout, so anything
           the surfaces cast beyond this padding is clipped off at the
-          transparent window edge. Keep pb >= the largest shadow reach
-          (offset + blur/2) in index.css. */}
-      <div className="px-3 pt-2 pb-8 space-y-3">
+          transparent window edge. The surfaces carry only a 1px contact ring,
+          so pb-1 covers it. Re-adding a blurred shadow in index.css means
+          growing this, and CHROME_PX in App.tsx, by its reach. */}
+      <div className="px-3 pt-2 pb-1 space-y-3">
         <Toast
           open={toastOpen}
           onOpenChange={setToastOpen}

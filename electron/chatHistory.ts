@@ -111,6 +111,33 @@ export function toGeminiHistory(turns: ChatTurn[]): GeminiContent[] {
   }))
 }
 
+export interface ConverseTurn {
+  role: "user" | "assistant"
+  content: { text: string }[]
+}
+
+/**
+ * Same window as `toGeminiHistory`, so a session remembers exactly as much on
+ * Bedrock. Converse is stricter than Gemini, though: roles must alternate and
+ * text blocks can't be empty. The pinned anchor is always followed by another
+ * question, and an aborted answer leaves two questions back to back, so
+ * same-role neighbours are merged rather than sent as-is.
+ */
+export function toConverseHistory(turns: ChatTurn[]): ConverseTurn[] {
+  const merged: ConverseTurn[] = []
+  for (const turn of dropLeadingAnswers(withinBudget(turns, GEMINI_BUDGET))) {
+    if (!turn.text.trim()) continue
+    const role = turn.role === "gemini" ? "assistant" : "user"
+    const last = merged[merged.length - 1]
+    if (last?.role === role) {
+      last.content.push({ text: turn.text })
+    } else {
+      merged.push({ role, content: [{ text: turn.text }] })
+    }
+  }
+  return merged
+}
+
 /** Ollama takes a single prompt string, so its history has to be inlined. */
 export function flattenHistory(turns: ChatTurn[]): string {
   return withinBudget(turns, OLLAMA_BUDGET)

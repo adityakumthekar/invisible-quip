@@ -82,7 +82,7 @@ describe("teaching prompt and model response", () => {
 
   it("points at a vision model when the local model cannot see", async () => {
     const helper = new LLMHelper("test-api-key")
-    ;(helper as any).useOllama = true
+    ;(helper as any).provider = "ollama"
     ;(helper as any).ollamaModel = "llama3.2"
     vi.spyOn(helper as any, "getOllamaModelCapabilities").mockResolvedValue({
       vision: false
@@ -98,7 +98,7 @@ describe("teaching prompt and model response", () => {
 
   it("sends the screenshot to a vision-capable local model and normalizes pixels", async () => {
     const helper = new LLMHelper("test-api-key")
-    ;(helper as any).useOllama = true
+    ;(helper as any).provider = "ollama"
     ;(helper as any).ollamaModel = "qwen2.5vl:7b"
     vi.spyOn(helper as any, "getOllamaModelCapabilities").mockResolvedValue({
       vision: true

@@ -52,7 +52,7 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
       <div className="mt-4 space-y-3">
         <div className="flex items-start gap-2">
           <ShieldCheck
-            className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon"
+            className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon" aria-hidden="true"
             strokeWidth={1.75}
           />
           <p className="text-[11.5px] leading-relaxed glass-text">
@@ -62,7 +62,7 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
         <button
           type="button"
           onClick={onAcknowledge}
-          className="glass-action rounded-lg px-3 py-2 text-[11px]"
+          className="glass-primary rounded-full px-3.5 py-1.5 text-[12px]"
         >
           I understand
         </button>
@@ -75,7 +75,7 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
       <div className="mt-4 space-y-3">
         <p className="text-[11.5px] leading-relaxed glass-text">
           Before this session, Quip runs a local, one-time check to see whether
-          a test marker leaks into a screenshot. This is best-effort — always
+          a test marker leaks into a screenshot. This is best-effort, so always
           verify your own share preview too.
         </p>
         {privacy.status.lastPreflightResult && (
@@ -85,7 +85,7 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
                 ? "status"
                 : "alert"
             }
-            className="rounded-lg bg-glass-soft px-2.5 py-2"
+            className="glass-well px-3 py-2.5"
           >
             <p className="text-[11px] glass-muted">
               {privacy.status.lastPreflightResult.reason}
@@ -101,7 +101,8 @@ const PrivacyGateNotice: React.FC<PrivacyGateNoticeProps> = ({
           type="button"
           onClick={onRunCheck}
           disabled={privacy.checking}
-          className="glass-action flex items-center gap-1.5 rounded-lg px-3 py-2 text-[11px] disabled:opacity-40"
+          aria-busy={privacy.checking}
+          className="glass-primary flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] lowercase"
         >
           <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} />
           {privacy.checking

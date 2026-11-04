@@ -1,0 +1,234 @@
+/* Every colour, face and shared measure the overlay uses. index.css and the
+   components only ever reference these names.
+
+   The fill, its alphas, the text tiers and the reading scrim are the measured
+   contrast model (see the note at the top of index.css) and are kept exactly:
+   the 4.94:1 floor over a white desktop is computed from these values. Lumen
+   lends only what sits on top of that model: hairline wells, the radius and
+   the mono readouts. The accent and the face are the project's own. */
+:root {
+  color-scheme: dark;
+
+  /* Shared scale */
+  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --ease-in: cubic-bezier(0.7, 0, 0.84, 0); --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
+  --z-base: 1; --z-raised: 10; --z-dropdown: 100; --z-toast: 500; --z-tooltip: 600;
+
+  /* Type. Architects Daughter for the whole UI, bundled from
+     @fontsource/architects-daughter so the overlay never fetches a font
+     mid-session. It ships one weight (400), so heads and the primary action
+     take size and ink, not bold. The system mono stays for readouts and code.
+     Ratio 1.125. */
+  --font-body: "Architects Daughter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --font-display: var(--font-body);
+  --font-outlier: var(--font-mono);
+  --fs-caption: 10.5px;
+  --fs-label: 11.5px;
+  --fs-body: 13px;
+  --fs-title: 14.5px;
+  --fs-figure: 22px;
+  --display-weight: 400;
+  --tracking-display: -0.01em;
+
+  /* The signal is the theme's own accent: near-white on neutral, the blue on
+     royal, the violet on purple. It marks the primary action, focus and the
+     current selection. Recording reuses the success green. Defined against
+     the --glass-* values below, so each theme block re-points it for free. */
+  --signal: var(--glass-accent);
+  --signal-hover: color-mix(in oklab, var(--glass-accent) 82%, var(--glass-heading));
+  --signal-press: color-mix(in oklab, var(--glass-accent) 84%, rgb(var(--glass-primary-rgb)));
+  --signal-ink: rgb(var(--glass-primary-rgb));
+  --signal-chip: rgb(var(--glass-primary-rgb) / 0.12);
+  --live: var(--glass-success);
+  --focus: var(--signal);
+
+  /* Radius: one per nesting level. Surface, then well, then control. */
+  --radius-surface: 12px;
+  --radius-well: 8px;
+  --radius-chip: 5px;
+  --radius-pill: 999px;
+  --rule-hair: 1px;
+
+  /* Graphite fill. Neutral, not tinted: a saturated fill tints everything
+     behind it and shifts hue per background, which is what made text swim. */
+  --glass-primary-rgb: 18 19 23;
+  --glass-secondary-rgb: 30 32 38;
+  --glass-primary-alpha: 0.72;
+  --glass-secondary-alpha: 0.7;
+  --glass-primary-border: rgba(255, 255, 255, 0.13);
+  --glass-secondary-border: rgba(255, 255, 255, 0.1);
+  /* Tinted a hair toward cool, never a pure absolute. */
+  --glass-heading: oklch(98.6% 0.004 265);
+  --glass-text: rgba(247, 249, 255, 0.96);
+  --glass-muted: rgba(232, 236, 245, 0.82);
+  --glass-subtle: rgba(232, 236, 245, 0.7);
+  --glass-accent: #e6e8ec;
+  --glass-accent-strong: #aab1bd;
+  --glass-accent-soft: rgba(255, 255, 255, 0.09);
+  --glass-hover: rgba(255, 255, 255, 0.07);
+  --glass-press: rgba(255, 255, 255, 0.12);
+  /* Links need their own hue: the accent is near-white on this theme and
+     would be indistinguishable from body text. */
+  --glass-link: #8ab4ff;
+  /* Status hues, lightened so they clear contrast on a dark translucent fill. */
+  --glass-danger: #ff8f8f;
+  --glass-success: #6fd694;
+  --glass-warning: #f2c46b;
+  /* A dark well, not a light one: typed text needs a solid backing, and a
+     light fill only compounds the bleed-through. */
+  --glass-control-bg: rgba(0, 0, 0, 0.24);
+  --glass-control-border: rgba(255, 255, 255, 0.16);
+  --glass-blur: blur(30px) saturate(155%);
+  --glass-radius: var(--radius-surface);
+  --glass-radius-sm: var(--radius-well);
+  --glass-radius-pill: var(--radius-pill);
+
+  /* Disabled: fill, ink and cursor all change, never opacity alone. */
+  --glass-disabled-bg: rgba(255, 255, 255, 0.04);
+  --glass-disabled-ink: rgba(232, 236, 245, 0.42);
+
+  /* Local contrast per glyph, so text survives whatever bleeds through. */
+  --glass-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  --glass-text-shadow-strong: 0 1px 1.5px rgba(0, 0, 0, 0.72),
+    0 0 1.5px rgba(0, 0, 0, 0.6);
+  --glass-icon-halo: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.6));
+  /* Extra density behind running text only, so panel chrome stays airy. */
+  --glass-scrim: rgba(10, 11, 14, 0.22);
+
+  /* Edges. A dark contact ring keeps the edge on a bright desktop and the
+     inner hairline keeps it on a dark one. No blurred shadow: the window is
+     sized to content, so a shadow is clipped at the edge or paid for twice. */
+  --edge-ring: rgba(0, 0, 0, 0.32);
+  --edge-hairline: rgba(255, 255, 255, 0.07);
+
+  /* Recessed chips: key caps, inline code, the model badge. */
+  --chip-bg: rgba(0, 0, 0, 0.28);
+  --chip-border: rgba(255, 255, 255, 0.1);
+  --code-bg: rgba(0, 0, 0, 0.3);
+  --code-border: rgba(255, 255, 255, 0.08);
+  --code-copy-bg: rgba(0, 0, 0, 0.55);
+  --code-bg-light: rgba(0, 0, 0, 0.06);
+  --quote-rule-light: rgba(0, 0, 0, 0.15);
+  --quote-rule: rgba(255, 255, 255, 0.2);
+  --table-head-bg: rgba(0, 0, 0, 0.18);
+
+  /* Syntax colours, drawn from the status hues so code reads in the system
+     rather than in a borrowed editor theme. */
+  --code-ink: rgba(247, 249, 255, 0.92);
+  --code-comment: rgba(232, 236, 245, 0.56);
+  --code-keyword: #8ab4ff;
+  --code-string: #8fdcaa;
+  --code-number: #f2c46b;
+  --code-function: var(--glass-heading);
+  --code-punctuation: rgba(232, 236, 245, 0.7);
+
+  /* Remote access. Amber says "someone is attached"; red says "someone else's
+     hands are on this machine". */
+  --remote-watch: #f0b429;
+  --remote-input: #ff5f56;
+
+  /* The toast is denser than the panels: an alert has to be unambiguous. */
+  --toast-bg: rgb(var(--glass-primary-rgb) / 0.92);
+
+  /* A QR code needs a white quiet zone to scan, whatever the theme. */
+  --qr-paper: #ffffff;
+  --overlay-dim: rgba(0, 0, 0, 0.5);
+
+  /* Teach Me pointer glow. The only glow in the app: it marks a click point
+     on an arbitrary desktop, where a flat cursor disappears. */
+  --teach-glow-near: rgba(232, 121, 249, 0.85);
+  --teach-glow-far: rgba(192, 38, 211, 0.55);
+
+  /* Screenshot thumbnails and the legacy solutions view. */
+  --thumb-border: rgba(0, 0, 0, 0.1);
+  --thumb-bg: rgba(0, 0, 0, 0.05);
+  --thumb-busy: rgba(0, 0, 0, 0.3);
+  --thumb-spinner: rgba(255, 255, 255, 0.8);
+  --thumb-action-bg: rgba(0, 0, 0, 0.5);
+  --debug-surface: #161b22;
+  --debug-header: #2d333b;
+  --debug-border: #30363d;
+  --debug-ink: #e6edf3;
+  --debug-muted: #8b949e;
+  --debug-add-bg: rgba(46, 160, 67, 0.15);
+  --debug-add-ink: #3fb950;
+  --debug-del-bg: rgba(248, 81, 73, 0.15);
+  --debug-del-ink: #f85149;
+
+  /* Compatibility aliases for older surfaces. */
+  --glass-dark-bg: rgb(var(--glass-primary-rgb) / var(--glass-primary-alpha));
+  --glass-dark-border: var(--glass-primary-border);
+  --glass-dark-text: var(--glass-text);
+  --glass-dark-muted: var(--glass-muted);
+  --glass-light-bg: rgb(var(--glass-secondary-rgb) / var(--glass-secondary-alpha));
+  --glass-light-border: var(--glass-secondary-border);
+  --glass-light-text: var(--glass-text);
+  --glass-light-muted: var(--glass-muted);
+
+  /* Appearance swatches, shown in settings. */
+  --swatch-neutral: #8b93a1;
+  --swatch-royal: #3b6ff5;
+  --swatch-purple: #7c5cff;
+  --swatch-ring: rgba(255, 255, 255, 0.45);
+}
+
+/* `neutral` is the :root default above and needs no block of its own. The
+   tinted themes darken and desaturate so they stay readable at the same alpha.
+   The signal follows each theme's accent through --glass-accent. */
+[data-glass-theme="royal"] {
+  --glass-primary-rgb: 11 26 62;
+  --glass-secondary-rgb: 24 46 96;
+  --glass-primary-border: rgba(160, 190, 255, 0.24);
+  --glass-secondary-border: rgba(160, 190, 255, 0.2);
+  --glass-accent: #9cb6ff;
+  --glass-accent-strong: #3b6ff5;
+  --glass-accent-soft: rgba(143, 176, 255, 0.16);
+  --glass-hover: rgba(143, 176, 255, 0.12);
+  --glass-press: rgba(143, 176, 255, 0.2);
+  --glass-link: #a8c4ff;
+}
+
+[data-glass-theme="purple"] {
+  --glass-primary-rgb: 34 16 62;
+  --glass-secondary-rgb: 56 30 98;
+  --glass-primary-border: rgba(198, 180, 255, 0.24);
+  --glass-secondary-border: rgba(198, 180, 255, 0.2);
+  --glass-accent: #c9b6ff;
+  --glass-accent-strong: #7c5cff;
+  --glass-accent-soft: rgba(168, 140, 255, 0.16);
+  --glass-hover: rgba(168, 140, 255, 0.12);
+  --glass-press: rgba(168, 140, 255, 0.2);
+  --glass-link: #cbb8ff;
+}
+
+/* Strength is how much desktop bleeds through, not a blur amount. Each level
+   pays for its own transparency: as the fill thins, the text tiers, halo and
+   reading scrim step up, so the 4.5:1 floor over a white desktop holds at every
+   setting. Measured worst case (subtle tier, white backdrop): clear 4.94:1,
+   balanced 4.94:1, solid 6.86:1. */
+[data-glass-strength="clear"] {
+  --glass-primary-alpha: 0.62;
+  --glass-secondary-alpha: 0.6;
+  --glass-muted: rgba(232, 236, 245, 0.88);
+  --glass-subtle: rgba(232, 236, 245, 0.78);
+  --glass-scrim: rgba(10, 11, 14, 0.3);
+  --glass-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.62);
+  --glass-text-shadow-strong: 0 1px 1.5px rgba(0, 0, 0, 0.78),
+    0 0 1.5px rgba(0, 0, 0, 0.68);
+}
+
+[data-glass-strength="balanced"] {
+  --glass-primary-alpha: 0.72;
+  --glass-secondary-alpha: 0.7;
+}
+
+/* Dense enough that the halo is pure cost: it would only look heavy here. */
+[data-glass-strength="solid"] {
+  --glass-primary-alpha: 0.9;
+  --glass-secondary-alpha: 0.88;
+  --glass-scrim: rgba(10, 11, 14, 0.12);
+  --glass-text-shadow: none;
+  --glass-text-shadow-strong: 0 1px 1.5px rgba(0, 0, 0, 0.4);
+}

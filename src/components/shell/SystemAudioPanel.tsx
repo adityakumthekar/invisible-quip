@@ -91,7 +91,7 @@ const SystemAudioPanel: React.FC = () => {
       <div className="mt-4 space-y-3">
         <div className="flex items-start gap-2">
           <AlertTriangle
-            className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon"
+            className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon" aria-hidden="true"
             strokeWidth={1.75}
           />
           <p className="text-[11.5px] leading-relaxed glass-text">
@@ -100,13 +100,13 @@ const SystemAudioPanel: React.FC = () => {
         </div>
         <button
           type="button"
-          className="glass-action rounded-lg px-3 py-2 text-[11px]"
+          className="glass-primary rounded-full px-3.5 py-1.5 text-[12px]"
           onClick={async () => {
             await window.electronAPI.systemAudioAcknowledgeConsent()
             await refresh()
           }}
         >
-          I understand — enable system audio
+          I understand, enable system audio
         </button>
       </div>
     )
@@ -130,10 +130,7 @@ const SystemAudioPanel: React.FC = () => {
         <button
           type="button"
           aria-pressed={enabled}
-          className={cn(
-            "rounded-lg px-3 py-2 text-[11px]",
-            enabled ? "glass-action" : "glass-muted hover:bg-glass-hover"
-          )}
+          className="glass-action shrink-0 rounded-full px-3.5 py-1.5 text-[12px] lowercase"
           onClick={() => {
             const next = !enabled
             setEnabled(next)
@@ -145,10 +142,11 @@ const SystemAudioPanel: React.FC = () => {
       </div>
 
       <div className="space-y-1.5">
-        <label className="text-[11px] uppercase tracking-wide glass-muted">
+        <label className="label" htmlFor="system-audio-device">
           Capture device
         </label>
         <select
+          id="system-audio-device"
           value={suggested?.deviceId ?? ""}
           onChange={(e) => {
             const next = e.target.value || null
@@ -156,7 +154,7 @@ const SystemAudioPanel: React.FC = () => {
             setSavedDeviceId(next)
             setTest({ phase: "idle" })
           }}
-          className="w-full rounded-lg bg-glass-soft border border-glass px-2 py-1.5 text-[11px] glass-text"
+          className="glass-control w-full rounded-lg px-3 py-1.5 text-[12px]"
         >
           <option value="">Auto-detect</option>
           {devices.map((d) => (
@@ -172,7 +170,7 @@ const SystemAudioPanel: React.FC = () => {
           type="button"
           onClick={runTest}
           disabled={test.phase === "listening"}
-          className="glass-action rounded-lg px-3 py-2 text-[11px] disabled:opacity-50"
+          className="glass-action rounded-full px-3.5 py-1.5 text-[12px] lowercase"
         >
           {test.phase === "listening" ? "Listening…" : "Test"}
         </button>
@@ -185,17 +183,17 @@ const SystemAudioPanel: React.FC = () => {
           <span
             className={cn(
               "text-[11px]",
-              test.heard ? "glass-text" : "text-red-300"
+              test.heard ? "glass-text" : "glass-danger-text"
             )}
             role="status"
           >
             {test.heard
               ? "Hearing audio."
-              : "Silent — set your macOS Output to the Multi-Output device."}
+              : "Silent. Set your macOS Output to the Multi-Output device."}
           </span>
         )}
         {test.phase === "error" && (
-          <span className="text-[11px] text-red-300" role="status">
+          <span className="text-[11px] glass-danger-text" role="status">
             {test.message}
           </span>
         )}
@@ -203,7 +201,7 @@ const SystemAudioPanel: React.FC = () => {
 
       <div className="flex items-start gap-2 border-t border-glass pt-3">
         <Headphones
-          className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon"
+          className="mt-0.5 w-3.5 h-3.5 flex-shrink-0 glass-icon" aria-hidden="true"
           strokeWidth={1.75}
         />
         <div className="space-y-1 text-[11px] glass-muted leading-relaxed">
